@@ -20,17 +20,21 @@ local CONFIG = {
   timeout_ms = 300000,
   max_result_chars = 50000,
   reviewer_guide = table.concat({
-    "You are one of several models independently answering the prompt below.",
-    "Give your own direct, well-reasoned answer. State key assumptions and call out anything you are unsure about.",
-    "Do not assume what other models will say; this is your independent take.",
+    "Answer the prompt below directly and on its merits.",
+    "Show your reasoning, not just a verdict: state the key assumptions, the evidence or",
+    "logic behind your answer, and the main tradeoffs.",
+    "Call out anything you are uncertain about and what would change your mind.",
+    "Be concrete and specific. Do not hedge to cover every case; commit to a best answer.",
   }, "\n"),
   synthesis_guide = table.concat({
-    "Below are independent answers from several models to my prompt.",
-    "Synthesize a single best answer for me:",
-    "- Note where the models agree (higher confidence) and where they diverge.",
-    "- Flag anything only one model caught and weigh it on its merits.",
-    "- End with a clear recommendation or final answer.",
-    "Summarize in your own words; do not just paste the model answers back.",
+    "Below are independent answers from several reviewers to my prompt.",
+    "Weigh them on the strength of their reasoning and evidence, NOT by how many agree:",
+    "the reviewers share blind spots, so a shared conclusion is not automatically more reliable.",
+    "- Adopt the strongest argument regardless of which reviewer made it.",
+    "- If reviewers conflict on a verifiable fact, say so and verify rather than picking a side.",
+    "- Flag anything only one reviewer caught and judge it on its merits.",
+    "- Note genuine uncertainty instead of papering over it.",
+    "End with a clear recommendation or final answer, in your own words.",
   }, "\n"),
 }
 
@@ -96,9 +100,12 @@ end
 
 local function synthesis_prompt(task, analyses, errors)
   local parts = { CONFIG.synthesis_guide, "", "## My prompt", task }
-  for _, item in ipairs(analyses) do
+  -- Label reviewers A/B/C... rather than by model id, so the synthesizer weighs
+  -- arguments on their merits instead of deferring to a "trusted" brand. The job
+  -- pane still shows the real provider/model labels for traceability.
+  for i, item in ipairs(analyses) do
     parts[#parts + 1] = ""
-    parts[#parts + 1] = "## " .. item.label
+    parts[#parts + 1] = "## Reviewer " .. string.char(64 + i)
     parts[#parts + 1] = item.text
   end
   if #errors > 0 then

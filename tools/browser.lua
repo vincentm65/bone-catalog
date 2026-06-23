@@ -145,19 +145,14 @@ def install_chromium():
     ms-playwright cache. The `uv run --with playwright==X` env carries the Python
     package but NOT the browser binary, so a fresh machine (commonly Windows,
     where nothing pre-seeds the cache) has no chrome.exe until this runs.
-    Returns the installer log."""
+    Returns (ok, log)."""
     try:
         proc = subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=240)
-        return proc.stdout or ""
-    except subprocess.TimeoutExpired as e:
-        out = e.stdout or ""
-        if isinstance(out, bytes):
-            out = out.decode(errors="replace")
-        return out + "\nplaywright install chromium timed out"
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        return proc.returncode == 0, (proc.stdout or "")
     except Exception as e:
-        return str(e)
+        return False, str(e)
 
 def ensure_chromium():
     """Resolve the bundled Chromium, auto-installing it once if the binary is
@@ -165,10 +160,10 @@ def ensure_chromium():
     try:
         exe = resolve_chromium()
     except Exception as e:
-        fail(f"Playwright unavailable: {e}\nInstall with: uv run --with playwright==1.59.0 python -m playwright install chromium", 1)
+        fail(f"Playwright unavailable: {e}\nInstall with: uv run --with playwright python -m playwright install chromium", 1)
     if exe and Path(exe).exists():
         return exe
-    log = install_chromium()
+    ok, log = install_chromium()
     try:
         exe = resolve_chromium()
     except Exception as e:
@@ -222,7 +217,9 @@ def timeout_of(p):
 # ---------------------------------------------------------------------------
 
 def act_start(p):
-    headless = p.get("headless", True)
+    # Headful by default -- it evades more bot detection. Callers can still
+    # request headless=true for CI / headless boxes.
+    headless = p.get("headless", False)
     d = load_daemon()
     if daemon_running(d):
         out({"running": True, "reused": True, "port": d["port"], "pid": d["pid"], "headless": d.get("headless", True)})
@@ -243,7 +240,7 @@ def act_start(p):
     if headless:
         args.extend(["--headless=new", "--window-size=1280,720"])
     else:
-        args.append("--window-size=1280,720")
+        args.extend(["--window-size=1280,720", "--no-sandbox", "--disable-gpu", "--disable-software-rasterizer"])
     # Detach the daemon so it survives this script: a new session/process-
     # group on POSIX (lets terminate_process_tree reap the whole tree), a new
     # process group on Windows (taskkill /T walks from this pid).
@@ -252,6 +249,12 @@ def act_start(p):
         popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         popen_kwargs["start_new_session"] = True
+    if not headless and not os.environ.get("DISPLAY"):
+        # Auto-detect display from /tmp/.X11-unix/
+        import glob as glob_mod
+        xsockets = glob_mod.glob("/tmp/.X11-unix/X*")
+        display = xsockets[0].replace("/tmp/.X11-unix/X", "") if xsockets else "0"
+        popen_kwargs["env"] = {**os.environ, "DISPLAY": f":{display}"}
     proc = subprocess.Popen(args, **popen_kwargs)
     deadline = time.time() + 15
     ready = False
@@ -338,76 +341,124 @@ def act_text(p):
     finally:
         disconnect(pw, browser)
 
+def build_elements(page, sel=None):
+    # Build a compact list of interactive elements with stable per-page indices
+    # and the most precise selector each resolves to. Shared by
+    # interactive/observe and by target=index resolution in click/type.
+    sel = sel or "a,button,input,select,textarea,[role=button],[onclick]"
+    els = page.query_selector_all(sel)
+    # Tag -> implicit ARIA role. role= selectors need a real ARIA role,
+    # not the tag name (role=a matches nothing; a[href] has role "link").
+    input_role = {"submit": "button", "button": "button", "reset": "button",
+                  "image": "button", "checkbox": "checkbox", "radio": "radio"}
+    tag_role = {"a": "link", "button": "button", "select": "combobox", "textarea": "textbox"}
+    role_known = {"link", "button", "textbox", "checkbox", "radio", "combobox",
+                  "listbox", "menuitem", "tab", "option", "searchbox"}
+    items = []
+    for i, el in enumerate(els[:80]):
+        try:
+            tag = el.evaluate("e => e.tagName.toLowerCase()")
+            text = (el.inner_text() or "").strip().replace("\n", " ")[:120]
+            href = el.get_attribute("href") or ""
+            name_attr = el.get_attribute("name") or ""
+            aria = el.get_attribute("aria-label") or ""
+            value = el.get_attribute("value") or ""
+            eid = el.get_attribute("id") or ""
+            if tag == "input":
+                itype = el.get_attribute("type") or ""
+                aria_role = el.get_attribute("role") or input_role.get(itype, "textbox")
+            else:
+                aria_role = el.get_attribute("role") or tag_role.get(tag, "")
+            # Build the most precise selector that will actually resolve.
+            selector = None
+            if eid and re.fullmatch(r"[A-Za-z][\w-]*", eid):
+                selector = f"#{eid}"
+            elif aria:
+                selector = f'[aria-label="{aria}"]'
+            elif aria_role in role_known and text:
+                selector = f'role={aria_role}[name="{text[:60]}"]'
+            elif name_attr and tag in ("input", "textarea", "select"):
+                selector = f'[name="{name_attr}"]'
+            elif text:
+                selector = f'text={text[:60]}'
+            items.append({"index": i, "selector": selector, "tag": tag, "text": text,
+                          "role": aria_role, "name": name_attr, "href": href, "value": value})
+        except Exception:
+            continue
+    return items
+
 def act_interactive(p):
     pw, browser = connect()
     try:
         page = get_page(browser)
-        sel = p.get("selector") or "a,button,input,select,textarea,[role=button],[onclick]"
-        els = page.query_selector_all(sel)
-        # Tag -> implicit ARIA role. role= selectors need a real ARIA role,
-        # not the tag name (role=a matches nothing; a[href] has role "link").
-        input_role = {"submit": "button", "button": "button", "reset": "button",
-                      "image": "button", "checkbox": "checkbox", "radio": "radio"}
-        tag_role = {"a": "link", "button": "button", "select": "combobox", "textarea": "textbox"}
-        role_known = {"link", "button", "textbox", "checkbox", "radio", "combobox",
-                      "listbox", "menuitem", "tab", "option", "searchbox"}
-        items = []
-        for i, el in enumerate(els[:80]):
-            try:
-                tag = el.evaluate("e => e.tagName.toLowerCase()")
-                text = (el.inner_text() or "").strip().replace("\n", " ")[:120]
-                href = el.get_attribute("href") or ""
-                name_attr = el.get_attribute("name") or ""
-                aria = el.get_attribute("aria-label") or ""
-                value = el.get_attribute("value") or ""
-                eid = el.get_attribute("id") or ""
-                if tag == "input":
-                    itype = el.get_attribute("type") or ""
-                    aria_role = el.get_attribute("role") or input_role.get(itype, "textbox")
-                else:
-                    aria_role = el.get_attribute("role") or tag_role.get(tag, "")
-                # Build the most precise selector that will actually resolve.
-                selector = None
-                if eid and re.fullmatch(r"[A-Za-z][\w-]*", eid):
-                    selector = f"#{eid}"
-                elif aria:
-                    selector = f'[aria-label="{aria}"]'
-                elif aria_role in role_known and text:
-                    selector = f'role={aria_role}[name="{text[:60]}"]'
-                elif name_attr and tag in ("input", "textarea", "select"):
-                    selector = f'[name="{name_attr}"]'
-                elif text:
-                    selector = f'text={text[:60]}'
-                items.append({"index": i, "selector": selector, "tag": tag, "text": text,
-                              "role": aria_role, "name": name_attr, "href": href, "value": value})
-            except Exception:
-                continue
+        items = build_elements(page, p.get("selector"))
         out({"count": len(items), "elements": items})
     finally:
         disconnect(pw, browser)
 
-def act_click(p):
-    sel = p.get("selector")
-    if not sel:
-        fail("click requires 'selector'", 2)
+def act_observe(p):
+    # Combined page snapshot: url/title + a text excerpt + the interactive
+    # element list. The single best call to understand a page before acting.
     pw, browser = connect()
     try:
         page = get_page(browser)
+        try:
+            body = (page.inner_text("body") or "").strip()
+        except Exception:
+            body = ""
+        excerpt = body[:4000]
+        items = build_elements(page)
+        out({"url": page.url, "title": page.title(), "text": excerpt,
+             "element_count": len(items), "elements": items})
+    finally:
+        disconnect(pw, browser)
+
+def resolve_selector(page, p):
+    # Prefer an explicit selector; fall back to a numeric target index returned
+    # by interactive/observe (re-derives the same element list and picks [i]).
+    sel = p.get("selector")
+    if sel:
+        return sel
+    target = p.get("target")
+    if target is None:
+        return None
+    items = build_elements(page)
+    try:
+        idx = int(target)
+    except (TypeError, ValueError):
+        fail(f"target must be an element index (got {target!r})", 2)
+    if idx < 0 or idx >= len(items):
+        fail(f"target index {idx} out of range; {len(items)} elements visible - call interactive/observe", 2)
+    chosen = items[idx]
+    sel = chosen.get("selector")
+    if not sel:
+        fail(f"element at index {idx} has no resolvable selector ({chosen.get('tag')} {chosen.get('text')!r})", 2)
+    return sel
+
+def act_click(p):
+    pw, browser = connect()
+    try:
+        page = get_page(browser)
+        sel = resolve_selector(page, p)
+        if not sel:
+            fail("click requires 'selector' or 'target' (index from interactive/observe)", 2)
         page.click(sel, timeout=timeout_of(p))
-        out({"clicked": True})
+        out({"clicked": True, "title": page.title(), "url": page.url})
     finally:
         disconnect(pw, browser)
 
 def act_type(p):
-    sel = p.get("selector")
     text = p.get("text")
-    if not sel or text is None:
-        fail("type requires 'selector' and 'text'", 2)
+    if text is None:
+        fail("type requires 'text' and 'selector' or 'target'", 2)
     pw, browser = connect()
     try:
         page = get_page(browser)
+        sel = resolve_selector(page, p)
+        if not sel:
+            fail("type requires 'selector' or 'target' (index from interactive/observe)", 2)
         page.fill(sel, text, timeout=timeout_of(p))
-        out({"typed": len(text)})
+        out({"typed": len(text), "title": page.title(), "url": page.url})
     finally:
         disconnect(pw, browser)
 
@@ -488,6 +539,7 @@ def main():
     action = (p.get("action") or "").strip()
     handlers = {
         "start": act_start, "stop": act_stop, "status": act_status,
+        "observe": act_observe,
         "navigate": act_navigate, "text": act_text, "interactive": act_interactive,
         "click": act_click, "type": act_type, "eval": act_eval, "wait": act_wait,
         "screenshot": act_screenshot,
@@ -547,6 +599,8 @@ local function execute(params, ctx)
     -- no `export`/`$env:` dance for an env var.
     local runner = ctx.config_dir .. "/_browser_runner.py"
     if not runner_installed then
+        -- Always overwrite so the runner matches the embedded script after an
+        -- upgrade (ctx.write_file refuses existing files, so use io.open).
         local f, err = io.open(runner, "w")
         if not f then
             return "ERROR: cannot install browser runner at " .. runner .. ": " .. tostring(err)
@@ -583,38 +637,40 @@ end
 
 bone.register_tool({
     name = "browser",
-    description = [[Drive a real web browser (Chromium) over a persistent CDP daemon. Call action=start once, then navigate, read, click, type, eval JS, wait, screenshot, and navigate history. The daemon stays running across calls (fast, keeps page state); call action=stop when done.
+    description = [[Drive a real web browser (Chromium) over a persistent CDP daemon. Call action=start once, then observe/navigate/read, click, type, eval JS, wait, screenshot, and navigate history. The daemon stays running across calls (fast, keeps page state); call action=stop when done.
 
 Lifecycle:
-- start: launch the daemon (headless by default; headless=false to see the window). Idempotent.
+- start: launch the daemon (headful by default - it evades more bot detection; pass headless=true for headless). Idempotent.
 - stop: kill the daemon.
 - status: report running/pid/port/open pages.
 
-Page actions (require the daemon running — call start first):
-- navigate: go to url
+Page actions (require the daemon running - call start first):
+- observe: one-shot page snapshot - url, title, a text excerpt, and the interactive element list. The best first call to understand a page before acting.
+- navigate: go to url (returns the new title/url)
 - text: visible text of the page or an element (selector)
-- interactive: list clickable elements with ready-to-use selectors — call this to see what you can click or type into
-- click: click selector
-- type: fill selector with text (replaces content)
+- interactive: list clickable elements with ready-to-use selectors - call this to see what you can click or type into
+- click: click a selector, or a target index from interactive/observe (returns the resulting title/url)
+- type: fill a selector or target index with text (replaces content; returns title/url)
 - eval: run a JS expression (script) and return the JSON result
-- wait: wait for selector, text, or load — pass selector or text
+- wait: wait for selector, text, or load - pass selector or text
 - screenshot: save a PNG to data/browser/shots (returns path; bone tool results are text so you reason from text+interactive, not the image)
 - back / forward / reload
 
-Selectors use Playwright syntax: css (#id, .cls), text=Foo, role=button[name="Sign in"], xpath=. Prefer the selector strings returned by interactive. Default timeout 30000ms; override with timeout_ms.]],
+Selectors use Playwright syntax: css (#id, .cls), text=Foo, role=button[name="Sign in"], xpath=. For click/type you may pass target=<index> instead of selector, using the index returned by interactive/observe. Prefer the selector strings returned by interactive/observe. Default timeout 30000ms; override with timeout_ms.]],
     parameters = {
         type = "object",
         properties = {
             action = {
                 type = "string",
-                description = "start, stop, status, navigate, text, interactive, click, type, eval, wait, screenshot, back, forward, reload",
-                enum = {"start", "stop", "status", "navigate", "text", "interactive", "click", "type", "eval", "wait", "screenshot", "back", "forward", "reload"},
+                description = "start, stop, status, observe, navigate, text, interactive, click, type, eval, wait, screenshot, back, forward, reload",
+                enum = {"start", "stop", "status", "observe", "navigate", "text", "interactive", "click", "type", "eval", "wait", "screenshot", "back", "forward", "reload"},
             },
             url = { type = "string", description = "URL for navigate." },
             selector = { type = "string", description = "Playwright selector for text/interactive/click/type/wait/screenshot." },
+            target = { type = "number", description = "Element index from interactive/observe; alternative to selector for click/type." },
             text = { type = "string", description = "Value to type (action=type), or text to wait for (action=wait)." },
             script = { type = "string", description = "JS expression for eval. A bare expression like document.title is wrapped as () => (...); pass a function/async literal to control it." },
-            headless = { type = "boolean", description = "start only: run headless (default true)." },
+            headless = { type = "boolean", description = "start only: run headless (default false; headful evades more bot detection)." },
             full = { type = "boolean", description = "screenshot only: capture full page (default false)." },
             path = { type = "string", description = "screenshot only: output PNG path (default data/browser/shots/shot-<ts>.png)." },
             timeout_ms = { type = "number", description = "Per-action timeout in ms (default 30000)." },

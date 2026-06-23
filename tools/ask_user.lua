@@ -21,6 +21,11 @@ local function format_answer(result)
         if result.custom and result.custom ~= "" then
             table.insert(parts, "  Custom: " .. result.custom)
         end
+        if #parts == 0 then
+            -- Multi-select submitted with nothing checked: tell the AI
+            -- explicitly so it can't be mistaken for a skip/no-response.
+            return "(no options selected)"
+        end
         return table.concat(parts, "\n")
     elseif result.value then
         if result.custom then
@@ -35,14 +40,12 @@ end
 local function get_qtype(q)
     local qtype = q.type
     if not qtype then
+        -- Explicit contract: options present → single_select (even with
+        -- allow_custom, which adds a "type your own" row). multi_select is
+        -- only used when the caller asks for it by name. No options → text.
         local options = q.options or {}
-        local allow_custom = q.allow_custom or false
         if #options > 0 then
-            if allow_custom or #options > 5 then
-                qtype = "multi_select"
-            else
-                qtype = "single_select"
-            end
+            qtype = "single_select"
         else
             qtype = "text_input"
         end
@@ -50,30 +53,32 @@ local function get_qtype(q)
     return qtype
 end
 
--- Flatten object-form options ({label, description}) to plain strings.
-local function flatten_options(options)
-    local flat = {}
+-- Normalize options to menu form, preserving optional per-option descriptions.
+-- Accepts plain strings or { label, description } objects.
+local function normalize_options(options)
+    local out = {}
     for i, opt in ipairs(options) do
         if type(opt) == "table" then
-            flat[i] = opt.label or tostring(opt)
+            out[i] = { label = opt.label or tostring(opt), description = opt.description }
         else
-            flat[i] = opt
+            out[i] = { label = opt }
         end
     end
-    return flat
+    return out
 end
 
 local function ask_one(q, ctx)
     local question = q.question
-    local options = flatten_options(q.options or {})
-    local allow_custom = q.allow_custom or false
+    local options = normalize_options(q.options or {})
     local qtype = get_qtype(q)
 
     local spec = {
         question = question,
         options = options,
         default = q.default,
-        allow_custom = allow_custom,
+        -- Always offer a "type your own answer" row on every question, so the
+        -- user is never boxed into the options we happened to provide.
+        allow_custom = true,
     }
     local fn = menu.text_input
     if qtype == "single_select" or qtype == "single" then
@@ -192,18 +197,23 @@ local function ask_multi_with_backtrack(questions, ctx)
             allow_custom = false,
         })
 
-        if not ok or (result and result.cancelled) then
-            -- Submit on cancel/escape
+        if not ok then
+            -- Pane/transport failure: bail out so we don't spin forever.
             break
-        end
-
-        local choice = parse_nav_choice(result, total)
-        if choice == "submit" then
-            break
+        elseif result and result.cancelled then
+            -- Esc on the review screen is a no-op, not a submit. Re-render the
+            -- review so the only way to submit is the explicit option below.
+            -- (All questions are already answered here, so the loop just
+            -- re-shows the nav pane.)
         else
-            -- Jump back to revise that question
-            answers[choice] = nil
-            ask_from = choice
+            local choice = parse_nav_choice(result, total)
+            if choice == "submit" then
+                break
+            else
+                -- Jump back to revise that question
+                answers[choice] = nil
+                ask_from = choice
+            end
         end
     end
 
@@ -265,12 +275,24 @@ bone.register_tool({
             },
             options = {
                 type = "array",
-                description = "List of options for the user to choose from (single-question mode).",
-                items = { type = "string" },
+                description = "Options to choose from (single-question mode). Each item is "
+                    .. "an object with a 'label' and an optional 'description' explaining "
+                    .. "the trade-off. A plain string is also accepted as shorthand for "
+                    .. "{ label = <string> }.",
+                items = {
+                    type = "object",
+                    properties = {
+                        label = { type = "string", description = "The option text shown to the user." },
+                        description = { type = "string", description = "Optional one-line explanation of this option." },
+                    },
+                    required = { "label" },
+                    additionalProperties = false,
+                },
             },
             allow_custom = {
                 type = "boolean",
-                description = "Whether the user can type their own answer (single-question mode).",
+                description = "Add a 'type your own answer' row below the options. Works with "
+                    .. "single_select (pick one option OR type a custom answer).",
             },
             questions = {
                 type = "array",
@@ -281,17 +303,29 @@ bone.register_tool({
                         question = { type = "string", description = "The question to ask." },
                         options = {
                             type = "array",
-                            items = { type = "string" },
-                            description = "List of options to choose from.",
+                            description = "Options to choose from. Each item is an object with a "
+                                .. "'label' and an optional 'description'. A plain string is "
+                                .. "also accepted as shorthand for { label = <string> }.",
+                            items = {
+                                type = "object",
+                                properties = {
+                                    label = { type = "string", description = "The option text shown to the user." },
+                                    description = { type = "string", description = "Optional one-line explanation of this option." },
+                                },
+                                required = { "label" },
+                                additionalProperties = false,
+                            },
                         },
                         allow_custom = {
                             type = "boolean",
-                            description = "Whether the user can type their own answer.",
+                            description = "Add a 'type your own answer' row below the options.",
                         },
                         type = {
                             type = "string",
                             enum = { "single_select", "multi_select", "text_input" },
-                            description = "Question type. Auto-detected if omitted.",
+                            description = "Question type. If omitted: 'single_select' when "
+                                .. "options are given (use multi_select explicitly for "
+                                .. "checkboxes), otherwise 'text_input'.",
                         },
                         default = {
                             type = "number",
