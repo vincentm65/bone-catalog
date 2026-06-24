@@ -1,42 +1,20 @@
 #!/usr/bin/env bash
 # Regenerate catalog.json from the tools/ and commands/ .lua files.
 #
-# Each entry: { name, kind, description, version, sha256 }.
+# Each entry: { name, kind, description, sha256 }.
 #  - description: prefer a `description = "..."` field, else the first `--`
 #    comment line (mirrors `extract_description` in src/ext/mod.rs).
-#  - version: preserved from the existing catalog.json if present, else 1.
-#    Bump by hand to push a refresh to installed users.
-#  - sha256: over the file bytes; the client verifies after download.
+#  - sha256: over the file bytes. The bone client both verifies downloads and
+#    detects updates against it (on-disk hash != this => "update available"),
+#    so it MUST track the file. Run this whenever a .lua file changes — CI
+#    fails the build if catalog.json is stale.
 #
-# Usage: catalog/gen-index.sh   (run from the repo root or the catalog dir)
+# Usage: ./gen-index.sh   (run from the repo root or the catalog dir)
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-prev="catalog.json"
 out="catalog.json.tmp"
-
-# Pull the previous version for a given file name (so versions are sticky).
-prev_version() {
-  local name="$1"
-  if [[ -f "$prev" ]]; then
-    # crude but dependency-free: find the object with this name, read its version
-    python3 - "$prev" "$name" <<'PY' 2>/dev/null || echo 1
-import json, sys
-try:
-    data = json.load(open(sys.argv[1]))
-except Exception:
-    print(1); sys.exit()
-for e in data:
-    if e.get("name") == sys.argv[2]:
-        print(e.get("version", 1)); break
-else:
-    print(1)
-PY
-  else
-    echo 1
-  fi
-}
 
 # Extract a one-line description from a Lua file.
 extract_desc() {
@@ -62,15 +40,14 @@ for kind in tools commands; do
     name=$(basename "$file")
     desc=$(extract_desc "$file" | json_escape)
     sha=$(sha256sum "$file" | cut -d' ' -f1)
-    ver=$(prev_version "$name")
     if [[ $first -eq 0 ]]; then echo "," >> "$out"; fi
     first=0
-    printf '  { "name": %s, "kind": "%s", "description": %s, "version": %s, "sha256": "%s" }' \
-      "\"$name\"" "$singular" "$desc" "$ver" "$sha" >> "$out"
+    printf '  { "name": %s, "kind": "%s", "description": %s, "sha256": "%s" }' \
+      "\"$name\"" "$singular" "$desc" "$sha" >> "$out"
   done
 done
 echo "" >> "$out"
 echo "]" >> "$out"
 
-mv "$out" "$prev"
-echo "wrote $prev"
+mv "$out" "catalog.json"
+echo "wrote catalog.json"

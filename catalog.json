@@ -1,79 +1,13 @@
 [
-  {
-    "name": "ask_user.lua",
-    "kind": "tool",
-    "description": "Ask the user one or more questions with selectable options or custom answers. Use the 'questions' array to ask several questions back-to-back in a single call, or use top-level 'question' + 'options' for a single question.",
-    "version": 1,
-    "sha256": "91d48d18524e02aefb80f9723319f28f3aa18cab1b9f77258546fa496267118d"
-  },
-  {
-    "name": "browser.lua",
-    "kind": "tool",
-    "description": "Delegate a web task to an autonomous browser agent (browser-use driving real Chromium). Describe the goal in plain language; it navigates/clicks/types/extracts on its own and returns a final result. Reuses bone's current LLM provider.",
-    "version": 4,
-    "sha256": "7d88c76060f80aec0fe7675e8ff3a78048c15d374feae969597af660e1612d7f"
-  },
-  {
-    "name": "cron.lua",
-    "kind": "tool",
-    "description": "Manage Bone scheduled jobs for the user. Use this when the user asks to schedule, list, remove, or inspect recurring Bone tasks. Fully implemented as a custom tool; supports daily HH:MM schedules.",
-    "version": 1,
-    "sha256": "40ed8ec8834f17fb9ef129d62bb483e84e943e87cda29c2f3a5daf963d5f0ae5"
-  },
-  {
-    "name": "subagent.lua",
-    "kind": "tool",
-    "description": "dispatch (start tasks), wait (block for results), cancel (stop jobs by id), or status (non-blocking snapshot)",
-    "version": 1,
-    "sha256": "4520c7cc4c2d4c8f97f98226b94cf17d34dce54bb0db981a8fe9df61418c3e56"
-  },
-  {
-    "name": "task_list.lua",
-    "kind": "tool",
-    "description": "Maintain a visible checklist (TUI pane) for the user. Use it for any task with ~3+ distinct steps or work spanning multiple files. Call 'write' with the FULL list every time \u2014 it replaces the whole list, so there are no indices to track. Keep exactly one item 'in_progress' (the step you're working on now) and flip items to 'done' the moment they're finished, then write again. State is host-held; no state arg. Actions: write (pass tasks, optional name, max 15), clear.",
-    "version": 1,
-    "sha256": "8edbe15d23540c05b8001a3ada5778cd3cb585cd5823dd6d273e65bc07dd956e"
-  },
-  {
-    "name": "web_search.lua",
-    "kind": "tool",
-    "description": "Search the web for information using DuckDuckGo. Returns titles, URLs and summaries. Useful for looking up documentation, current events, technical topics, and general knowledge.",
-    "version": 1,
-    "sha256": "dbc49a82ccf77ad14f238105843bbbad6a164fbb1ac8d0d5e80d98d1e2debf84"
-  },
-  {
-    "name": "goal.lua",
-    "kind": "command",
-    "description": "Start, resume, check, or stop an autonomous goal.",
-    "version": 1,
-    "sha256": "5f2e74f0c85efb9ced2ea3bce8de8f2898e73a8495155495517e31cc3914ca3e"
-  },
-  {
-    "name": "history.lua",
-    "kind": "command",
-    "description": "Pick a recent conversation and load it as the current chat.",
-    "version": 1,
-    "sha256": "d2608d6504b113f1e2d05e0d2d7406a147275a64dd57034bb74208fd58ebc9cc"
-  },
-  {
-    "name": "memory.lua",
-    "kind": "command",
-    "description": "Incremental memory builder. Processes all conversations since last run and updates memory.md.",
-    "version": 1,
-    "sha256": "ff275b24b36e329c6d84709668184a3f8e10ae9bbfd710d4a164fb651c688931"
-  },
-  {
-    "name": "review.lua",
-    "kind": "command",
-    "description": "Review unstaged changes for bugs, smells, dead code, and clean code",
-    "version": 1,
-    "sha256": "15edc5bd2c924b6079564a307acef5c739e3db436ec74e5199e05b74d037d9d2"
-  },
-  {
-    "name": "shotgun.lua",
-    "kind": "command",
-    "description": "Fan a prompt out to configured providers; the chat agent synthesizes the answers",
-    "version": 1,
-    "sha256": "d74350d34cfe321bed63002da2e70ffa9c2d9d808b6ed4f17771b1f63155c0e0"
-  }
+  { "name": "ask_user.lua", "kind": "tool", "description": "Ask the user one or more questions with selectable options or custom answers. Use the 'questions' array to ask several questions back-to-back in a single call, or use top-level 'question' + 'options' for a single question.", "sha256": "91d48d18524e02aefb80f9723319f28f3aa18cab1b9f77258546fa496267118d" },
+  { "name": "browser.lua", "kind": "tool", "description": "The web task to complete, in plain language. Be specific about what to do and what to return.", "sha256": "6a19ca68a22805c1d93d7872e7d4f23a9402b414f5c97663ce88cb412483a0f5" },
+  { "name": "cron.lua", "kind": "tool", "description": "Manage Bone scheduled jobs for the user. Use this when the user asks to schedule, list, remove, or inspect recurring Bone tasks. Fully implemented as a custom tool; supports daily HH:MM schedules.", "sha256": "40ed8ec8834f17fb9ef129d62bb483e84e943e87cda29c2f3a5daf963d5f0ae5" },
+  { "name": "subagent.lua", "kind": "tool", "description": "dispatch (start tasks), wait (block for results), cancel (stop jobs by id), or status (non-blocking snapshot)", "sha256": "4520c7cc4c2d4c8f97f98226b94cf17d34dce54bb0db981a8fe9df61418c3e56" },
+  { "name": "task_list.lua", "kind": "tool", "description": "Maintain a visible checklist (TUI pane) for the user. Use it for any task with ~3+ distinct steps or work spanning multiple files. Call 'write' with the FULL list every time \u2014 it replaces the whole list, so there are no indices to track. Keep exactly one item 'in_progress' (the step you're working on now) and flip items to 'done' the moment they're finished, then write again. State is host-held; no state arg. Actions: write (pass tasks, optional name, max 15), clear.", "sha256": "8edbe15d23540c05b8001a3ada5778cd3cb585cd5823dd6d273e65bc07dd956e" },
+  { "name": "web_search.lua", "kind": "tool", "description": "Search the web for information using DuckDuckGo. Returns titles, URLs and summaries. Useful for looking up documentation, current events, technical topics, and general knowledge.", "sha256": "dbc49a82ccf77ad14f238105843bbbad6a164fbb1ac8d0d5e80d98d1e2debf84" },
+  { "name": "goal.lua", "kind": "command", "description": "Start, resume, check, or stop an autonomous goal.", "sha256": "5f2e74f0c85efb9ced2ea3bce8de8f2898e73a8495155495517e31cc3914ca3e" },
+  { "name": "history.lua", "kind": "command", "description": "Pick a recent conversation and load it as the current chat.", "sha256": "d2608d6504b113f1e2d05e0d2d7406a147275a64dd57034bb74208fd58ebc9cc" },
+  { "name": "memory.lua", "kind": "command", "description": "Incremental memory builder. Processes all conversations since last run and updates memory.md.", "sha256": "ff275b24b36e329c6d84709668184a3f8e10ae9bbfd710d4a164fb651c688931" },
+  { "name": "review.lua", "kind": "command", "description": "Review unstaged changes for bugs, smells, dead code, and clean code", "sha256": "15edc5bd2c924b6079564a307acef5c739e3db436ec74e5199e05b74d037d9d2" },
+  { "name": "shotgun.lua", "kind": "command", "description": "Fan a prompt out to configured providers; the chat agent synthesizes the answers", "sha256": "d74350d34cfe321bed63002da2e70ffa9c2d9d808b6ed4f17771b1f63155c0e0" }
 ]

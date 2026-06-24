@@ -1,0 +1,26 @@
+name: check-index
+
+# Fails if catalog.json is out of date with the .lua files. Each entry's sha256
+# is what bone uses to detect updates, so a stale index means installed users
+# never see (or wrongly see) an update. Regenerate locally with ./gen-index.sh.
+on:
+  push:
+  pull_request:
+
+jobs:
+  check-index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate catalog.json
+        run: ./gen-index.sh
+
+      - name: Fail if catalog.json is stale
+        run: |
+          if ! git diff --quiet -- catalog.json; then
+            echo "::error::catalog.json is out of date. Run ./gen-index.sh and commit the result."
+            git diff -- catalog.json
+            exit 1
+          fi
+          echo "catalog.json is up to date."
