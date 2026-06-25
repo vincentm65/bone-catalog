@@ -1,30 +1,41 @@
--- browser tool: hand a natural-language task to the browser-use agent.
+-- browser tool: drive a persistent Chromium with primitive verbs (v5 — CDP).
 --
--- Architecture (v4 — browser-use):
---   * Unlike the old patchright tool (primitive navigate/click/type that the host
---     LLM drove step by step), this delegates a whole TASK to browser-use, which
---     runs its OWN agent loop over a real Chromium and returns a final result.
---   * browser-use needs its own LLM. We reuse whatever provider bone is currently
---     using: the active provider's handler/base_url/model come from the host config
---     (ctx.config.list_providers + ctx.conversation.current), and the api key is
---     passed to the runner via an env var so it never lands in argv / `ps`.
---   * An embedded, content-addressed Python runner is written to disk once per
---     version and invoked under `uv run --with browser-use`. uv installs
---     browser-use (and, on first run, its Chromium) into an ephemeral env.
+-- Architecture (v5 — host-driven CDP):
+--   * Unlike v4 (browser-use, which ran its OWN autonomous agent loop and only
+--     returned a final answer), this exposes primitive verbs — open, read, click,
+--     type, screenshot, eval, … — and the BONE host model drives them step by
+--     step. Every action is one tool call whose result the host sees, so the run
+--     is fully observable and the host can ask the user for input mid-task.
+--   * No LLM lives in the runner: bone's own model is the loop. All the v4
+--     provider/api-key plumbing is gone.
 --
--- Provider -> browser-use chat class:
---   handler == "anthropic"  -> ChatAnthropic(model, api_key)
---   otherwise (openai-compat) -> ChatOpenAI(model, api_key, base_url)
+-- Persistence — the crux:
+--   A browser is long-lived and stateful, but every ctx.shell call is a fresh
+--   process. So the verbs talk to a PERSISTENT Chromium that outlives any single
+--   call:
+--     * cold start: the runner launches the raw Chromium binary (Playwright's
+--       bundled one) DETACHED (start_new_session, fds → logfile, never the
+--       inherited shell pipes — otherwise ctx.shell would block until timeout),
+--       with --remote-debugging-port. pid+port are recorded under
+--       data/browser/.
+--     * every verb: connect_over_cdp(port), act on the existing page, then
+--       DISCONNECT (browser.close() on a CDP connection does NOT kill the remote
+--       Chromium). State (cookies, logins, the open page) stays in the browser.
+--     * `stop` kills the recorded pid.
+--   The profile dir (data/browser/profile) is reused across runs, so logins and
+--   cookies persist between sessions just like the v4 tool.
 --
--- A single tool call is one long-running agent run, so it is bounded by the host's
--- ~300s ctx.shell ceiling. Keep max_steps modest and split very long jobs into
--- smaller tasks.
+-- After a `screenshot` you get a file path; the host can `read_file` it to see
+-- the page visually (read_file renders images).
 
-local BROWSER_USE_VERSION = "0.13.1"
+local RUNNER_VERSION = "5.0.0"
 
 local PYTHON_SCRIPT = [=[
-import asyncio, base64, json, os, sys
+import asyncio, base64, json, os, signal, subprocess, sys, time, urllib.request
 from pathlib import Path
+
+DEFAULT_PORT = 9333
+READ_LIMIT = 12000  # chars of page text returned by `read`
 
 def bone_dir():
     xdg = os.environ.get("XDG_CONFIG_HOME")
@@ -35,15 +46,41 @@ def bone_dir():
         return Path(home) / ".bone-rust"
     return Path(".bone-rust").resolve()
 
+DATA = bone_dir() / "data" / "browser"
+PROFILE = DATA / "profile"
+PORT_FILE = DATA / "cdp_port"
+PID_FILE = DATA / "pid"
+LOG = DATA / "chromium.log"
+
 def emit(obj):
     print(json.dumps(obj, default=str))
 
+def cdp_base(port):
+    return "http://127.0.0.1:%d" % port
+
+def port_alive(port):
+    try:
+        with urllib.request.urlopen(cdp_base(port) + "/json/version", timeout=1) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+def read_port():
+    try:
+        return int(PORT_FILE.read_text().strip())
+    except Exception:
+        return DEFAULT_PORT
+
+def read_pid():
+    try:
+        return int(PID_FILE.read_text().strip())
+    except Exception:
+        return None
+
 def ensure_display(headless):
-    # bone is often launched from a tty, so the spawned browser inherits no
-    # DISPLAY / WAYLAND_DISPLAY and a headful Chromium has no X server to draw on
-    # (no visible window). When running headful and no display is set, point it at
-    # a live X server discovered from its socket (Xwayland's :0 works without an
-    # auth cookie). Mirrors the old patchright tool's behavior.
+    # bone is usually launched from a tty with no DISPLAY/WAYLAND_DISPLAY, so a
+    # headful Chromium has no X server to draw on. Point it at a live X server
+    # discovered from its socket (Xwayland's :0 works without an auth cookie).
     if headless:
         return
     if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
@@ -54,93 +91,208 @@ def ensure_display(headless):
     if nums:
         os.environ["DISPLAY"] = ":" + nums[0]
 
+def chromium_executable():
+    # executable_path is available without launching anything. On a fresh
+    # environment the browser binary may not be downloaded yet — install it once.
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        exe = p.chromium.executable_path
+    if not exe or not Path(exe).exists():
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=False,
+        )
+        from playwright.sync_api import sync_playwright as sp2
+        with sp2() as p:
+            exe = p.chromium.executable_path
+    return exe
+
+def launch_chromium(headless, port):
+    DATA.mkdir(parents=True, exist_ok=True)
+    PROFILE.mkdir(parents=True, exist_ok=True)
+    ensure_display(headless)
+    exe = chromium_executable()
+    args = [
+        exe,
+        "--remote-debugging-port=%d" % port,
+        "--remote-debugging-address=127.0.0.1",
+        "--user-data-dir=%s" % PROFILE,
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-features=Translate",
+    ]
+    if headless:
+        args.append("--headless=new")
+    # Fully detached: own session and fds → logfile, NOT the shell pipes that
+    # ctx.shell reads to EOF (else the call blocks until timeout). This is what
+    # lets the browser outlive the launching shell call.
+    logf = open(LOG, "ab")
+    proc = subprocess.Popen(
+        args,
+        stdout=logf,
+        stderr=logf,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    PID_FILE.write_text(str(proc.pid))
+    PORT_FILE.write_text(str(port))
+    for _ in range(150):  # up to ~15s for the debug port to come up
+        if port_alive(port):
+            return
+        if proc.poll() is not None:
+            raise RuntimeError("Chromium exited before opening the debug port; see " + str(LOG))
+        time.sleep(0.1)
+    raise RuntimeError("Chromium did not open the debug port in time")
+
+def do_stop():
+    pid = read_pid()
+    killed = False
+    if pid:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed = True
+        except ProcessLookupError:
+            pass
+        except Exception:
+            pass
+    for f in (PID_FILE, PORT_FILE):
+        try:
+            f.unlink()
+        except Exception:
+            pass
+    return {"ok": True, "action": "stop", "killed": killed}
+
+async def get_page(browser):
+    ctxs = browser.contexts
+    ctx = ctxs[0] if ctxs else await browser.new_context()
+    pages = ctx.pages
+    return pages[0] if pages else await ctx.new_page()
+
+async def dispatch(action, p, browser):
+    page = await get_page(browser)
+    timeout = int(p.get("timeout_ms") or 30000)
+
+    if action == "open":
+        url = (p.get("url") or "").strip()
+        if not url:
+            return {"ok": False, "error": "open requires `url`"}
+        if "://" not in url:
+            url = "https://" + url
+        await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+        return {"ok": True, "action": "open", "url": page.url, "title": await page.title()}
+
+    if action == "read":
+        sel = p.get("selector") or "body"
+        try:
+            await page.wait_for_selector(sel, timeout=timeout)
+        except Exception:
+            pass
+        text = await page.inner_text(sel)
+        truncated = len(text) > READ_LIMIT
+        return {
+            "ok": True, "action": "read", "url": page.url, "title": await page.title(),
+            "selector": sel, "truncated": truncated, "text": text[:READ_LIMIT],
+        }
+
+    if action == "click":
+        sel = p.get("selector")
+        if not sel:
+            return {"ok": False, "error": "click requires `selector`"}
+        await page.click(sel, timeout=timeout)
+        return {"ok": True, "action": "click", "selector": sel, "url": page.url}
+
+    if action == "type":
+        sel, text = p.get("selector"), p.get("text")
+        if not sel or text is None:
+            return {"ok": False, "error": "type requires `selector` and `text`"}
+        await page.fill(sel, text, timeout=timeout)
+        if p.get("enter"):
+            await page.press(sel, "Enter")
+        return {"ok": True, "action": "type", "selector": sel, "url": page.url}
+
+    if action == "press":
+        key = p.get("text")
+        if not key:
+            return {"ok": False, "error": "press requires `text` (the key, e.g. 'Enter')"}
+        await page.keyboard.press(key)
+        return {"ok": True, "action": "press", "key": key, "url": page.url}
+
+    if action == "screenshot":
+        DATA.mkdir(parents=True, exist_ok=True)
+        path = p.get("path") or str(DATA / "shot.png")
+        await page.screenshot(path=path, full_page=bool(p.get("full_page")))
+        return {"ok": True, "action": "screenshot", "path": path, "url": page.url}
+
+    if action == "eval":
+        js = p.get("js")
+        if not js:
+            return {"ok": False, "error": "eval requires `js`"}
+        value = await page.evaluate(js)
+        return {"ok": True, "action": "eval", "value": value, "url": page.url}
+
+    if action == "back":
+        await page.go_back(wait_until="domcontentloaded", timeout=timeout)
+        return {"ok": True, "action": "back", "url": page.url, "title": await page.title()}
+
+    if action == "tabs":
+        tabs = []
+        for ctx in browser.contexts:
+            for pg in ctx.pages:
+                tabs.append({"url": pg.url, "title": await pg.title()})
+        return {"ok": True, "action": "tabs", "tabs": tabs}
+
+    if action == "current_url":
+        return {"ok": True, "action": "current_url", "url": page.url, "title": await page.title()}
+
+    return {"ok": False, "error": "unknown action: %s" % action}
+
+async def run(p):
+    from playwright.async_api import async_playwright
+    port = read_port()
+    async with async_playwright() as pw:
+        browser = await pw.chromium.connect_over_cdp(cdp_base(port))
+        try:
+            return await dispatch(p["action"], p, browser)
+        finally:
+            await browser.close()  # disconnect only; remote Chromium keeps running
+
 def main():
     raw = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
         p = json.loads(base64.b64decode(raw.encode()).decode()) if raw else {}
     except Exception as e:
-        emit({"error": f"bad params payload: {e}"})
+        emit({"ok": False, "error": "bad params payload: %s" % e})
         return
 
-    task = (p.get("task") or "").strip()
-    if not task:
-        emit({"error": "task is required"})
+    action = (p.get("action") or "").strip()
+    if not action:
+        emit({"ok": False, "error": "action is required"})
         return
 
-    key = os.environ.get("BONE_BU_KEY", "")
-    handler = (p.get("handler") or "openai").strip()
-    if handler == "anthropic" and not key:
-        emit({"error": "the Anthropic provider has no API key — set one via /config"})
+    if action == "stop":
+        emit(do_stop())
         return
+
+    # Cold start: launch the persistent Chromium if its debug port is not up.
+    port = read_port()
+    if not port_alive(port):
+        try:
+            launch_chromium(bool(p.get("headless", False)), port)
+        except Exception as e:
+            emit({"ok": False, "error": "could not start browser: %s" % e})
+            return
 
     try:
-        from browser_use import Agent, BrowserProfile, ChatOpenAI, ChatAnthropic
+        emit(asyncio.run(run(p)))
     except Exception as e:
-        emit({"error": f"browser-use import failed: {e}"})
-        return
-
-    model = p.get("model") or ""
-    if handler == "anthropic":
-        llm = ChatAnthropic(model=model, api_key=key)
-    else:
-        # All of bone's OpenAI-compatible providers (openai, gemini, deepseek,
-        # openrouter, glm, kimi, local, …) share this path; base_url targets them.
-        # Local/keyless servers (e.g. llama.cpp) need no real key, but the OpenAI
-        # client still wants a non-empty string, so fall back to a placeholder.
-        llm = ChatOpenAI(model=model, api_key=key or "sk-local", base_url=p.get("base_url") or None)
-
-    headless = bool(p.get("headless", False))
-    ensure_display(headless)
-
-    profile_dir = str(bone_dir() / "data" / "browser" / "profile")
-    Path(profile_dir).mkdir(parents=True, exist_ok=True)
-    profile = BrowserProfile(
-        headless=headless,
-        user_data_dir=profile_dir,
-        keep_alive=False,
-    )
-
-    if p.get("start_url"):
-        task = f"First open {p['start_url']}. Then: {task}"
-
-    async def run():
-        agent = Agent(
-            task=task,
-            llm=llm,
-            browser_profile=profile,
-            use_vision=bool(p.get("vision", True)),
-        )
-        history = await agent.run(max_steps=int(p.get("max_steps") or 15))
-        return history
-
-    try:
-        history = asyncio.run(run())
-    except Exception as e:
-        emit({"error": f"browser-use run failed: {e}"})
-        return
-
-    try:
-        errors = [e for e in history.errors() if e]
-    except Exception:
-        errors = []
-    try:
-        urls = [str(u) for u in history.urls() if u]
-    except Exception:
-        urls = []
-    emit({
-        "result": history.final_result(),
-        "done": bool(history.is_done()),
-        "steps": history.number_of_steps(),
-        "urls": urls,
-        "errors": errors,
-    })
+        emit({"ok": False, "action": action, "error": str(e)})
 
 main()
 ]=]
 
 -- Base64 encoder (Lua has none built in). Operates on raw bytes, so multibyte
--- UTF-8 params round-trip correctly. Used to pass the task/url/config to the
--- Python runner as a single argv token without shell-escaping pitfalls.
+-- UTF-8 params round-trip correctly. Used to pass params to the Python runner as
+-- a single argv token without shell-escaping pitfalls.
 local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local function b64encode(s)
     local out, i, n = {}, 1, #s
@@ -178,84 +330,16 @@ end
 
 local RUNNER_HASH = content_hash(PYTHON_SCRIPT)
 
--- Single-quote a value for use inside a `bash -c` command. Wraps in single quotes
--- and escapes any embedded single quote. Used for the inline api-key env var.
-local function shquote(s)
-    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
-end
-
--- Find the provider bone is currently using and return its handler/base_url/
--- model/api_key.
---
--- Inside a TOOL call the host does not populate ctx.conversation.current() or the
--- list_providers() `active` flag (those carry app state only for slash commands),
--- so the reliable signal is the persisted selection: ctx.config.get("providers",
--- "_last_provider"). We resolve that id against list_providers() (which still
--- carries each provider's handler/base_url/model/api_key) and fall back to the
--- conversation/active hints when they happen to be present (e.g. command ctx).
-local function active_provider(ctx)
-    local providers = {}
-    local ok, list = pcall(function() return ctx.config.list_providers() end)
-    if ok and type(list) == "table" then
-        providers = list
-    end
-
-    local conv_provider, conv_model
-    local okc, conv = pcall(function() return ctx.conversation.current() end)
-    if okc and type(conv) == "table" then
-        conv_provider = conv.provider
-        conv_model = conv.model
-    end
-
-    local last_provider
-    local okl, lp = pcall(function() return ctx.config.get("providers", "_last_provider") end)
-    if okl and type(lp) == "string" and lp ~= "" then
-        last_provider = lp
-    end
-
-    local want = conv_provider or last_provider
-    local chosen
-    for _, row in ipairs(providers) do
-        if want and row.id == want then
-            chosen = row
-            break
-        end
-        if not chosen and row.active then
-            chosen = row
-        end
-    end
-    if not chosen then
-        return nil
-    end
-    return {
-        handler = chosen.handler or "openai",
-        base_url = chosen.base_url or "",
-        model = conv_model or chosen.model or "",
-        api_key = chosen.api_key or "",
-    }
-end
-
 local function execute(params, ctx)
     params = params or {}
-    local task = type(params.task) == "string" and params.task or ""
-    if task == "" then
-        return "ERROR: task is required"
-    end
-
-    local prov = active_provider(ctx)
-    if not prov then
-        return "ERROR: no active provider found — configure one via /config"
-    end
-    -- Cloud providers need a key; local/keyless OpenAI-compatible servers (e.g.
-    -- llama.cpp) don't. Anthropic always does, so only block that case here.
-    if prov.api_key == "" and prov.handler == "anthropic" then
-        return "ERROR: the Anthropic provider has no API key — set one via /config"
+    local action = type(params.action) == "string" and params.action or ""
+    if action == "" then
+        return "ERROR: action is required"
     end
 
     -- The runner is written to disk once per script version (content-addressed
-    -- name); params ride as a base64 argv token. The api key is NOT in the token —
-    -- it is passed as an inline env var so it stays out of argv / `ps` output.
-    local runner = ctx.config_dir .. "/_browser_runner_" .. RUNNER_HASH .. ".py"
+    -- name); params ride as a base64 argv token.
+    local runner = ctx.config_dir .. "/_browser_cdp_" .. RUNNER_HASH .. ".py"
     if not ctx.fs.is_file(runner) then
         local ok, err = pcall(ctx.write_file, runner, PYTHON_SCRIPT)
         if not ok then
@@ -264,22 +348,23 @@ local function execute(params, ctx)
     end
 
     local payload = b64encode(cjson.encode({
-        task = task,
-        max_steps = tonumber(params.max_steps) or 15,
+        action = action,
+        url = type(params.url) == "string" and params.url or nil,
+        selector = type(params.selector) == "string" and params.selector or nil,
+        text = type(params.text) == "string" and params.text or nil,
+        js = type(params.js) == "string" and params.js or nil,
+        path = type(params.path) == "string" and params.path or nil,
+        enter = params.enter and true or false,
+        full_page = params.full_page and true or false,
         headless = params.headless and true or false,
-        vision = params.vision ~= false,
-        start_url = type(params.start_url) == "string" and params.start_url or nil,
-        handler = prov.handler,
-        base_url = prov.base_url,
-        model = prov.model,
+        timeout_ms = tonumber(params.timeout_ms) or nil,
     }))
 
-    local cmd = "ANONYMIZED_TELEMETRY=false BONE_BU_KEY=" .. shquote(prov.api_key)
-        .. " uv run --no-project --with 'browser-use==" .. BROWSER_USE_VERSION .. "'"
+    local cmd = "ANONYMIZED_TELEMETRY=false uv run --no-project --with playwright"
         .. " -- python '" .. runner .. "' '" .. payload .. "'"
 
-    -- One call is a whole agent run. Use the host's max budget; browser-use's own
-    -- max_steps is the real bound on how long the agent works.
+    -- First run downloads Playwright's Chromium (slow); steady-state verbs are
+    -- quick. Use the host's max budget so a cold start isn't cut off.
     local result = ctx.shell(cmd, { timeout_ms = 300000 })
     if result.exit_code ~= 0 then
         local err = (result.stderr and #result.stderr > 0) and result.stderr or (result.stdout or "")
@@ -290,32 +375,48 @@ end
 
 bone.register_tool({
     name = "browser",
-    description = [[Delegate a web task to an autonomous browser agent (browser-use driving a real Chromium). You describe the goal in plain language; the agent navigates, clicks, types, reads, and extracts on its own, then returns a final result — you do NOT drive individual clicks.
+    description = [[Drive a persistent Chromium browser one action at a time. YOU are the loop: call this repeatedly — open a page, read it, click/type, read again — deciding each step from the result of the last. The browser stays open and logged-in between calls (cookies and sessions persist), so a later call continues where the previous one left off.
 
-Give a complete, self-contained task ("Go to news.ycombinator.com and return the titles and points of the top 5 posts", "Search Amazon for a USB-C hub under $30 and report the cheapest with its price and link"). Include any data it needs (search terms, filters, what to extract). It reuses bone's current LLM provider, so make sure that provider's API key is set (/config).
+Pick an `action`:
+- open        — navigate to `url` (https:// assumed if no scheme).
+- read        — return the visible text of the page, or of `selector` if given. Do this after every navigation/click to see what happened.
+- click       — click the element matching `selector` (CSS or Playwright text= selector).
+- type        — fill `selector` with `text`; pass enter=true to submit.
+- press       — send a single key (`text`, e.g. "Enter", "PageDown").
+- screenshot  — save a PNG to `path` (default data/browser/shot.png); read_file it to view the page. full_page=true for the whole scroll height.
+- eval        — run JavaScript (`js`) in the page and return its value.
+- tabs        — list open tabs (url + title).
+- current_url — report the active tab's url and title.
+- back        — go back one entry in history.
+- stop        — close the browser and end the session.
 
-Returns JSON: result (the agent's final answer), done (whether it finished), steps, urls visited, and any errors.
+The browser auto-starts on the first action (headful by default so you can watch and so captchas/logins can be solved in the window; pass headless=true on that first call to hide it — it only applies at cold start). First ever run downloads Chromium and is slow; after that, actions are fast.
 
-Notes:
-- Runs headful by default so you can watch and so captcha/login pages can be solved in the visible window; pass headless=true to hide it.
-- One call is one agent run, bounded by ~5 minutes — keep tasks focused and raise/lower max_steps (default 15) to fit. Split very large jobs into several tasks.
-- First run downloads browser-use and its Chromium (slower); subsequent runs are fast.
-- Set vision=false only if the active provider's model has no image support.]],
+Each call returns JSON: ok plus action-specific fields (url, title, text, value, path, …) or an error. For multi-step jobs, read between actions and keep the host in the loop for anything ambiguous.]],
     parameters = {
         type = "object",
         properties = {
-            task = { type = "string", description = "The web task to complete, in plain language. Be specific about what to do and what to return." },
-            max_steps = { type = "number", description = "Max agent steps before it must finish (default 15). Higher = more thorough but slower." },
-            headless = { type = "boolean", description = "Run the browser hidden (default false; headful lets the user solve captchas/logins)." },
-            vision = { type = "boolean", description = "Let the agent use page screenshots (default true). Set false for non-vision models." },
-            start_url = { type = "string", description = "Optional URL to open before starting the task." },
+            action = {
+                type = "string",
+                enum = { "open", "read", "click", "type", "press", "screenshot", "eval", "tabs", "current_url", "back", "stop" },
+                description = "Drive a persistent browser one step at a time: open, read, click, type, screenshot, eval, and more.",
+            },
+            url = { type = "string", description = "URL for `open` (scheme optional)." },
+            selector = { type = "string", description = "CSS or text= selector for read/click/type." },
+            text = { type = "string", description = "Text to type (for `type`), or the key name (for `press`)." },
+            enter = { type = "boolean", description = "For `type`: press Enter after filling (submit)." },
+            js = { type = "string", description = "JavaScript to run for `eval`." },
+            path = { type = "string", description = "Output file for `screenshot`." },
+            full_page = { type = "boolean", description = "For `screenshot`: capture the full scroll height." },
+            headless = { type = "boolean", description = "Only at cold start: launch hidden (default false)." },
+            timeout_ms = { type = "number", description = "Per-action timeout in ms (default 30000)." },
         },
-        required = { "task" },
+        required = { "action" },
         additionalProperties = false,
     },
     safety = "danger",
-    -- Eager: the browser agent runs for minutes; render the row at dispatch so
-    -- the user sees it start, not only when it finishes.
-    display = { show = true, args = { "task" }, eager = true },
+    -- Eager: show the row as the action starts (a cold-start launch takes a few
+    -- seconds), not only when it returns.
+    display = { show = true, args = { "action", "url", "selector" }, eager = true },
     execute = execute,
 })
