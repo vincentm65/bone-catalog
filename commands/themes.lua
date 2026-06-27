@@ -1,6 +1,7 @@
 -- themes — built-in color palettes for bone's TUI renderer.
 --
 -- Uses bone.api.ui.set_highlight() for runtime color swaps. No Rust changes.
+-- Selecting a theme persists it to init.lua; selecting default removes it.
 --
 -- Usage:
 --   -- Interactive: /themes
@@ -45,16 +46,40 @@ local HIGHLIGHTS = {
   "diff_removed", "diff_added", "thinking", "tab_active",
 }
 
+local THEME_MARKER = "-- bone theme"
+
 local function apply_palette(ctx, name)
-  local pal = palettes[name]
-  if not pal then
-    ctx.ui.notify("Unknown theme: " .. name, "error")
+  for _, field in ipairs(HIGHLIGHTS) do
+    bone.api.ui.set_highlight(field, palettes[name][field])
+  end
+end
+
+-- Remove any existing theme line, optionally append a new one.
+local function update_theme_line(ctx, theme_name)
+  local init_path = ctx.config_dir .. "/init.lua"
+  local ok, content = pcall(ctx.read_file, init_path)
+  if not ok then
+    ctx.ui.notify("Could not read init.lua", "error")
     return false
   end
-  for _, field in ipairs(HIGHLIGHTS) do
-    bone.api.ui.set_highlight(field, pal[field])
+
+  -- Remove the marker line (and its preceding newline to avoid blank lines)
+  content = content:gsub("\n?" .. THEME_MARKER .. "[^\n]*\n?", "")
+
+  if theme_name then
+    content = content .. "\n" .. THEME_MARKER .. ' require("themes").apply("' .. theme_name .. '")\n'
   end
-  ctx.ui.notify("Theme applied: " .. name, "info")
+
+  -- Use edit_file with mode=rewrite since ctx.write_file rejects existing files.
+  local result = ctx.tools.call("edit_file", {
+    path = init_path,
+    mode = "rewrite",
+    content = content,
+  }, { approval = "danger" })
+  if not result.ok then
+    ctx.ui.notify("Failed to save init.lua", "error")
+    return false
+  end
   return true
 end
 
@@ -68,9 +93,15 @@ bone.register_command("themes", {
 
     -- Direct apply: /themes apply <name> or /themes <name>
     if #words >= 2 and words[1] == "apply" then
-      return apply_palette(ctx, words[2]) and { submit = false }
+      apply_palette(ctx, words[2])
+      update_theme_line(ctx, words[2])
+      ctx.ui.notify("Theme applied: " .. words[2], "info")
+      return { submit = false }
     elseif #words >= 1 and palettes[words[1]] then
-      return apply_palette(ctx, words[1]) and { submit = false }
+      apply_palette(ctx, words[1])
+      update_theme_line(ctx, words[1])
+      ctx.ui.notify("Theme applied: " .. words[1], "info")
+      return { submit = false }
     end
 
     -- Interactive picker — stays open so user can swap themes live.
@@ -81,6 +112,7 @@ bone.register_command("themes", {
       names[#names + 1] = name
     end
     table.sort(names)
+    table.insert(names, "default")
 
     local sel = 1
     while true do
@@ -94,7 +126,15 @@ bone.register_command("themes", {
         return { submit = false }
       end
       sel = result.selected or sel
-      apply_palette(ctx, result.value)
+      local theme = result.value
+      if theme == "default" then
+        update_theme_line(ctx, nil)
+        ctx.ui.notify("Theme reset to default", "info")
+      else
+        apply_palette(ctx, theme)
+        update_theme_line(ctx, theme)
+        ctx.ui.notify("Theme applied: " .. theme, "info")
+      end
     end
   end,
 })
