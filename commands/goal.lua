@@ -19,7 +19,7 @@ local state = { active = false, path = nil, iteration = 0 }
 -- each other's goal file. Falls back to "default" when no session is active.
 local function goal_path(ctx)
     local sess = ctx.session and ctx.session.current and ctx.session.current()
-    local id = (sess and sess.id) or "default"
+    local id = tostring((sess and sess.id) or "default")
     -- Sanitize to filename-safe characters.
     id = id:gsub("[^%w%-]", "-")
     return ctx.config_dir .. "/goals/" .. id .. ".md"
