@@ -1,12 +1,3 @@
--- themes — built-in color palettes for bone's TUI renderer.
---
--- Uses bone.api.ui.set_highlight() for runtime color swaps. No Rust changes.
--- Selecting a theme persists it to init.lua; selecting default removes it.
---
--- Usage:
---   -- Interactive: /themes
---   -- Apply by name: /themes apply <nord|solarized|tokyo_night|catppuccin>
-
 local menu = require("ui.menu")
 
 local palettes = {
@@ -40,101 +31,97 @@ local palettes = {
   },
 }
 
-local HIGHLIGHTS = {
-  "user_msg", "user_msg_bg", "status_text", "input_border", "system_msg",
-  "approval_safe", "approval_danger", "tool_call", "tool_error",
-  "diff_removed", "diff_added", "thinking", "tab_active",
-}
+local names = { "catppuccin", "nord", "solarized", "tokyo_night", "default" }
+local M = {}
 
-local THEME_MARKER = "-- bone theme"
-
-local function apply_palette(ctx, name)
-  for _, field in ipairs(HIGHLIGHTS) do
-    bone.api.ui.set_highlight(field, palettes[name][field])
+local function reset()
+  local seen = {}
+  for _, pal in pairs(palettes) do
+    for k in pairs(pal) do
+      if not seen[k] then bone.api.ui.set_highlight(k, nil); seen[k] = true end
+    end
   end
+  M.current = nil
 end
 
--- Remove any existing theme line, optionally append a new one.
-local function update_theme_line(ctx, theme_name)
-  local init_path = ctx.config_dir .. "/init.lua"
-  local ok, content = pcall(ctx.read_file, init_path)
-  if not ok then
-    ctx.ui.notify("Could not read init.lua", "error")
-    return false
-  end
-
-  -- Remove the marker line (and its preceding newline to avoid blank lines)
-  content = content:gsub("\n?" .. THEME_MARKER .. "[^\n]*\n?", "")
-
-  if theme_name then
-    content = content .. "\n" .. THEME_MARKER .. ' require("themes").apply("' .. theme_name .. '")\n'
-  end
-
-  -- Use edit_file with mode=rewrite since ctx.write_file rejects existing files.
-  local result = ctx.tools.call("edit_file", {
-    path = init_path,
-    mode = "rewrite",
-    content = content,
-  }, { approval = "danger" })
-  if not result.ok then
-    ctx.ui.notify("Failed to save init.lua", "error")
-    return false
-  end
+function M.apply(name)
+  local pal = palettes[name]
+  if not pal then return false end
+  for k, v in pairs(pal) do bone.api.ui.set_highlight(k, v) end
+  M.current = name
   return true
 end
 
-bone.register_command("themes", {
-  description = "Apply built-in color palettes (nord, solarized, tokyo_night, catppuccin)",
-  handler = function(arg, ctx)
-    local words = {}
-    for w in tostring(arg or ""):gmatch("%S+") do
-      words[#words + 1] = w
-    end
+local function save(ctx, name)
+  local path = ctx.config_dir .. "/init.lua"
+  local ok, content = pcall(ctx.read_file, path)
+  if not ok then content = "" end
 
-    -- Direct apply: /themes apply <name> or /themes <name>
-    if #words >= 2 and words[1] == "apply" then
-      apply_palette(ctx, words[2])
-      update_theme_line(ctx, words[2])
-      ctx.ui.notify("Theme applied: " .. words[2], "info")
-      return { submit = false }
-    elseif #words >= 1 and palettes[words[1]] then
-      apply_palette(ctx, words[1])
-      update_theme_line(ctx, words[1])
-      ctx.ui.notify("Theme applied: " .. words[1], "info")
-      return { submit = false }
-    end
+  -- Strip any prior theme-apply line — catches both `commands.themes` and the
+  -- legacy `themes` module path, with or without the `-- bone theme` marker.
+  content = content:gsub("\n?[^\n]*themes[^\n]*%.apply[^\n]*", "")
+  content = content:gsub("\n*$", "\n")
+  if name then content = content .. 'require("commands.themes").apply("' .. name .. '") -- bone theme\n' end
 
-    -- Interactive picker — stays open so user can swap themes live.
-    -- Enter selects a theme and re-shows; Esc closes and keeps last applied.
-    -- Cursor position persists across selections.
-    local names = {}
-    for name in pairs(palettes) do
-      names[#names + 1] = name
-    end
-    table.sort(names)
-    table.insert(names, "default")
+  if not ok then return pcall(ctx.write_file, path, content) end
+  return ctx.tools.call("edit_file", { path = path, mode = "rewrite", content = content }, { approval = "danger" }).ok
+end
 
-    local sel = 1
-    while true do
-      local result = menu.select(ctx, {
-        question = "Select a color theme (Esc to close)",
-        options = names,
-        default = sel,
-      })
-      if not result or result.cancelled then
-        menu.clear(ctx)
+local function set(ctx, name)
+  if name == "default" then
+    reset()
+    local saved = save(ctx)
+    return saved, saved and "Theme reset to default" or "Theme reset for this session, but failed to save"
+  end
+  if not M.apply(name) then
+    return false, "Unknown theme: " .. tostring(name) .. ". Available: " .. table.concat(names, ", ")
+  end
+  local saved = save(ctx, name)
+  return saved, saved and ("Theme applied: " .. name) or ("Theme applied for this session, but failed to save: " .. name)
+end
+
+if not bone._themes_command_registered then
+  bone._themes_command_registered = true
+  bone.register_command("themes", {
+    description = "Pick or apply a color theme",
+    handler = function(arg, ctx)
+      local text = tostring(arg or "")
+      local name = text:match("^%s*apply%s+(%S+)") or text:match("^%s*(%S+)")
+
+      if name then
+        local ok, msg = set(ctx, name)
+        ctx.ui.notify(msg, ok and "info" or "error")
         return { submit = false }
       end
-      sel = result.selected or sel
-      local theme = result.value
-      if theme == "default" then
-        update_theme_line(ctx, nil)
-        ctx.ui.notify("Theme reset to default", "info")
-      else
-        apply_palette(ctx, theme)
-        update_theme_line(ctx, theme)
-        ctx.ui.notify("Theme applied: " .. theme, "info")
+
+      -- Live preview: cursor starts on the active theme, themes swap as you
+      -- scroll, Enter persists + closes, Esc reverts to the original.
+      local original = M.current
+      local start = 1
+      for i, n in ipairs(names) do
+        if n == (original or "default") then start = i; break end
       end
-    end
-  end,
-})
+
+      local result = menu.select(ctx, {
+        question = "Theme  (Enter to apply, Esc to cancel)",
+        options = names,
+        default = start,
+        on_change = function(value)
+          if value == "default" then reset() else M.apply(value) end
+        end,
+      })
+      menu.clear(ctx)
+
+      if not result or result.cancelled then
+        if original then M.apply(original) else reset() end
+        return { submit = false }
+      end
+
+      local ok, msg = set(ctx, result.value)
+      ctx.ui.notify(msg, ok and "info" or "error")
+      return { submit = false }
+    end,
+  })
+end
+
+return M
