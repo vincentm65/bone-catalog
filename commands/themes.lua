@@ -73,18 +73,24 @@ bone.register_command("themes", {
       return apply_palette(ctx, words[1]) and { submit = false }
     end
 
-    -- Interactive picker
+    -- Interactive picker — stays open so user can swap themes live.
+    -- Enter selects a theme and re-shows; Esc closes and keeps last applied.
     local names = {}
     for name in pairs(palettes) do
       names[#names + 1] = name
     end
     table.sort(names)
 
-    local result = menu.select(ctx, {
-      question = "Select a color theme",
-      options = names,
-    })
-    if not result or result.cancelled then return { submit = false } end
-    return apply_palette(ctx, result.value) and { submit = false }
+    while true do
+      local result = menu.select(ctx, {
+        question = "Select a color theme (Esc to close)",
+        options = names,
+      })
+      if not result or result.cancelled then
+        menu.clear(ctx)
+        return { submit = false }
+      end
+      apply_palette(ctx, result.value)
+    end
   end,
 })
