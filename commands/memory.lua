@@ -95,8 +95,7 @@ bone.register_command("memory", {
 
     -- Read last run timestamp or default to epoch.
     local since = "1970-01-01T00:00:00Z"
-    local state_stat = ctx.fs.stat(state_file)
-    if state_stat and state_stat.kind == "file" then
+    if ctx.fs.is_file(state_file) then
       local ok, state_content = pcall(ctx.read_file, state_file)
       if ok and state_content then
         since = state_content:gsub("%s+", "")
