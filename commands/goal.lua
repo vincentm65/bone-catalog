@@ -1,7 +1,10 @@
 -- /goal — Codex-style autonomous goal loop.
 --
 -- Persists a goal checklist on disk. Two hooks drive an autonomous loop:
---   before_turn → re-injects the goal + procedure via system_prompt_append
+--   before_turn → re-injects the goal + procedure via turn_message (a
+--                 transient trailing input item; the iteration counter changes
+--                 every turn, so it must stay out of the system prompt to
+--                 avoid busting the provider's prefix cache)
 --   turn_end    → parses GOAL_STATUS sentinel, submits "Continue" or halts
 --
 -- Esc (failed/cancelled turn) halts the loop automatically. /goal resume
@@ -85,7 +88,7 @@ You are in an autonomous goal loop (iteration %d). Your source of truth:
 9. Otherwise end with: GOAL_STATUS: working
 ]==], state.iteration, content)
 
-    return { system_prompt_append = append }
+    return { turn_message = append }
 end)
 
 -- ---------------------------------------------------------------------------
