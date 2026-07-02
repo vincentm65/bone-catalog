@@ -29,8 +29,10 @@ bone.register_tool({
                 description = "The search query",
             },
             num_results = {
-                type = "number",
-                description = "Number of results to return (default 5, max 10)",
+                type = "integer",
+                minimum = 1,
+                maximum = 10,
+                description = "Number of results to return (default 5).",
             },
         },
         required = { "query" },

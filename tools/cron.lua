@@ -212,13 +212,14 @@ end
 
 bone.register_tool({
     name = "cron",
-    description = "Manage Bone scheduled jobs for the user. Use this when the user asks to schedule, list, remove, or inspect recurring Bone tasks. Fully implemented as a custom tool; supports daily HH:MM schedules.",
+    description = "Manage Bone scheduled jobs for the user (daily HH:MM schedules). Use this when the user asks to schedule, list, remove, or inspect recurring Bone tasks. Actions: add (requires name, time, prompt), list, remove (requires name), logs (requires name, optional tail). Examples: cron(action=list); cron(action=add, name=daily-clean, time=09:00, approval=danger, prompt=/clean src/main.rs); cron(action=remove, name=daily-clean); cron(action=logs, name=daily-clean, tail=100).",
     parameters = {
         type = "object",
         properties = {
             action = {
                 type = "string",
-                description = "Action: add, list, remove, logs, or help.",
+                enum = { "add", "list", "remove", "logs", "help" },
+                description = "Action to perform.",
             },
             name = {
                 type = "string",
@@ -230,7 +231,8 @@ bone.register_tool({
             },
             approval = {
                 type = "string",
-                description = "Approval mode for add: read_only or danger. Defaults to read_only.",
+                enum = { "read_only", "danger" },
+                description = "Approval mode for add. Defaults to read_only.",
             },
             prompt = {
                 type = "string",
