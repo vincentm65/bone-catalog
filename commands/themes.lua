@@ -1,32 +1,64 @@
 local menu = require("ui.menu")
 
-local palettes = {
+local themes = {
   nord = {
-    user_msg = "#E5E9F0", user_msg_bg = "#2E3440", status_text = "#4C566A",
-    input_border = "#4C566A", system_msg = "#E5E9F0", approval_safe = "#A3BE8C",
-    approval_danger = "#BF616A", tool_call = "#88C0D0", tool_error = "#BF616A",
-    diff_removed = "#BF616A", diff_added = "#A3BE8C", thinking = "#88C0D0",
+    palette = {
+      bg = "#0B0F14",
+      fg = "#E5E9F0",
+      muted = "#4C566A",
+      subtle = "#3B4252",
+      border = "#4C566A",
+      accent = "#88C0D0",
+      good = "#A3BE8C",
+      warn = "#EBCB8B",
+      error = "#BF616A",
+      selection = "#3B4252",
+    },
     tab_active = "#88C0D0",
   },
   solarized = {
-    user_msg = "#EEE8D5", user_msg_bg = "#002B36", status_text = "#586E75",
-    input_border = "#586E75", system_msg = "#EEE8D5", approval_safe = "#859900",
-    approval_danger = "#DC322F", tool_call = "#2AA198", tool_error = "#DC322F",
-    diff_removed = "#DC322F", diff_added = "#859900", thinking = "#2AA198",
+    palette = {
+      bg = "#001014",
+      fg = "#EEE8D5",
+      muted = "#586E75",
+      subtle = "#073642",
+      border = "#586E75",
+      accent = "#2AA198",
+      good = "#859900",
+      warn = "#B58900",
+      error = "#DC322F",
+      selection = "#073642",
+    },
     tab_active = "#2AA198",
   },
   tokyo_night = {
-    user_msg = "#C0CAF5", user_msg_bg = "#1A1B26", status_text = "#565F89",
-    input_border = "#565F89", system_msg = "#C0CAF5", approval_safe = "#9ECE6A",
-    approval_danger = "#F7768E", tool_call = "#7DCFFF", tool_error = "#F7768E",
-    diff_removed = "#F7768E", diff_added = "#9ECE6A", thinking = "#7DCFFF",
+    palette = {
+      bg = "#080912",
+      fg = "#C0CAF5",
+      muted = "#565F89",
+      subtle = "#24283B",
+      border = "#565F89",
+      accent = "#7DCFFF",
+      good = "#9ECE6A",
+      warn = "#E0AF68",
+      error = "#F7768E",
+      selection = "#283457",
+    },
     tab_active = "#BB9AF7",
   },
   catppuccin = {
-    user_msg = "#CDD6F4", user_msg_bg = "#1E1E2E", status_text = "#6C7086",
-    input_border = "#6C7086", system_msg = "#CDD6F4", approval_safe = "#A6E3A1",
-    approval_danger = "#F38BA8", tool_call = "#89DCEB", tool_error = "#F38BA8",
-    diff_removed = "#F38BA8", diff_added = "#A6E3A1", thinking = "#89DCEB",
+    palette = {
+      bg = "#0B0A12",
+      fg = "#CDD6F4",
+      muted = "#6C7086",
+      subtle = "#313244",
+      border = "#6C7086",
+      accent = "#89DCEB",
+      good = "#A6E3A1",
+      warn = "#F9E2AF",
+      error = "#F38BA8",
+      selection = "#313244",
+    },
     tab_active = "#F5C2E7",
   },
 }
@@ -34,10 +66,28 @@ local palettes = {
 local names = { "catppuccin", "nord", "solarized", "tokyo_night", "default" }
 local M = {}
 
+local function highlights(theme)
+  local p = theme.palette
+  return {
+    bg = p.bg,
+    user_msg = p.fg,
+    user_msg_bg = p.selection,
+    status_text = p.muted,
+    input_border = p.border,
+    system_msg = p.fg,
+    approval_safe = p.good,
+    approval_danger = p.error,
+    tool_call = p.accent,
+    tool_error = p.error,
+    thinking = p.accent,
+    tab_active = theme.tab_active or p.accent,
+  }
+end
+
 local function reset()
   local seen = {}
-  for _, pal in pairs(palettes) do
-    for k in pairs(pal) do
+  for _, theme in pairs(themes) do
+    for k in pairs(highlights(theme)) do
       if not seen[k] then bone.api.ui.set_highlight(k, nil); seen[k] = true end
     end
   end
@@ -45,9 +95,9 @@ local function reset()
 end
 
 function M.apply(name)
-  local pal = palettes[name]
-  if not pal then return false end
-  for k, v in pairs(pal) do bone.api.ui.set_highlight(k, v) end
+  local theme = themes[name]
+  if not theme then return false end
+  for k, v in pairs(highlights(theme)) do bone.api.ui.set_highlight(k, v) end
   M.current = name
   return true
 end

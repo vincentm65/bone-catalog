@@ -11,5 +11,5 @@
   { "name": "memory.lua", "kind": "command", "description": "Incremental memory builder. Processes all conversations since last run and updates memory.md.", "sha256": "a7bacedb7c0fa33682fbf1e019f16e27e4355ccdbc962ca08879d11d04b5635a" },
   { "name": "review.lua", "kind": "command", "description": "Review uncommitted changes for real bugs (verification-first; /review [low|high])", "sha256": "0b1ae143c208a5ec944c9766c2ad8ad1cfe6a4e107992de9519f121a730fcdf5" },
   { "name": "shotgun.lua", "kind": "command", "description": "Fan a prompt out to configured providers; the chat agent synthesizes the answers", "sha256": "d74350d34cfe321bed63002da2e70ffa9c2d9d808b6ed4f17771b1f63155c0e0" },
-  { "name": "themes.lua", "kind": "command", "description": "Pick or apply a color theme", "sha256": "e331d34706a8cf0bccaa888ac7820a13d91ff2f4b87e0c3c1c6c88ffdc9b6034" }
+  { "name": "themes.lua", "kind": "command", "description": "Pick or apply a color theme", "sha256": "83f403fc1fb16966bace2b1553c0af304d4475acab9a3136904305fd307cded7" }
 ]
