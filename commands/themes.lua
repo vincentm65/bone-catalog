@@ -61,9 +61,24 @@ local themes = {
     },
     tab_active = "#F5C2E7",
   },
+  mono = {
+    palette = {
+      bg = "#0E0E0E",
+      fg = "#D4D4D4",
+      muted = "#707070",
+      subtle = "#262626",
+      border = "#505050",
+      accent = "#FFFFFF",
+      good = "#A8A8A8",
+      warn = "#909090",
+      error = "#E0E0E0",
+      selection = "#262626",
+    },
+    tab_active = "#FFFFFF",
+  },
 }
 
-local names = { "catppuccin", "nord", "solarized", "tokyo_night", "default" }
+local names = { "catppuccin", "nord", "solarized", "tokyo_night", "mono", "default" }
 local M = {}
 
 local function highlights(theme)
