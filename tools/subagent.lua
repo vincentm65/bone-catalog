@@ -43,9 +43,12 @@ local function job_status(job)
         return "○ idle"
     end
 
+    if job.status == "queued" then
+        return "⧗ queued"
+    end
     if job.status == "running" then
         local elapsed = os.time() - job.started_at
-        local task = job.title ~= nil and job.title ~= "" and job.title or (job.task or "")
+        local task = job.activity or (job.title ~= nil and job.title ~= "" and job.title or (job.task or ""))
         if #task > 40 then
             task = task:sub(1, 37) .. "..."
         end
@@ -64,6 +67,27 @@ local function job_status(job)
     end
     -- error
     return "✗ error"
+end
+
+local function find_agent(name)
+    for _, agent in ipairs(subagents) do
+        if agent.name == name then return agent end
+    end
+end
+
+local function opts_for(agent, title)
+    local opts = {
+        agent = agent.name,
+        title = title or "",
+        system_prompt = agent.system_prompt,
+        provider = agent.provider,
+        model = agent.model,
+        approval = agent.approval,
+        timeout_ms = agent.timeout_ms,
+        max_concurrency = agent.max_concurrency or 1,
+    }
+    if agent.tools and #agent.tools > 0 then opts.tools = agent.tools end
+    return opts
 end
 
 --- Build a status summary string for one agent (latest job by id).
@@ -105,13 +129,14 @@ local function build_description()
         parts[#parts + 1] = table.concat({
             "Actions:",
             '- dispatch: start one or more tasks (one tasks[] entry each, run in parallel). Blocks until all dispatched tasks finish and returns their results.',
+            '- followup: continue a finished job with its context intact. Provide id and task; blocks and returns the result.',
             '- wait: block until previously dispatched jobs finish. Waits on the given ids[] (or all running jobs when omitted) and returns their results.',
             '- cancel: stop running jobs by id. Sets a per-job cancel flag.',
             '- status: non-blocking snapshot of job progress. Use sparingly; never call status in a loop.',
             "",
             "Rules:",
             "- Batch independent tasks into a single dispatch call to maximize parallelism.",
-            "- Each agent runs up to its `max_concurrency` jobs at a time (default 1); dispatching beyond the cap is rejected.",
+            "- Each agent runs up to its `max_concurrency` jobs at a time (default 1); dispatching beyond the cap queues tasks.",
         }, "\n")
     else
         parts[#parts + 1] = table.concat({
@@ -120,12 +145,13 @@ local function build_description()
             '  - If you need the results to continue, or you have nothing else productive to do, set wait=true: the call blocks and returns the results directly. This is the right choice for fan-out/fan-in work (e.g. dispatching research and then synthesizing it).',
             '  - Omit wait ONLY when you have separate, independent work to do that does NOT overlap the dispatched tasks: dispatch returns immediately and you continue on that other work. Finished results are delivered automatically in a later message — do NOT poll for them, and NEVER fabricate or assume results you have not received.',
             '- wait: block until previously dispatched jobs finish. Waits on the given ids[] (or all running jobs when omitted) and returns their results. Use when you reach a point where you need pending results before continuing.',
+            '- followup: continue a finished job with its context intact. Provide id and task; set wait=true when the next step depends on it.',
             '- cancel: stop running jobs by id. Sets a per-job cancel flag.',
             '- status: non-blocking snapshot of job progress. Use sparingly; never call status in a loop.',
             "",
             "Rules:",
             "- Batch independent tasks into a single dispatch call to maximize parallelism.",
-            "- Each agent runs up to its `max_concurrency` jobs at a time (default 1); dispatching beyond the cap is rejected.",
+            "- Each agent runs up to its `max_concurrency` jobs at a time (default 1); dispatching beyond the cap queues tasks.",
             "- NEVER duplicate the work you delegated. Once a task is dispatched, do not read the same files, run the same searches, or research the same questions yourself — that wastes context and defeats the purpose of delegating. Let the sub-agent do it.",
         }, "\n")
     end
@@ -211,29 +237,11 @@ local function execute(params, ctx)
             local title = t.title or ""
 
             -- Look up the agent definition
-            local agent_def = nil
-            for _, a in ipairs(subagents) do
-                if a.name == agent_name then
-                    agent_def = a
-                    break
-                end
-            end
+            local agent_def = find_agent(agent_name)
 
             if agent_def then
                 -- Build spawn opts from the agent definition.
-                local opts = {
-                    agent = agent_name,
-                    title = title,
-                    system_prompt = agent_def.system_prompt,
-                    provider = agent_def.provider,
-                    model = agent_def.model,
-                    approval = agent_def.approval,
-                    timeout_ms = agent_def.timeout_ms,
-                    max_concurrency = agent_def.max_concurrency or 1,
-                }
-                if agent_def.tools and #agent_def.tools > 0 then
-                    opts.tools = agent_def.tools
-                end
+                local opts = opts_for(agent_def, title)
 
                 local result = ctx.agent.spawn(task_desc, opts)
                 if result.ok then
@@ -278,6 +286,27 @@ local function execute(params, ctx)
         return summary
     end
 
+    if action == "followup" then
+        local prior, task = params.id or "", params.task or ""
+        if prior == "" or task == "" then
+            return "ERROR: Provide id and task for 'followup'."
+        end
+        local prior_job
+        for _, job in ipairs(ctx.agent.jobs()) do
+            if job.id == prior then prior_job = job break end
+        end
+        local agent_def = prior_job and find_agent(prior_job.agent)
+        if not agent_def then return "ERROR: Job or registered agent not found." end
+        local result = ctx.agent.followup(prior, task, opts_for(agent_def, params.title))
+        if not result.ok then return "ERROR: " .. (result.error or "unknown") end
+        if params.wait or headless then
+            local outcome = ctx.agent.wait({ result.id }, { timeout_ms = params.timeout_ms })
+            if not outcome.ok then return "ERROR: " .. (outcome.error or "unknown") end
+            return format_wait_outcome(outcome)
+        end
+        return string.format("dispatched followup %s → %s", result.id, agent_def.name)
+    end
+
     if action == "wait" then
         local outcome = ctx.agent.wait(params.ids, { timeout_ms = params.timeout_ms })
         if not outcome.ok then
@@ -310,7 +339,7 @@ local function execute(params, ctx)
         return table.concat(parts, "\n")
     end
 
-    return "ERROR: Action must be 'dispatch', 'wait', 'cancel' or 'status'."
+    return "ERROR: Action must be 'dispatch', 'followup', 'wait', 'cancel' or 'status'."
 end
 
 -- ---------------------------------------------------------------------------
@@ -326,8 +355,8 @@ bone.register_tool({
         properties = {
             action = {
                 type = "string",
-                enum = { "dispatch", "wait", "cancel", "status" },
-                description = "dispatch (start tasks), wait (block for results), cancel (stop jobs by id), or status (non-blocking snapshot)",
+                enum = { "dispatch", "followup", "wait", "cancel", "status" },
+                description = "dispatch tasks, followup a finished job, wait, cancel, or inspect status",
             },
             tasks = {
                 type = "array",
@@ -355,6 +384,18 @@ bone.register_tool({
             wait = {
                 type = "boolean",
                 description = "dispatch only: block until the dispatched tasks finish and return the results. Use when your next step depends on them.",
+            },
+            id = {
+                type = "string",
+                description = "followup only: completed job id whose context should be continued",
+            },
+            task = {
+                type = "string",
+                description = "followup only: new self-contained task to continue with",
+            },
+            title = {
+                type = "string",
+                description = "followup only: short human-readable title",
             },
             ids = {
                 type = "array",

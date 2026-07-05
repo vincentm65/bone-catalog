@@ -199,6 +199,25 @@ bone.register_tool({
 -- prefix cache for the whole conversation.
 -- ---------------------------------------------------------------------------
 
+local last_turn_message = {}
+
+local function conversation_key(ctx)
+    local conv = ctx.conversation and ctx.conversation.current and ctx.conversation.current() or nil
+    if conv and conv.id then
+        return tostring(conv.id)
+    end
+    return "default"
+end
+
+local function emit_turn_message_once(ctx, message)
+    local key = conversation_key(ctx)
+    if last_turn_message[key] == message then
+        return nil
+    end
+    last_turn_message[key] = message
+    return { turn_message = message }
+end
+
 bone.on("before_turn", function(_event, ctx)
     if bone.agent_depth ~= 0 then return end
 
@@ -211,10 +230,8 @@ bone.on("before_turn", function(_event, ctx)
 
     -- No active list → brief suggestion to use one for multi-step work.
     if not state or type(state.tasks) ~= "table" or #state.tasks == 0 then
-        return {
-            turn_message =
-                "For any task with ~3+ steps or multi-file work, call task_list (action=write) to track progress in a visible checklist.",
-        }
+        return emit_turn_message_once(ctx,
+            "For any task with ~3+ steps or multi-file work, call task_list (action=write) to track progress in a visible checklist.")
     end
 
     local tasks = state.tasks
@@ -230,18 +247,14 @@ bone.on("before_turn", function(_event, ctx)
 
     -- All done → no reminder needed (offer to clear).
     if done >= #tasks then
-        return {
-            turn_message =
-                "Your task list is complete. Call task_list (action=clear) once the user has confirmed you're finished.",
-        }
+        return emit_turn_message_once(ctx,
+            "Your task list is complete. Call task_list (action=clear) once the user has confirmed you're finished.")
     end
 
     local current_line = current
         and string.format(" Current in-progress item: \"%s\".", current)
         or " No item is marked in_progress — mark the one you're working on now."
-    return {
-        turn_message = string.format(
-            "Active task list: %d/%d done.%s As you work, call task_list (action=write) with the full list to mark items in_progress/done. Keep exactly one item in_progress.",
-            done, #tasks, current_line),
-    }
+    return emit_turn_message_once(ctx, string.format(
+        "Active task list: %d/%d done.%s As you work, call task_list (action=write) with the full list to mark items in_progress/done. Keep exactly one item in_progress.",
+        done, #tasks, current_line))
 end)
