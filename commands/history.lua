@@ -2,50 +2,87 @@
 local history = require("history")
 local menu = require("ui.menu")
 
-local function truncate(value, max_len)
-   local text = tostring(value or ""):gsub("%s+", " ")
-   if #text <= max_len then return text end
-   return text:sub(1, max_len - 3) .. "..."
-end
-
-local function format_when(value)
-   local y, month, day, hour, minute = tostring(value or ""):match(
-      "^(%d%d%d%d)%-(%d%d)%-(%d%d)[T ](%d%d):(%d%d)"
+local function parse_timestamp(value)
+   local y, month, day, hour, minute, second = tostring(value or ""):match(
+      "^(%d%d%d%d)%-(%d%d)%-(%d%d)[T ](%d%d):(%d%d):?(%d*)"
    )
-   if not y then return truncate(value, 16) end
-
-   local local_epoch = os.time({
+   if not y then return nil end
+   local epoch = os.time({
       year = tonumber(y), month = tonumber(month), day = tonumber(day),
-      hour = tonumber(hour), min = tonumber(minute), sec = 0,
+      hour = tonumber(hour), min = tonumber(minute), sec = tonumber(second) or 0,
    })
-   if not local_epoch then return truncate(value, 16) end
+   if not epoch then return nil end
 
-   local sign, offset_hour, offset_minute = os.date("%z", local_epoch)
-      :match("([%+%-])(%d%d)(%d%d)")
-   local offset = 0
-   if sign then
-      offset = (tonumber(offset_hour) * 3600 + tonumber(offset_minute) * 60)
-         * (sign == "-" and -1 or 1)
+   -- Stored timestamps are UTC. os.time interprets the fields as local time,
+   -- so apply the local offset to recover the UTC epoch.
+   local zone = os.date("%z", epoch)
+   local sign, offset_hour, offset_minute = zone:match("^([%+%-])(%d%d):?(%d%d)$")
+   if not sign then
+      sign, offset_hour = zone:match("^([%+%-])(%d%d)$")
+      offset_minute = "00"
    end
-   return os.date("%Y-%m-%d %H:%M", local_epoch + offset)
+   if sign then
+      local offset = (tonumber(offset_hour) * 3600 + tonumber(offset_minute) * 60)
+         * (sign == "-" and -1 or 1)
+      epoch = epoch + offset
+   end
+   return epoch
 end
 
-local function label(row)
-   local when = format_when(row.activity_at or row.started_at)
-   local status = tonumber(row.assistant_count or 0) == 0 and "  [interrupted]" or ""
-   return string.format("%s  %s/%s  #%s%s  %s",
-      when,
-      truncate(row.provider or "?", 14),
-      truncate(row.model or "?", 24),
-      tostring(row.id),
-      status,
-      truncate(row.preview or "(no preview)", 60))
+local function format_when(value, now)
+   local epoch = parse_timestamp(value)
+   if not epoch then return tostring(value or "unknown time") end
+   now = now or os.time()
+   local age = math.max(0, now - epoch)
+   if age < 60 then return "just now" end
+   if age < 3600 then return string.format("%dm ago", math.floor(age / 60)) end
+
+   local day = os.date("%Y-%m-%d", epoch)
+   if day == os.date("%Y-%m-%d", now) then
+      return string.format("%dh ago", math.floor(age / 3600))
+   end
+   local yesterday = os.date("*t", now)
+   yesterday.day = yesterday.day - 1
+   yesterday.hour, yesterday.min, yesterday.sec = 12, 0, 0
+   if day == os.date("%Y-%m-%d", os.time(yesterday)) then
+      return "Yesterday " .. os.date("%H:%M", epoch)
+   end
+   if os.date("%Y", epoch) == os.date("%Y", now) then
+      return os.date("%b %d %H:%M", epoch):gsub(" 0", " ")
+   end
+   return os.date("%Y-%m-%d %H:%M", epoch)
+end
+
+local function status_text(status)
+   if status == "interrupted" then return "No response" end
+   if status == "empty" then return "Empty" end
+   return "Completed"
+end
+
+local function option(row)
+   local preview = tostring(row.preview or "(no user message)"):gsub("%s+", " ")
+   local provider = tostring(row.provider or "?")
+   local model = tostring(row.model or "?")
+   local id = tostring(row.id)
+   local description = string.format("%s · %s/%s · #%s · %du · %da · %d total · %s",
+      format_when(row.last_activity or row.started_at),
+      provider, model, id,
+      tonumber(row.user_count or 0),
+      tonumber(row.assistant_count or 0),
+      tonumber(row.total_message_count or 0),
+      status_text(row.status))
+   return {
+      label = preview,
+      description = description,
+      search_text = table.concat({ preview, provider, model, id, status_text(row.status) }, " "),
+      value = row.id,
+   }
 end
 
 bone.register_command("history", {
    description = "Resume a recent conversation",
    handler = function(_, ctx)
-      local ok, rows = pcall(history.list, ctx, 100)
+      local ok, rows = pcall(history.list, ctx, 50)
       if not ok then
          ctx.ui.notify("Failed to list history: " .. tostring(rows), "error")
          return nil
@@ -55,18 +92,19 @@ bone.register_command("history", {
          return nil
       end
 
-      local options, by_label = {}, {}
+      local options = {}
       for _, row in ipairs(rows) do
-         local text = label(row)
-         options[#options + 1] = text
-         by_label[text] = row.id
+         options[#options + 1] = option(row)
       end
 
       local ask_ok, result = pcall(menu.select, ctx, {
-         question = "Resume conversation  ·  Enter load  ·  Esc cancel",
+         title = "History",
+         question = "Recent conversations — Enter resume · Esc cancel",
          options = options,
          default = 1,
          allow_custom = false,
+         searchable = true,
+         visible_rows = 18,
       })
       menu.clear(ctx)
 
@@ -76,8 +114,8 @@ bone.register_command("history", {
       end
       if type(result) ~= "table" or result.cancelled then return nil end
 
-      local id = by_label[result.value]
-      if not id then return nil end
+      local id = result.value
+      if id == nil then return nil end
 
       -- Keep the transcript payload for released clients that preload scrollback
       -- from the command action. New clients ignore it and load by id from the daemon.
@@ -104,7 +142,6 @@ bone.register_command("history", {
          action = "conversation.load",
          conversation_id = id,
          messages = messages,
-         display = "Loading conversation #" .. tostring(id) .. "...",
          submit = false,
       }
    end,
