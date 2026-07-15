@@ -59,6 +59,12 @@ local function status_text(status)
    return "Completed"
 end
 
+local function status_color(status)
+   if status == "interrupted" then return "#E5C07B" end
+   if status == "empty" then return "darkgray" end
+   return "#78B373"
+end
+
 local function format_count(value)
    local digits = tostring(math.max(0, math.floor(tonumber(value) or 0)))
    return digits:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
@@ -69,16 +75,26 @@ local function option(row)
    local provider = tostring(row.provider or "?")
    local model = tostring(row.model or "?")
    local id = tostring(row.id)
-   local description = string.format("%s · %s/%s · #%s · %s messages · %s tokens · %s",
-      format_when(row.last_activity or row.started_at),
-      provider, model, id,
-      format_count(row.total_message_count),
-      format_count(row.total_token_count),
-      status_text(row.status))
+   local when = format_when(row.last_activity or row.started_at)
+   local messages = format_count(row.total_message_count) .. " messages"
+   local tokens = format_count(row.total_token_count) .. " tokens"
+   local status = status_text(row.status)
+   local description = table.concat({ when, provider .. "/" .. model, "#" .. id, messages, tokens, status }, " · ")
    return {
       label = preview,
       description = description,
-      search_text = table.concat({ preview, provider, model, id, status_text(row.status) }, " "),
+      description_spans = {
+         { text = when, fg = "#B3BAC8" },
+         { text = " · ", fg = "darkgray" },
+         { text = provider .. "/" .. model, fg = "#8CC8FF" },
+         { text = " · #" .. id .. " · ", fg = "darkgray" },
+         { text = messages, fg = "#E5C07B" },
+         { text = " · ", fg = "darkgray" },
+         { text = tokens, fg = "#E5C07B" },
+         { text = " · ", fg = "darkgray" },
+         { text = status, fg = status_color(row.status) },
+      },
+      search_text = table.concat({ preview, provider, model, id, status }, " "),
       value = row.id,
    }
 end
