@@ -82,6 +82,7 @@ local function option(row)
    local description = table.concat({ when, provider .. "/" .. model, "#" .. id, messages, tokens, status }, " · ")
    return {
       label = preview,
+      label_modifiers = { "bold" },
       description = description,
       description_spans = {
          { text = when, fg = "#B3BAC8" },
