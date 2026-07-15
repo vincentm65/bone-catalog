@@ -47,7 +47,7 @@ local PROMPT_TEMPLATE = [[You are performing a code review of the local uncommit
 1. VERIFY BEFORE YOU REPORT. Before flagging anything, use your read_file/grep/shell tools to read enough surrounding code to confirm the problem is real: check how the function is called, what invariants hold, whether the "missing" handling exists elsewhere. A finding you have not verified against the actual code must not appear in your report.
 2. CONFIDENCE THRESHOLD: {CONFIDENCE}. If you are unsure whether something is a bug, either verify it by reading the code or drop it. Do not pad the review.
 3. REPORT AT MOST {MAX_FINDINGS} FINDINGS, ordered by severity. If you find more, keep only the most important.
-4. If, after genuinely reading the changes, nothing meets the bar, your entire answer must be: "No significant issues found." That is a good outcome, not a failure. Do not invent findings to appear thorough.
+4. If, after genuinely reading the changes, nothing meets the bar, say so plainly in the Assessment and write "None." under Top issues. That is a good outcome, not a failure. Do not invent findings to appear thorough.
 
 ## In scope
 
@@ -67,7 +67,24 @@ local PROMPT_TEMPLATE = [[You are performing a code review of the local uncommit
 
 ## Output format
 
-For each finding:
+Use exactly these sections, in this order:
+
+## Review report
+
+| File reviewed | Diff stat | Issues |
+|---|---:|---:|
+| `path/to/file.ext` | +X/-Y | N |
+
+- Include one row for every text file you actually reviewed. Use the supplied diff stats where available; use `new file` for untracked files. Do not invent counts.
+- `Issues` is the number of findings from that file included under Top issues.
+
+## Assessment
+
+Write one concise paragraph of 3-5 sentences maximum summarizing the overall quality, risk, and what was verified. If there are no findings, state "No significant issues found."
+
+## Top issues
+
+List findings in descending severity. For each finding:
 
 ### [SEVERITY] one-line summary
 
@@ -77,7 +94,7 @@ For each finding:
 - **Problem:** what breaks, and the concrete scenario in which it breaks
 - **Fix:** the minimal correction, briefly
 
-End with a one-paragraph verdict. If there are no findings, output only "No significant issues found." plus at most two sentences on what you checked.]]
+If there are no findings, write only "None." under Top issues.]]
 
 -- ---------------------------------------------------------------------------
 -- Helpers

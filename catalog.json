@@ -9,7 +9,7 @@
   { "name": "goal.lua", "kind": "command", "description": "Start, resume, check, or stop an autonomous goal.", "sha256": "2528938334d2342e541ac942a04f918fc47d25e008f0551f4b43812c4a02d446" },
   { "name": "history.lua", "kind": "command", "description": "Resume a recent conversation", "sha256": "9de0c807f084994fc24b665420e92efe99617fd0001afe83dc323f020c7a9e99" },
   { "name": "memory.lua", "kind": "command", "description": "Quietly update global and project memory from recent conversations.", "sha256": "b3c464061862adfb411566742bf5e7e048dd59061098485dc08dde6d8b151678" },
-  { "name": "review.lua", "kind": "command", "description": "Review uncommitted changes for real bugs (verification-first; /review [low|high])", "sha256": "0b1ae143c208a5ec944c9766c2ad8ad1cfe6a4e107992de9519f121a730fcdf5" },
+  { "name": "review.lua", "kind": "command", "description": "Review uncommitted changes for real bugs (verification-first; /review [low|high])", "sha256": "0f9c9d8db5f0b372221872cb76b53999c575207a65a964dbc7b0ff2cf9c3d680" },
   { "name": "shotgun.lua", "kind": "command", "description": "Fan a prompt out to configured providers; the chat agent synthesizes the answers", "sha256": "d74350d34cfe321bed63002da2e70ffa9c2d9d808b6ed4f17771b1f63155c0e0" },
   { "name": "themes.lua", "kind": "command", "description": "Pick or apply a color theme", "sha256": "455554529212359354e39af6832f986bb24d66ad57e951243a47c368a1362e72" }
 ]
