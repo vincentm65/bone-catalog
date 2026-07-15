@@ -59,17 +59,21 @@ local function status_text(status)
    return "Completed"
 end
 
+local function format_count(value)
+   local digits = tostring(math.max(0, math.floor(tonumber(value) or 0)))
+   return digits:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+end
+
 local function option(row)
    local preview = tostring(row.preview or "(no user message)"):gsub("%s+", " ")
    local provider = tostring(row.provider or "?")
    local model = tostring(row.model or "?")
    local id = tostring(row.id)
-   local description = string.format("%s · %s/%s · #%s · %du · %da · %d total · %s",
+   local description = string.format("%s · %s/%s · #%s · %s messages · %s tokens · %s",
       format_when(row.last_activity or row.started_at),
       provider, model, id,
-      tonumber(row.user_count or 0),
-      tonumber(row.assistant_count or 0),
-      tonumber(row.total_message_count or 0),
+      format_count(row.total_message_count),
+      format_count(row.total_token_count),
       status_text(row.status))
    return {
       label = preview,
