@@ -7,7 +7,7 @@
   { "name": "web_search.lua", "kind": "tool", "description": "Search the web for information using DuckDuckGo. Returns titles, URLs and summaries. Useful for looking up documentation, current events, technical topics, and general knowledge.", "sha256": "9479e20be9598bd1033515b99ad31a3386304968dc49b7bf1c565fe75d0d9d72" },
   { "name": "compact.lua", "kind": "command", "description": "Manually compact conversation context by summarizing older messages", "sha256": "ce73667c112c2a94bd8941e76425499841c56eee144a429420c10cb8ae03b23b" },
   { "name": "goal.lua", "kind": "command", "description": "Start, resume, check, or stop an autonomous goal.", "sha256": "2528938334d2342e541ac942a04f918fc47d25e008f0551f4b43812c4a02d446" },
-  { "name": "history.lua", "kind": "command", "description": "Pick a recent conversation and load it as the current chat.", "sha256": "d2608d6504b113f1e2d05e0d2d7406a147275a64dd57034bb74208fd58ebc9cc" },
+  { "name": "history.lua", "kind": "command", "description": "Resume a recent conversation", "sha256": "a4a6d768648dc2724d3be56b2bb8907d46e354af0cd2019dc9ee06b355a941f1" },
   { "name": "memory.lua", "kind": "command", "description": "Quietly update global and project memory from recent conversations.", "sha256": "b3c464061862adfb411566742bf5e7e048dd59061098485dc08dde6d8b151678" },
   { "name": "review.lua", "kind": "command", "description": "Review uncommitted changes for real bugs (verification-first; /review [low|high])", "sha256": "0b1ae143c208a5ec944c9766c2ad8ad1cfe6a4e107992de9519f121a730fcdf5" },
   { "name": "shotgun.lua", "kind": "command", "description": "Fan a prompt out to configured providers; the chat agent synthesizes the answers", "sha256": "d74350d34cfe321bed63002da2e70ffa9c2d9d808b6ed4f17771b1f63155c0e0" },

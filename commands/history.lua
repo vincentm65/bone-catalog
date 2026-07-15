@@ -1,200 +1,111 @@
--- /history — pick a recent conversation and load it as the current chat.
---
+-- /history — pick a recent conversation and resume it.
+local history = require("history")
 local menu = require("ui.menu")
 
-local function truncate(s, max_len)
-    s = tostring(s or "")
-    s = s:gsub("%s+", " ")
-    if #s <= max_len then return s end
-    return s:sub(1, max_len - 3) .. "..."
+local function truncate(value, max_len)
+   local text = tostring(value or ""):gsub("%s+", " ")
+   if #text <= max_len then return text end
+   return text:sub(1, max_len - 3) .. "..."
 end
 
--- Stored timestamps are UTC ISO 8601 (e.g. 2026-06-14T14:15:32Z). Convert to
--- the user's local time and render a compact "YYYY-MM-DD HH:MM".
-local function format_when(when)
-    when = tostring(when or "")
-    local y, mo, d, h, mi = when:match(
-        "^(%d%d%d%d)%-(%d%d)%-(%d%d)[T ](%d%d):(%d%d)"
-    )
-    if not y then
-        -- Unrecognized format: fall back to a trimmed slice of the raw string.
-        return truncate(when, 16)
-    end
+local function format_when(value)
+   local y, month, day, hour, minute = tostring(value or ""):match(
+      "^(%d%d%d%d)%-(%d%d)%-(%d%d)[T ](%d%d):(%d%d)"
+   )
+   if not y then return truncate(value, 16) end
 
-    -- `os.time` interprets a broken-down table as *local* time, so this is the
-    -- UTC fields read as local — an approximation that's exact except within the
-    -- ~1h DST transition window (fine for display).
-    local approx = os.time({
-        year = tonumber(y), month = tonumber(mo), day = tonumber(d),
-        hour = tonumber(h), min = tonumber(mi), sec = 0,
-    })
-    if not approx then
-        return truncate(when, 16)
-    end
-    -- Local UTC offset at that time, e.g. "-0400". Using strftime %z reflects
-    -- DST correctly (unlike re-encoding os.date("!*t"), which loses the flag).
-    local sign, oh, om = os.date("%z", approx):match("([%+%-])(%d%d)(%d%d)")
-    local offset = 0
-    if sign then
-        offset = (tonumber(oh) * 3600 + tonumber(om) * 60)
-            * (sign == "-" and -1 or 1)
-    end
-    return os.date("%Y-%m-%d %H:%M", approx + offset)
+   local local_epoch = os.time({
+      year = tonumber(y), month = tonumber(month), day = tonumber(day),
+      hour = tonumber(hour), min = tonumber(minute), sec = 0,
+   })
+   if not local_epoch then return truncate(value, 16) end
+
+   local sign, offset_hour, offset_minute = os.date("%z", local_epoch)
+      :match("([%+%-])(%d%d)(%d%d)")
+   local offset = 0
+   if sign then
+      offset = (tonumber(offset_hour) * 3600 + tonumber(offset_minute) * 60)
+         * (sign == "-" and -1 or 1)
+   end
+   return os.date("%Y-%m-%d %H:%M", local_epoch + offset)
 end
 
--- Compaction injects synthetic messages whose content starts with this marker
--- (see compact.lua). They're noise in the picker and the restored chat, so we
--- skip them in both the preview and the loaded transcript.
-local function is_compaction(content)
-    return type(content) == "string" and content:sub(1, 17) == "[Context summary]"
-end
-
-local function first_user_preview(messages)
-    for _, msg in ipairs(messages or {}) do
-        if msg.role == "user" and msg.content and msg.content ~= ""
-            and not is_compaction(msg.content) then
-            return truncate(msg.content, 60)
-        end
-    end
-    return "(no preview)"
-end
-
--- A conversation is only worth showing if we actually drove it. The
--- conversations table also accumulates noise the picker should hide:
---   * empty placeholders — the TUI creates a row on startup/clear/new even if
---     no message is ever sent (0 messages),
---   * compaction-only rows — synthetic "[Context summary]" injections,
---   * trivial rows — anything with a single message and no real user turn.
--- Require more than one non-compaction message AND at least one real user turn
--- (so it's a conversation we initiated, not scaffolding). Sub-agent runs can't
--- be told apart in the DB, but most are caught by this same bar.
-local function is_relevant(messages)
-    local count = 0
-    local has_user_turn = false
-    for _, msg in ipairs(messages or {}) do
-        if not is_compaction(msg.content) then
-            count = count + 1
-            if msg.role == "user" and msg.content and msg.content ~= "" then
-                has_user_turn = true
-            end
-        end
-    end
-    return count > 1 and has_user_turn
-end
-
-local function label_for(session, preview)
-    local provider = session.provider or "?"
-    local model = session.model or "?"
-    return string.format("%s  %s/%s  #%s  %s",
-        format_when(session.started_at),
-        truncate(provider, 14),
-        truncate(model, 24),
-        tostring(session.id),
-        preview)
-end
-
-local function valid_message(msg)
-    if type(msg) ~= "table" then return nil end
-    if msg.role ~= "user" and msg.role ~= "assistant" and msg.role ~= "tool" then return nil end
-
-    local out = {
-        role = msg.role,
-        content = msg.content or "",
-    }
-
-    if msg.name then out.name = msg.name end
-    if msg.tool_name then out.name = msg.tool_name end
-    if msg.tool_call_id then out.tool_call_id = msg.tool_call_id end
-    if msg.tool_calls then out.tool_calls = msg.tool_calls end
-
-    return out
+local function label(row)
+   local when = format_when(row.activity_at or row.started_at)
+   local status = tonumber(row.assistant_count or 0) == 0 and "  [interrupted]" or ""
+   return string.format("%s  %s/%s  #%s%s  %s",
+      when,
+      truncate(row.provider or "?", 14),
+      truncate(row.model or "?", 24),
+      tostring(row.id),
+      status,
+      truncate(row.preview or "(no preview)", 60))
 end
 
 bone.register_command("history", {
-    description = "Pick a recent conversation and load it as the current chat.",
-    handler = function(_, ctx)
-        -- Pull a wide window: most rows are empty placeholders, so we
-        -- over-fetch and filter down to the conversations actually worth showing.
-        local ok, sessions = pcall(ctx.session.list, { limit = 100 })
-        if not ok then
-            ctx.ui.notify("Failed to list history: " .. tostring(sessions), "error")
-            return nil
-        end
+   description = "Resume a recent conversation",
+   handler = function(_, ctx)
+      local ok, rows = pcall(history.list, ctx, 100)
+      if not ok then
+         ctx.ui.notify("Failed to list history: " .. tostring(rows), "error")
+         return nil
+      end
+      if not rows or #rows == 0 then
+         ctx.ui.notify("No conversation history found.", "warn")
+         return nil
+      end
 
-        if not sessions or #sessions == 0 then
-            ctx.ui.notify("No conversation history found.", "warn")
-            return nil
-        end
+      local options, by_label = {}, {}
+      for _, row in ipairs(rows) do
+         local text = label(row)
+         options[#options + 1] = text
+         by_label[text] = row.id
+      end
 
-        local options = {}
-        local by_label = {}
-        for _, session in ipairs(sessions) do
-            local msg_ok, sample = pcall(ctx.session.messages, session.id, { limit = 20 })
-            if msg_ok and is_relevant(sample) then
-                local label = label_for(session, first_user_preview(sample))
-                options[#options + 1] = label
-                by_label[label] = session
-            end
-        end
+      local ask_ok, result = pcall(menu.select, ctx, {
+         question = "Resume conversation  ·  Enter load  ·  Esc cancel",
+         options = options,
+         default = 1,
+         allow_custom = false,
+      })
+      menu.clear(ctx)
 
-        if #options == 0 then
-            ctx.ui.notify("No conversations with messages found.", "warn")
-            return nil
-        end
+      if not ask_ok then
+         ctx.ui.notify("History picker failed: " .. tostring(result), "error")
+         return nil
+      end
+      if type(result) ~= "table" or result.cancelled then return nil end
 
-        local ask_ok, result = pcall(menu.select, ctx, {
-            question = "Load conversation history. Use arrows/PageUp/PageDown, Enter to load, Esc to cancel.",
-            options = options,
-            default = 1,
-            allow_custom = false,
-        })
+      local id = by_label[result.value]
+      if not id then return nil end
 
-        menu.clear(ctx)
+      -- Keep the transcript payload for released clients that preload scrollback
+      -- from the command action. New clients ignore it and load by id from the daemon.
+      local messages_ok, stored = pcall(history.messages, ctx, id, 1000)
+      if not messages_ok then
+         ctx.ui.notify("Failed to load conversation: " .. tostring(stored), "error")
+         return nil
+      end
+      local messages = {}
+      for _, msg in ipairs(stored) do
+         if (msg.role == "user" or msg.role == "assistant" or msg.role == "tool")
+            and tostring(msg.content or ""):sub(1, 17) ~= "[Context summary]" then
+            messages[#messages + 1] = {
+               role = msg.role,
+               content = msg.content or "",
+               name = msg.tool_name,
+               tool_call_id = msg.tool_call_id,
+               tool_calls = msg.tool_calls,
+            }
+         end
+      end
 
-        if not ask_ok then
-            ctx.ui.notify("History picker failed: " .. tostring(result), "error")
-            return nil
-        end
-        if type(result) ~= "table" then
-            ctx.ui.notify("History picker unavailable: " .. tostring(result), "error")
-            return nil
-        end
-        if result.cancelled then
-            ctx.ui.notify("History selection cancelled.", "info")
-            return nil
-        end
-
-        local selected = by_label[result.value]
-        if not selected then
-            ctx.ui.notify("No history item selected.", "warn")
-            return nil
-        end
-
-        local msgs_ok, stored = pcall(ctx.session.messages, selected.id, { limit = 1000 })
-        if not msgs_ok then
-            ctx.ui.notify("Failed to load conversation: " .. tostring(stored), "error")
-            return nil
-        end
-
-        local messages = {}
-        for _, msg in ipairs(stored or {}) do
-            if not is_compaction(msg.content) then
-                local out = valid_message(msg)
-                if out then table.insert(messages, out) end
-            end
-        end
-
-        if #messages == 0 then
-            ctx.ui.notify("Selected conversation has no valid messages.", "warn")
-            return nil
-        end
-
-        return {
-            action = "conversation.load",
-            messages = messages,
-            conversation_id = selected.id,
-            display = "Loaded conversation #" .. tostring(selected.id) .. " from history.",
-            submit = false,
-        }
-    end,
+      return {
+         action = "conversation.load",
+         conversation_id = id,
+         messages = messages,
+         display = "Loading conversation #" .. tostring(id) .. "...",
+         submit = false,
+      }
+   end,
 })
