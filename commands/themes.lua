@@ -147,7 +147,7 @@ end
 
 if not bone._themes_command_registered then
   bone._themes_command_registered = true
-  bone.register_command("themes", {
+  bone.command.register("themes", {
     description = "Pick or apply a color theme",
     handler = function(arg, ctx)
       local text = tostring(arg or "")

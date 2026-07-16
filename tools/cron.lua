@@ -210,7 +210,7 @@ local function execute(params, ctx)
     return result.stdout or ""
 end
 
-bone.register_tool({
+bone.tool.register({
     name = "cron",
     description = "Manage Bone scheduled jobs for the user (daily HH:MM schedules). Use this when the user asks to schedule, list, remove, or inspect recurring Bone tasks. Actions: add (requires name, time, prompt), list, remove (requires name), logs (requires name, optional tail). Examples: cron(action=list); cron(action=add, name=daily-clean, time=09:00, approval=danger, prompt=/clean src/main.rs); cron(action=remove, name=daily-clean); cron(action=logs, name=daily-clean, tail=100).",
     parameters = {

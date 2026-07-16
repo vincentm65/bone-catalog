@@ -100,7 +100,7 @@ local function option(row)
    }
 end
 
-bone.register_command("history", {
+bone.command.register("history", {
    description = "Resume a recent conversation",
    handler = function(_, ctx)
       local ok, rows = pcall(history.list, ctx, 50)

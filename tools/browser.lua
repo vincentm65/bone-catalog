@@ -780,7 +780,7 @@ local function execute(params, ctx)
     return result.stdout or ""
 end
 
-bone.register_tool({
+bone.tool.register({
     name = "browser",
     description = [[Drive a persistent browser through a small observe/target remote-control API. Use this for tasks where the user asks you to browse, use a website, shop, order, log in, inspect a live page, or interact with dynamic web UI. YOU are the loop: call open, then observe, then act on target IDs, then observe again. The browser stays open and logged-in between calls (cookies and sessions persist), so a later call continues where the previous one left off.
 

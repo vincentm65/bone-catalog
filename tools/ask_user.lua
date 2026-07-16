@@ -263,7 +263,7 @@ local function execute(params, ctx)
     return display
 end
 
-bone.register_tool({
+bone.tool.register({
     name = "ask_user",
     description = "Ask the user one or more questions with selectable options or custom answers. Use the 'questions' array to ask several questions back-to-back in a single call, or use top-level 'question' + 'options' for a single question.",
     parameters = {

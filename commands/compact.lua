@@ -391,7 +391,7 @@ end)
 -- Manual /compact command
 -- ---------------------------------------------------------------------------
 
-bone.register_command("compact", {
+bone.command.register("compact", {
     description = "Manually compact conversation context by summarizing older messages",
     handler = function(_, ctx)
         if not ctx.conversation or not ctx.conversation.history then

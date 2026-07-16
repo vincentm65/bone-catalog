@@ -128,7 +128,7 @@ local function drain_pending(ctx, pending)
   ctx.agent.wait(pending, { timeout_ms = 10000 })
 end
 
-bone.register_command("shotgun", {
+bone.command.register("shotgun", {
   description = "Fan a prompt out to configured providers; the chat agent synthesizes the answers",
   handler = function(arg, ctx)
     local task = trim(arg)

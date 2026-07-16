@@ -327,7 +327,7 @@ end
 -- /review command
 -- ---------------------------------------------------------------------------
 
-bone.register_command("review", {
+bone.command.register("review", {
     description = "Review uncommitted changes for real bugs (verification-first; /review [low|high])",
     handler = function(args, ctx)
         local effort, uerr = parse_effort(args)

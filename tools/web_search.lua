@@ -18,7 +18,7 @@ local function execute(params, ctx)
     return result.stdout or ""
 end
 
-bone.register_tool({
+bone.tool.register({
     name = "web_search",
     description = "Search the web for information using DuckDuckGo. Returns titles, URLs and summaries. Useful for looking up documentation, current events, technical topics, and general knowledge.",
     parameters = {

@@ -156,7 +156,7 @@ local function execute(params, ctx)
     return "ERROR: Action must be 'write' or 'clear'."
 end
 
-bone.register_tool({
+bone.tool.register({
     name = "task_list",
     description = "Maintain a visible checklist (TUI pane) for the user. Use it for any task with ~3+ distinct steps or work spanning multiple files. Call 'write' with the FULL list every time — it replaces the whole list, so there are no indices to track. Keep at most one item 'in_progress' (the step you're working on now); flip it to 'done' when finished. Once the work is genuinely complete, call 'complete' to mark the whole current list done. Call 'clear' only when the user confirms. State is host-held; no state arg. Actions: write (pass tasks, optional name, max 15), complete, clear.",
     safety = "read_only",

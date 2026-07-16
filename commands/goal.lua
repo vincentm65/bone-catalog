@@ -133,7 +133,7 @@ end)
 -- /goal command
 -- ---------------------------------------------------------------------------
 
-bone.register_command("goal", {
+bone.command.register("goal", {
     description = "Start, resume, check, or stop an autonomous goal.",
     handler = function(args, ctx)
         local arg = (args or ""):gsub("^%s+", ""):gsub("%s+$", "")

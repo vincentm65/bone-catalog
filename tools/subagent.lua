@@ -1,6 +1,6 @@
 -- Sub-agent tool: discovery, dispatch, and status reporting.
 --
--- Only active when sub-agents are registered via bone.register_subagent in
+-- Only active when sub-agents are registered via bone.subagent.register in
 -- init.lua.  When no agents are registered, this file is a no-op (zero
 -- overhead) — the tool is never created.
 --
@@ -346,7 +346,7 @@ end
 -- Register the tool
 -- ---------------------------------------------------------------------------
 
-bone.register_tool({
+bone.tool.register({
     name = "subagent",
     description = build_description(),
     safety = "read_only",
