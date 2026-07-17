@@ -5,6 +5,7 @@ local files = {}
 local history = {}
 local agent_prompts = {}
 local statuses = {}
+local warnings = {}
 
 local function encode(value)
    local fields = {}
@@ -69,14 +70,19 @@ local ctx = {
    agent = {
       run = function(prompt)
          agent_prompts[#agent_prompts + 1] = prompt
+         local project = ""
+         if prompt:find('"scope":"project"', 1, true) then
+            project = "<!-- last_updated: 2026-07-16 -->\n## Workflow\n- test first"
+         end
          return {
             ok = true,
-            content = "---GLOBAL---\n<!-- last_updated: 2026-07-16 -->\n## Preferences\n- concise\n---PROJECT---\n<!-- last_updated: 2026-07-16 -->\n## Workflow\n- test first\n---END---",
+            content = "---GLOBAL---\n<!-- last_updated: 2026-07-16 -->\n## Preferences\n- concise\n---PROJECT---\n"
+               .. project .. "\n---END---",
          }
       end,
    },
    ui = { status = function(message) statuses[#statuses + 1] = message end },
-   log = { warn = function(message) error(message) end },
+   log = { warn = function(message) warnings[#warnings + 1] = message end },
 }
 
 assert(loadfile("commands/memory.lua"))()
@@ -97,13 +103,21 @@ assert(result.submit == false)
 assert(result.display == "Memory updated.")
 assert(agent_prompts[#agent_prompts]:find('"scope":"global"', 1, true))
 assert(files["/config/memory/global.md"]:find("concise", 1, true))
-assert(files["/config/memory/projects/_work_project.md"]:find("test first", 1, true))
+assert(files["/config/memory/projects/_work_project.md"] == nil,
+   "global and unscoped inputs must not create project memory")
+assert(agent_prompts[#agent_prompts]:find("Historical findings are global%-only"))
 assert(files["/config/memory/inbox.jsonl"] == "")
 assert(files["/config/memory/state.json"])
 assert(statuses[1] == "Memory: finding new conversations…")
 assert(statuses[2] == "Memory: processing 0 new conversation(s)…")
 assert(statuses[3] == "Memory: updating scoped memory…")
 assert(statuses[4] == "Memory: saving checkpoint…")
+
+-- Project memory changes only from an explicitly project-scoped entry.
+result = command.handler("remember --project Run tests first", ctx)
+assert(result.display == "Memory updated.")
+assert(agent_prompts[#agent_prompts]:find('"scope":"project"', 1, true))
+assert(files["/config/memory/projects/_work_project.md"]:find("test first", 1, true))
 
 -- Show aliases expose both scopes without submitting a turn.
 for _, alias in ipairs({ "show", "view", "list" }) do
@@ -132,5 +146,34 @@ files["/config/memory/global.md"] = nil
 files["/config/memory.md"] = "- preserved legacy preference"
 action = before_turn(nil, ctx)
 assert(action.system_prompt_append:find("preserved legacy preference", 1, true))
+
+-- Extraction failures preserve the checkpoint and inbox so the batch can retry.
+local state_path = "/config/memory/state.json"
+local inbox_path = "/config/memory/inbox.jsonl"
+files[state_path] = '{"last_conversation_id":0}\n'
+files[inbox_path] = '{"content":"queued preference"}\n'
+local state_before = files[state_path]
+local inbox_before = files[inbox_path]
+local message_query
+ctx.db.query = function(sql)
+   if sql:find("FROM conversations", 1, true) then
+      return { { id = 7, started_at = "2026-07-17T00:00:00Z" } }
+   end
+   message_query = sql
+   return { { role = "user", content = "I prefer small focused changes." } }
+end
+ctx.agent.run = function(prompt)
+   agent_prompts[#agent_prompts + 1] = prompt
+   return { ok = false, error = "temporary provider failure" }
+end
+result = command.handler("", ctx)
+assert(result.submit == false)
+assert(result.display:find("checkpoint and inbox unchanged", 1, true))
+assert(files[state_path] == state_before)
+assert(files[inbox_path] == inbox_before)
+assert(message_query:find("role = 'user'", 1, true))
+assert(agent_prompts[#agent_prompts]:find("durable global user preferences", 1, true))
+assert(agent_prompts[#agent_prompts]:find("I prefer small focused changes", 1, true))
+assert(#warnings > 0)
 
 print("memory command tests passed")

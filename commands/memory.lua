@@ -1,8 +1,9 @@
 -- /memory — quiet incremental memory builder.
 --
--- Keeps global and per-project memory updated without turning the main chat into
--- a memory-maintenance turn. Cheap before_turn capture only queues explicit
--- preference-like user messages; model work happens when /memory is run.
+-- Keeps global memory updated from prior user messages and maintains explicit
+-- per-project preferences without turning the main chat into a memory-maintenance
+-- turn. Cheap before_turn capture only queues explicit preference-like user
+-- messages; model work happens when /memory is run.
 
 local EXTRACT_BUDGET_CHARS = 80000
 local MAX_MSG_CHARS = 4000
@@ -123,53 +124,52 @@ local function state_write(ctx, p, state)
     return write_or_rewrite(ctx, p.state, cjson.encode(state) .. "\n")
 end
 
-local function conversation_lines(ctx, cid)
+local function user_message_lines(ctx, cid)
     local msg_ok, msg_rows = pcall(ctx.db.query,
         "SELECT role, content FROM messages WHERE conversation_id = ? "
-        .. "AND role IN ('user', 'assistant') AND tool_name IS NULL ORDER BY seq ASC",
+        .. "AND role = 'user' AND tool_name IS NULL ORDER BY seq ASC",
         { cid })
     if not msg_ok or type(msg_rows) ~= "table" then
-        return nil
+        return nil, tostring(msg_rows or "invalid message query result")
     end
     local lines = {}
     for _, msg in ipairs(msg_rows) do
         local content = truncate_utf8(msg.content or "", MAX_MSG_CHARS)
-        lines[#lines + 1] = "[" .. msg.role .. "] " .. content
+        lines[#lines + 1] = "[user] " .. content
     end
     return lines
 end
 
-local function extraction_prompt(transcript, cwd)
+local function extraction_prompt(transcript)
     return table.concat({
-        "You are distilling durable memory signals from prior conversation transcripts.",
+        "You are distilling durable global user preferences from prior user messages.",
         "",
-        "Extract ONLY durable signals about:",
-        "- global user preferences: communication, coding style, tools/workflow, dislikes",
-        "- current-project conventions when clearly tied to this cwd: " .. (cwd or "unknown"),
+        "Extract ONLY stable global preferences such as communication style, coding style, tools/workflow, and dislikes.",
         "",
         "Rules:",
         "- Output terse bullets, one signal per line, prefixed with '- '.",
-        "- Prefix project-only bullets with '[project] '. Prefix global bullets with '[global] '.",
-        "- Ignore one-off task details and incidental remarks.",
+        "- Ignore project-specific conventions, one-off task details, and incidental remarks.",
+        "- Treat only user messages as evidence.",
         "- If there is nothing durable worth remembering, output exactly: NONE",
         "",
-        "--- Transcript ---",
+        "--- User messages ---",
         transcript,
     }, "\n")
 end
 
 local function extract(ctx, transcript)
     status(ctx, "Memory: distilling conversation history…")
-    local run_result = ctx.agent.run(extraction_prompt(transcript, ctx.cwd), { timeout_ms = 120000 })
+    local run_result = ctx.agent.run(extraction_prompt(transcript), { timeout_ms = 120000 })
     if not run_result.ok then
-        ctx.log.warn("memory: extraction failed: " .. (run_result.error or "unknown"))
-        return nil
+        local err = run_result.error or "unknown"
+        ctx.log.warn("memory: extraction failed: " .. err)
+        return false, nil, err
     end
     local content = trim(run_result.content or "")
     if content == "" or content:upper() == "NONE" then
-        return nil
+        return true, nil, nil
     end
-    return content
+    return true, content, nil
 end
 
 local function merge_prompt(current_global, current_project, findings, inbox, cwd)
@@ -179,9 +179,11 @@ local function merge_prompt(current_global, current_project, findings, inbox, cw
         "Current cwd: " .. (cwd or "unknown"),
         "",
         "Rules:",
+        "- Historical findings are global-only; never use them to change project memory.",
         "- Global memory: stable user preferences only; no project-specific facts.",
-        "- Project memory: conventions/preferences only for this cwd/project.",
-        "- Inbox entries may include scope=global or scope=project; honor explicit scope.",
+        "- Project memory may change only from inbox entries with scope=project for this cwd.",
+        "- Inbox entries with scope=global or no scope may change global memory only.",
+        "- Ignore project-scoped inbox entries whose cwd does not match the current cwd.",
         "- Add only clear durable signals. Prefer repeated/corrective signals over one-offs.",
         "- Remove contradicted/stale items.",
         "- Keep each file under " .. MEMORY_MAX_TOKENS .. " tokens (~" .. MEMORY_MAX_CHARS .. " chars).",
@@ -364,7 +366,7 @@ bone.on("before_turn", function(_, ctx)
 end)
 
 bone.command.register("memory", {
-    description = "Quietly update global and project memory from recent conversations.",
+    description = "Update global memory from recent user messages and explicit scoped preferences.",
     handler = function(arg, ctx)
         local p = paths(ctx)
         local words = split_words(arg)
@@ -414,54 +416,78 @@ bone.command.register("memory", {
         local pending = {}
         local pending_chars = 0
         local max_id = state.last_conversation_id or 0
+        local extraction_error
 
-        local function flush_pending()
-            if pending_chars == 0 then return end
-            local distilled = extract(ctx, table.concat(pending, "\n"))
+        local function distill(transcript)
+            local extract_ok, distilled, err = extract(ctx, transcript)
+            if not extract_ok then
+                extraction_error = err or "unknown"
+                return false
+            end
             if distilled then
                 findings[#findings + 1] = distilled
             end
+            return true
+        end
+
+        local function flush_pending()
+            if pending_chars == 0 then return true end
+            local transcript = table.concat(pending, "\n")
             pending = {}
             pending_chars = 0
+            return distill(transcript)
         end
 
         for _, row in ipairs(cids_rows) do
+            if extraction_error then break end
             local cid = tonumber(row.id) or 0
             if cid > max_id then
                 max_id = cid
             end
-            local lines = conversation_lines(ctx, cid)
-            if lines then
+            local lines, lines_err = user_message_lines(ctx, cid)
+            if lines_err then
+                extraction_error = "could not read conversation " .. tostring(cid) .. ": " .. lines_err
+                break
+            end
+            if lines and #lines > 0 then
                 local header = "## Conversation " .. tostring(cid)
                 local body = header .. "\n" .. table.concat(lines, "\n")
                 if #body > EXTRACT_BUDGET_CHARS then
-                    flush_pending()
+                    if not flush_pending() then break end
                     local chunk = { header }
                     local chunk_chars = #header
                     for _, line in ipairs(lines) do
                         if chunk_chars + #line + 1 > EXTRACT_BUDGET_CHARS and #chunk > 1 then
-                            local distilled = extract(ctx, table.concat(chunk, "\n"))
-                            if distilled then findings[#findings + 1] = distilled end
+                            if not distill(table.concat(chunk, "\n")) then break end
                             chunk = { header }
                             chunk_chars = #header
                         end
                         chunk[#chunk + 1] = line
                         chunk_chars = chunk_chars + #line + 1
                     end
-                    if #chunk > 1 then
-                        local distilled = extract(ctx, table.concat(chunk, "\n"))
-                        if distilled then findings[#findings + 1] = distilled end
+                    if not extraction_error and #chunk > 1
+                        and not distill(table.concat(chunk, "\n")) then
+                        break
                     end
                 else
-                    if pending_chars + #body + 1 > EXTRACT_BUDGET_CHARS then
-                        flush_pending()
+                    if pending_chars + #body + 1 > EXTRACT_BUDGET_CHARS
+                        and not flush_pending() then
+                        break
                     end
                     pending[#pending + 1] = body
                     pending_chars = pending_chars + #body + 1
                 end
             end
         end
-        flush_pending()
+        if not extraction_error then
+            flush_pending()
+        end
+        if extraction_error then
+            return {
+                display = "Memory processing failed; checkpoint and inbox unchanged: " .. extraction_error,
+                submit = false,
+            }
+        end
 
         local inbox_text = load_inbox(ctx, p)
         if #findings == 0 and trim(inbox_text) == "" then
