@@ -12,255 +12,250 @@
 
 local menu = require("ui.menu")
 
-local function format_answer(result)
-    if result.values then
-        local parts = {}
-        for _, v in ipairs(result.values) do
-            table.insert(parts, "  - " .. v)
+local VALID_TYPES = {
+    single_select = true,
+    multi_select = true,
+    text_input = true,
+}
+
+local function fail(index, field, message)
+    error(string.format("question %d field '%s': %s", index, field, message), 0)
+end
+
+local function array_length(value, index, field)
+    if type(value) ~= "table" then fail(index, field, "must be an array") end
+    local count = 0
+    for key in pairs(value) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then
+            fail(index, field, "must be an array")
         end
-        if result.custom and result.custom ~= "" then
-            table.insert(parts, "  Custom: " .. result.custom)
-        end
-        if #parts == 0 then
-            -- Multi-select submitted with nothing checked: tell the AI
-            -- explicitly so it can't be mistaken for a skip/no-response.
-            return "(no options selected)"
-        end
-        return table.concat(parts, "\n")
-    elseif result.value then
-        if result.custom then
-            return "Custom answer: " .. result.value
-        else
-            return result.value
-        end
+        count = count + 1
     end
-    return "(no response)"
+    if count ~= #value then fail(index, field, "must not contain gaps") end
+    return count
 end
 
 local function get_qtype(q)
-    local qtype = q.type
-    if not qtype then
-        -- Explicit contract: options present → single_select (even with
-        -- allow_custom, which adds a "type your own" row). multi_select is
-        -- only used when the caller asks for it by name. No options → text.
-        local options = q.options or {}
-        if #options > 0 then
-            qtype = "single_select"
-        else
-            qtype = "text_input"
-        end
-    end
-    return qtype
+    if q.type then return q.type end
+    return q.options and #q.options > 0 and "single_select" or "text_input"
 end
 
--- Normalize options to menu form, preserving optional per-option descriptions.
--- Accepts plain strings or { label, description } objects.
 local function normalize_options(options)
     local out = {}
-    for i, opt in ipairs(options) do
+    for i, opt in ipairs(options or {}) do
         if type(opt) == "table" then
-            out[i] = { label = opt.label or tostring(opt), description = opt.description }
+            out[i] = { label = opt.label, value = opt.value, description = opt.description }
         else
-            out[i] = { label = opt }
+            out[i] = { label = opt, value = opt }
         end
     end
     return out
 end
 
-local function ask_one(q, ctx)
-    local question = q.question
-    local options = normalize_options(q.options or {})
+local function validate_question(q, index)
+    if type(q) ~= "table" then fail(index, "question", "question specification must be an object") end
+    if type(q.question) ~= "string" then fail(index, "question", "must be a string") end
+    if q.allow_custom ~= nil and type(q.allow_custom) ~= "boolean" then
+        fail(index, "allow_custom", "must be a boolean")
+    end
+    if q.type ~= nil and (type(q.type) ~= "string" or not VALID_TYPES[q.type]) then
+        fail(index, "type", "must be single_select, multi_select, or text_input")
+    end
+
+    local option_count = 0
+    if q.options ~= nil then
+        option_count = array_length(q.options, index, "options")
+        for i, opt in ipairs(q.options) do
+            local field = string.format("options[%d]", i)
+            if type(opt) == "string" then
+                -- String shorthand is already normalized.
+            elseif type(opt) == "table" then
+                if type(opt.label) ~= "string" then fail(index, field .. ".label", "must be a string") end
+                if opt.value ~= nil and type(opt.value) ~= "string" then
+                    fail(index, field .. ".value", "must be a string")
+                end
+                if opt.description ~= nil and type(opt.description) ~= "string" then
+                    fail(index, field .. ".description", "must be a string")
+                end
+            else
+                fail(index, field, "must be a string or option object")
+            end
+        end
+    end
+
     local qtype = get_qtype(q)
+    if qtype ~= "text_input" and option_count == 0 and q.allow_custom ~= true then
+        fail(index, "options", "select questions require options unless allow_custom is true")
+    end
+    if q.default ~= nil then
+        if qtype == "text_input" then fail(index, "default", "does not apply to text_input") end
+        if type(q.default) ~= "number" or q.default % 1 ~= 0 then
+            fail(index, "default", "must be an integer")
+        end
+        if q.default < 1 or q.default > option_count then
+            fail(index, "default", string.format("must be a valid 1-based option index (1-%d)", option_count))
+        end
+    end
 
+    q._type = qtype
+    q._options = normalize_options(q.options)
+    return q
+end
+
+local function validate_params(params)
+    if type(params) ~= "table" then error("parameters must be an object", 0) end
+    local has_question = params.question ~= nil
+    local has_questions = params.questions ~= nil
+    if has_question and has_questions then
+        error("fields 'question' and 'questions' are mutually exclusive", 0)
+    end
+    if not has_question and not has_questions then
+        error("exactly one of 'question' or 'questions' is required", 0)
+    end
+    if has_question then return { validate_question(params, 1) }, false end
+
+    local total = array_length(params.questions, 1, "questions")
+    if total == 0 then error("field 'questions' must contain at least one question", 0) end
+    local questions = {}
+    for i, q in ipairs(params.questions) do questions[i] = validate_question(q, i) end
+    return questions, true
+end
+
+local function valid_result(result, qtype)
+    if type(result) ~= "table" then return false end
+    if result.cancelled == true then return true end
+    if qtype == "multi_select" then
+        if type(result.values) ~= "table" then return false end
+        for _, value in ipairs(result.values) do
+            if type(value) ~= "string" then return false end
+        end
+        return result.custom == nil or type(result.custom) == "string"
+    end
+    return type(result.value) == "string"
+end
+
+local function ask_one(q, ctx, index, total, previous)
     local spec = {
-        question = question,
-        options = options,
+        title = total and string.format("Question %d of %d", index, total) or nil,
+        question = q.question,
+        options = q._options,
         default = q.default,
-        -- Always offer a "type your own answer" row on every question, so the
-        -- user is never boxed into the options we happened to provide.
-        allow_custom = true,
+        allow_custom = q.allow_custom == true,
     }
-    local fn = menu.text_input
-    if qtype == "single_select" or qtype == "single" then
-        fn = menu.select
-    elseif qtype == "multi_select" or qtype == "multi" then
-        fn = menu.multi_select
+    if previous then
+        if q._type == "single_select" then
+            spec.default = previous.selected
+        elseif q._type == "multi_select" then
+            spec.default = previous.selected
+            spec.initial_checked = previous.values
+            spec.initial = previous.custom
+        else
+            spec.initial = previous.value
+        end
     end
+
+    local fn = q._type == "single_select" and menu.select
+        or q._type == "multi_select" and menu.multi_select
+        or menu.text_input
     local ok, result = pcall(fn, ctx, spec)
-
-    if not ok then
-        return nil, "interact failed: " .. tostring(result)
+    if not ok then error(string.format("question %d menu failed: %s", index, tostring(result)), 0) end
+    if not valid_result(result, q._type) then
+        error(string.format("question %d menu returned a malformed result", index), 0)
     end
-
-    if result.cancelled then
-        return nil, "cancelled"
-    end
-
-    return format_answer(result)
+    if result.cancelled then return nil, true end
+    return result, false
 end
 
--- Build navigation options after answering a question in multi-question mode
--- Returns: list of option strings for the nav interact call
-local function build_nav_options(questions, answers, current_idx)
-    local opts = {}
-
-    -- Show summary of answered questions as pickable options to revise
-    for i = 1, #questions do
-        local short_q = questions[i].question
-        if #short_q > 50 then
-            short_q = short_q:sub(1, 47) .. "..."
-        end
-        if answers[i] then
-            local short_a = answers[i]
-            if #short_a > 40 then
-                short_a = short_a:sub(1, 37) .. "..."
-            end
-            table.insert(opts, string.format("Q%d: %s → %s", i, short_q, short_a))
-        else
-            table.insert(opts, string.format("Q%d: %s (unanswered)", i, short_q))
-        end
+local function answer_summary(result)
+    if result.values then
+        local values = {}
+        for _, value in ipairs(result.values) do values[#values + 1] = value end
+        if result.custom and result.custom ~= "" then values[#values + 1] = result.custom end
+        return table.concat(values, ", ")
     end
-
-    table.insert(opts, "✓ Submit all answers")
-    -- Move submit to the top so the cursor starts there
-    table.remove(opts, #opts)
-    table.insert(opts, 1, "✓ Submit all answers")
-
-    return opts
+    return result.value
 end
 
--- Parse what the user picked from navigation
--- Returns: "submit", or a number (question index to jump to)
-local function parse_nav_choice(result, num_questions)
-    if result.custom then
-        local val = tonumber(result.value)
-        if val and val >= 1 and val <= num_questions then
-            return val
-        end
-        return "submit" -- fallback
+local function build_review_options(questions, answers)
+    local options = { { label = "✓ Submit all answers", value = "submit" } }
+    for i, q in ipairs(questions) do
+        local short_q = #q.question > 50 and q.question:sub(1, 47) .. "..." or q.question
+        local summary = answer_summary(answers[i])
+        if #summary > 40 then summary = summary:sub(1, 37) .. "..." end
+        options[#options + 1] = {
+            label = string.format("Q%d: %s → %s", i, short_q, summary),
+            value = tostring(i),
+        }
     end
-
-    local selected = result.value
-    if not selected then return "submit" end
-
-    if selected == "✓ Submit all answers" then
-        return "submit"
-    end
-
-    -- Extract question number from "Q%d: ..."
-    local qnum = selected:match("^Q(%d+):")
-    if qnum then
-        return tonumber(qnum)
-    end
-
-    return "submit"
+    return options
 end
 
-local function ask_multi_with_backtrack(questions, ctx)
+local function review(questions, answers, ctx)
+    local ok, result = pcall(menu.select, ctx, {
+        title = "Review answers",
+        question = "Review your answers. Pick a question to revise, or submit.",
+        options = build_review_options(questions, answers),
+        allow_custom = false,
+    })
+    if not ok then error("review menu failed: " .. tostring(result), 0) end
+    if type(result) ~= "table" then error("review menu returned a malformed result", 0) end
+    if result.cancelled == true then return nil, true end
+    if type(result.value) ~= "string" then error("review menu returned a malformed result", 0) end
+    if result.value == "submit" then return "submit", false end
+    local index = tonumber(result.value)
+    if not index or index % 1 ~= 0 or not questions[index] then
+        error("review menu returned an unknown choice", 0)
+    end
+    return index, false
+end
+
+local function ask_all(questions, multiple, ctx)
     local answers = {}
-    local total = #questions
-
-    -- Fill answers table with nils
-    for _ = 1, total do table.insert(answers, nil) end
-
-    -- Start from first unanswered question
-    local function find_first_unanswered(start)
-        for i = start, total do
-            if not answers[i] then return i end
-        end
-        return nil
+    for i, q in ipairs(questions) do
+        local result, cancelled = ask_one(q, ctx, i, multiple and #questions or nil)
+        if cancelled then return nil, true end
+        answers[i] = result
     end
+    if not multiple then return answers, false end
 
-    -- Main loop: ask questions, then show nav, repeat until submit
-    local ask_from = 1
     while true do
-        -- Ask all unanswered questions from ask_from forward
-        local idx = find_first_unanswered(ask_from)
-        while idx do
-            local answer, err = ask_one(questions[idx], ctx)
-            if err == "cancelled" then
-                -- Treat cancellation as skip (nil answer)
-                answers[idx] = nil
-            elseif err then
-                answers[idx] = "error: " .. err
-            else
-                answers[idx] = answer
-            end
-            idx = find_first_unanswered(idx + 1)
-        end
-
-        -- Show navigation pane with summary
-        local nav_opts = build_nav_options(questions, answers, nil)
-        local ok, result = pcall(menu.select, ctx, {
-            question = "Review your answers. Pick a question to revise, or submit.",
-            options = nav_opts,
-            allow_custom = false,
-        })
-
-        if not ok then
-            -- Pane/transport failure: bail out so we don't spin forever.
-            break
-        elseif result and result.cancelled then
-            -- Esc on the review screen is a no-op, not a submit. Re-render the
-            -- review so the only way to submit is the explicit option below.
-            -- (All questions are already answered here, so the loop just
-            -- re-shows the nav pane.)
-        else
-            local choice = parse_nav_choice(result, total)
-            if choice == "submit" then
-                break
-            else
-                -- Jump back to revise that question
-                answers[choice] = nil
-                ask_from = choice
-            end
-        end
+        local choice, cancelled = review(questions, answers, ctx)
+        if cancelled then return nil, true end
+        if choice == "submit" then return answers, false end
+        local replacement, question_cancelled = ask_one(
+            questions[choice], ctx, choice, #questions, answers[choice]
+        )
+        if question_cancelled then return nil, true end
+        answers[choice] = replacement
     end
+end
 
-    return answers
+local function encode_answers(questions, results)
+    local answers = {}
+    for i, q in ipairs(questions) do
+        local result = results[i]
+        local answer = { question = q.question }
+        if q._type == "multi_select" then
+            answer.values = {}
+            for _, value in ipairs(result.values) do answer.values[#answer.values + 1] = value end
+            if result.custom and result.custom ~= "" then
+                answer.values[#answer.values + 1] = result.custom
+            end
+        else
+            answer.value = result.value
+        end
+        answers[i] = answer
+    end
+    return cjson.encode({ cancelled = false, answers = answers })
 end
 
 local function execute(params, ctx)
-    if not params.question and not (params.questions and #params.questions > 0) then
-        return "error: provide either 'question' or 'questions' parameter"
-    end
-
-    -- Multi-question mode
-    if params.questions and #params.questions > 0 then
-        local answers = ask_multi_with_backtrack(params.questions, ctx)
-
-        local parts = {}
-        for i, answer in ipairs(answers) do
-            if answer then
-                table.insert(parts, "Q" .. i .. ": " .. answer)
-            else
-                table.insert(parts, "Q" .. i .. ": [skipped]")
-            end
-        end
-
-        local result = table.concat(parts, "\n")
-        -- Clear pane after all questions are done
-        menu.clear(ctx)
-        ctx.ui.notify(result, "info")
-        return result
-    end
-
-    -- Single-question mode (backward compat)
-    local answer, err = ask_one(params, ctx)
-    -- Clear pane after the question is answered
-    menu.clear(ctx)
-    if err == "cancelled" then
-        return "[user cancelled]"
-    elseif err then
-        return err
-    end
-
-    local display = answer
-    if answer:sub(1, 1) == " " then
-        display = "Selected:\n" .. answer
-    end
-    ctx.ui.notify(display, "info")
-    return display
+    local questions, multiple = validate_params(params)
+    local ok, results, cancelled = pcall(ask_all, questions, multiple, ctx)
+    pcall(menu.clear, ctx)
+    if not ok then error(results, 0) end
+    if cancelled then return cjson.encode({ cancelled = true, answers = {} }) end
+    return encode_answers(questions, results)
 end
 
 bone.tool.register({
@@ -280,19 +275,35 @@ bone.tool.register({
                     .. "the trade-off. A plain string is also accepted as shorthand for "
                     .. "{ label = <string> }.",
                 items = {
-                    type = "object",
-                    properties = {
-                        label = { type = "string", description = "The option text shown to the user." },
-                        description = { type = "string", description = "Optional one-line explanation of this option." },
+                    anyOf = {
+                        { type = "string" },
+                        {
+                            type = "object",
+                            properties = {
+                                label = { type = "string", description = "The option text shown to the user." },
+                                value = { type = "string", description = "Optional value returned instead of the label." },
+                                description = { type = "string", description = "Optional one-line explanation of this option." },
+                            },
+                            required = { "label" },
+                            additionalProperties = false,
+                        },
                     },
-                    required = { "label" },
-                    additionalProperties = false,
                 },
             },
             allow_custom = {
                 type = "boolean",
                 description = "Add a 'type your own answer' row below the options. Works with "
                     .. "single_select (pick one option OR type a custom answer).",
+            },
+            type = {
+                type = "string",
+                enum = { "single_select", "multi_select", "text_input" },
+                description = "Question type. If omitted: 'single_select' when options are given "
+                    .. "(use multi_select explicitly for checkboxes), otherwise 'text_input'.",
+            },
+            default = {
+                type = "integer",
+                description = "Default selected option index (1-based).",
             },
             questions = {
                 type = "array",
@@ -307,13 +318,19 @@ bone.tool.register({
                                 .. "'label' and an optional 'description'. A plain string is "
                                 .. "also accepted as shorthand for { label = <string> }.",
                             items = {
-                                type = "object",
-                                properties = {
-                                    label = { type = "string", description = "The option text shown to the user." },
-                                    description = { type = "string", description = "Optional one-line explanation of this option." },
+                                anyOf = {
+                                    { type = "string" },
+                                    {
+                                        type = "object",
+                                        properties = {
+                                            label = { type = "string", description = "The option text shown to the user." },
+                                            value = { type = "string", description = "Optional value returned instead of the label." },
+                                            description = { type = "string", description = "Optional one-line explanation of this option." },
+                                        },
+                                        required = { "label" },
+                                        additionalProperties = false,
+                                    },
                                 },
-                                required = { "label" },
-                                additionalProperties = false,
                             },
                         },
                         allow_custom = {
@@ -328,7 +345,7 @@ bone.tool.register({
                                 .. "checkboxes), otherwise 'text_input'.",
                         },
                         default = {
-                            type = "number",
+                            type = "integer",
                             description = "Default selected option index (1-based).",
                         },
                     },
