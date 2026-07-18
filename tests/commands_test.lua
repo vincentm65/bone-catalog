@@ -26,6 +26,53 @@ assert(commands.compact, "compact command was not registered")
 assert(commands.usage, "usage command was not registered")
 assert(#before_turn_handlers == 1, "compact should register one before_turn handler")
 
+local headings = {
+   "Current objective",
+   "User constraints and preferences",
+   "Verified facts and decisions",
+   "Files and symbols",
+   "Commands and validation",
+   "Completed work",
+   "Unresolved issues",
+   "Pending tasks / next action",
+   "Critical verbatim details",
+}
+local summary = {}
+for _, heading in ipairs(headings) do
+   summary[#summary + 1] = "## **" .. heading .. ":**\n- value"
+end
+local agent_calls = 0
+local compact = commands.compact.handler("", {
+   config = {
+      get = function(_, key)
+         if key == "compact_keep_tokens" then return "1" end
+      end,
+   },
+   conversation = {
+      history = function()
+         return {
+            { role = "user", content = "old question" },
+            { role = "assistant", content = "old answer" },
+            { role = "user", content = "recent question" },
+            { role = "assistant", content = "recent answer" },
+         }
+      end,
+      context_tokens = function(messages) return #messages * 1000 end,
+   },
+   agent = {
+      run = function()
+         agent_calls = agent_calls + 1
+         return { ok = true, content = table.concat(summary, "\n\n") }
+      end,
+   },
+})
+assert(compact.action == "conversation.replace", compact.display)
+assert(agent_calls == 1, "normalized Markdown headings should not require a repair pass")
+local checkpoint = compact.messages[1].content
+assert(checkpoint:find("\nCurrent objective:\n", 1, true))
+assert(not checkpoint:find("##", 1, true))
+assert(not checkpoint:find("**", 1, true))
+
 local usage = commands.usage.handler(nil, {
    usage = {
       snapshot = function()

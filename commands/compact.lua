@@ -112,17 +112,36 @@ local function strip_checkpoint(history)
     return nil, history or {}
 end
 
+local function normalize_heading(line)
+    local candidate = trim(line):gsub("^#+%s*", "")
+    candidate = candidate:gsub("^%*%*(.-)%*%*$", "%1"):gsub("^__(.-)__$", "%1")
+    candidate = trim(candidate)
+    for _, heading in ipairs(REQUIRED_SECTIONS) do
+        if candidate:gsub(":$", "") == heading:gsub(":$", "") then return heading end
+    end
+    if candidate:gsub(":$", "") == PROTECTED_SECTION:gsub(":$", "") then return PROTECTED_SECTION end
+    return line
+end
+
 local function render_checkpoint(summary, pins)
     summary = trim(summary)
     summary = summary:gsub("^%[Context checkpoint v1%]%s*", "")
+    local lines = {}
+    for line in (summary .. "\n"):gmatch("(.-)\r?\n") do
+        lines[#lines + 1] = normalize_heading(line)
+    end
+    summary = trim(table.concat(lines, "\n"))
     local protected_at = summary:find("\n" .. PROTECTED_SECTION, 1, true)
     if protected_at then summary = trim(summary:sub(1, protected_at - 1)) end
     -- Older/custom summarizers may return plain prose despite the schema request.
     -- Preserve it verbatim in a valid checkpoint rather than discarding useful
     -- context; partially structured output is still rejected by validation.
     local has_any_heading = false
-    for _, heading in ipairs(REQUIRED_SECTIONS) do
-        if summary:find(heading, 1, true) then has_any_heading = true break end
+    for line in (summary .. "\n"):gmatch("(.-)\r?\n") do
+        for _, heading in ipairs(REQUIRED_SECTIONS) do
+            if line == heading then has_any_heading = true break end
+        end
+        if has_any_heading then break end
     end
     if not has_any_heading then
         local sections = {}
