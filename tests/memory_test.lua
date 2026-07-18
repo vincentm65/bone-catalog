@@ -87,6 +87,8 @@ local ctx = {
 
 assert(loadfile("commands/memory.lua"))()
 assert(command, "memory command was not registered")
+assert(command.description:find("global and current%-project memory"))
+assert(command.description:find("both are injected into every turn", 1, true))
 assert(before_turn, "before_turn hook was not registered")
 
 -- Cheap capture queues explicit preference-like user messages.
@@ -128,7 +130,12 @@ for _, alias in ipairs({ "show", "view", "list" }) do
    assert(shown.display:find("## Current project", 1, true))
 end
 local usage = command.handler("unknown", ctx)
-assert(usage.display:find("Usage: /memory", 1, true))
+assert(usage.display:find("Memory has two scopes", 1, true))
+assert(usage.display:find("Global memory applies across all projects", 1, true))
+assert(usage.display:find("Project memory applies only to the current working directory", 1, true))
+assert(usage.display:find("both are injected into every turn", 1, true))
+assert(usage.display:find("/memory remember [--global] <text>", 1, true))
+assert(usage.display:find("/memory remember --project <text>", 1, true))
 
 -- Injection is extension-owned and truncates each oversized scope safely.
 files["/config/memory/global.md"] = string.rep("x", 2100)

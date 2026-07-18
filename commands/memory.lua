@@ -10,6 +10,15 @@ local MAX_MSG_CHARS = 4000
 local MAX_INBOX_CHARS = 40000
 local MEMORY_MAX_TOKENS = 500
 local MEMORY_MAX_CHARS = 2000  -- ~4 chars/token approximation
+local MEMORY_HELP = [[Memory has two scopes, and both are injected into every turn:
+  Global memory applies across all projects.
+  Project memory applies only to the current working directory.
+
+Commands:
+  /memory                                      Update memory from queued and recent messages
+  /memory show                                 Show injected global and current-project memory
+  /memory remember [--global] <text>           Save a preference for all projects
+  /memory remember --project <text>            Save a preference for the current project]]
 
 local function trim(s)
     return (s or ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -317,7 +326,7 @@ end
 local function parse_remember(arg)
     local text = trim(arg or "")
     if text == "" then
-        return nil, nil, "Usage: /memory remember [--global|--project] <text>"
+        return nil, nil, MEMORY_HELP
     end
     local scope
     if text:find("^%-%-global%s+") then
@@ -328,7 +337,7 @@ local function parse_remember(arg)
         text = trim(text:gsub("^%-%-project%s+", "", 1))
     end
     if text == "" then
-        return nil, nil, "Usage: /memory remember [--global|--project] <text>"
+        return nil, nil, MEMORY_HELP
     end
     return text, scope, nil
 end
@@ -366,7 +375,7 @@ bone.on("before_turn", function(_, ctx)
 end)
 
 bone.command.register("memory", {
-    description = "Update global memory from recent user messages and explicit scoped preferences.",
+    description = "Manage global and current-project memory; both are injected into every turn.",
     handler = function(arg, ctx)
         local p = paths(ctx)
         local words = split_words(arg)
@@ -387,7 +396,7 @@ bone.command.register("memory", {
                 return { display = "Memory error: " .. tostring(err), submit = false }
             end
         elseif subcmd ~= "" then
-            return { display = "Usage: /memory [show|view|list|remember [--global|--project] <text>]", submit = false }
+            return { display = MEMORY_HELP, submit = false }
         end
 
         status(ctx, "Memory: finding new conversations…")
