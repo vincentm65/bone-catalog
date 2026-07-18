@@ -19,7 +19,7 @@ local REQUIRED_SECTIONS = {
 local PROTECTED_SECTION = "Protected context (verbatim):"
 local DEFAULT_KEEP_TOKENS = 12000
 local DEFAULT_INPUT_TOKENS = 30000
-local DEFAULT_CHECKPOINT_TOKENS = 2500
+local DEFAULT_CHECKPOINT_TOKENS = 4000
 local DEFAULT_GENERATION_TOKENS = 8000
 local DEFAULT_SAFETY_TOKENS = 8000
 local CHARS_PER_TOKEN = 3.8
@@ -48,13 +48,18 @@ end
 local function compact_config(ctx)
     local percentage = config_int(ctx, "compact_trigger_percentage") or 80
     if percentage > 100 then percentage = 100 end
+    local checkpoint_tokens = config_int(ctx, "compact_checkpoint_tokens")
+        or config_int(ctx, "compact_summary_tokens") or DEFAULT_CHECKPOINT_TOKENS
+    -- Existing installs inherited 2500 from Bone's legacy config page. Treat
+    -- that seeded value as the old default so the catalog update actually
+    -- raises the effective budget without requiring a separate config edit.
+    if checkpoint_tokens == 2500 then checkpoint_tokens = DEFAULT_CHECKPOINT_TOKENS end
     return {
         auto_tokens = config_int(ctx, "auto_compact_tokens"),
         legacy_keep_messages = config_int(ctx, "auto_compact_keep_messages"),
         keep_tokens = config_int(ctx, "compact_keep_tokens") or DEFAULT_KEEP_TOKENS,
         input_tokens = config_int(ctx, "compact_input_tokens") or DEFAULT_INPUT_TOKENS,
-        checkpoint_tokens = config_int(ctx, "compact_checkpoint_tokens")
-            or config_int(ctx, "compact_summary_tokens") or DEFAULT_CHECKPOINT_TOKENS,
+        checkpoint_tokens = checkpoint_tokens,
         generation_tokens = config_int(ctx, "compact_generation_tokens") or DEFAULT_GENERATION_TOKENS,
         safety_tokens = config_int(ctx, "compact_safety_tokens") or DEFAULT_SAFETY_TOKENS,
         trigger_mode = config_value(ctx, "compact_trigger_mode") or "absolute",
@@ -162,10 +167,18 @@ end
 
 local function checkpoint_token_count(ctx, checkpoint)
     if ctx.conversation and ctx.conversation.context_tokens then
-        local ok, tokens = pcall(ctx.conversation.context_tokens, {
+        local ok_total, total = pcall(ctx.conversation.context_tokens, {
             { role = "user", content = checkpoint },
         })
-        if ok and tonumber(tokens) and tonumber(tokens) > 0 then return tonumber(tokens) end
+        local ok_base, base = pcall(ctx.conversation.context_tokens, {})
+        total, base = tonumber(total), tonumber(base)
+        -- context_tokens includes the system prompt and tool schemas. Subtract
+        -- that fixed baseline so checkpoint validation measures only the
+        -- replacement message rather than charging global request overhead to
+        -- the checkpoint budget.
+        if ok_total and ok_base and total and base and total > base then
+            return total - base
+        end
     end
     return estimate_tokens(checkpoint)
 end
@@ -343,7 +356,8 @@ end
 
 local function run_summary(ctx, previous, excerpt, pins, config, repair)
     return run_prompt(ctx,
-        summary_prompt(previous, excerpt, pins, repair, config.checkpoint_tokens), pins, config)
+        summary_prompt(previous, excerpt, pins, repair, config.checkpoint_tokens),
+        pins, config, config.checkpoint_tokens)
 end
 
 local function run_compression(ctx, candidate, pins, config, target_tokens)
@@ -351,6 +365,13 @@ local function run_compression(ctx, candidate, pins, config, target_tokens)
 end
 
 local function summarize_bounded(ctx, old_checkpoint, older, pins, config)
+    local minimum_tokens = checkpoint_token_count(ctx, render_checkpoint("", pins))
+    if minimum_tokens > config.checkpoint_tokens then
+        return nil, string.format(
+            "protected context cannot fit checkpoint budget (%d > %d tokens)",
+            minimum_tokens, config.checkpoint_tokens)
+    end
+
     local serialized = {}
     for _, msg in ipairs(older) do serialized[#serialized + 1] = serialize_message(msg) end
     local all_text = table.concat(serialized, "\n")

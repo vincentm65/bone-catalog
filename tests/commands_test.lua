@@ -97,8 +97,9 @@ local retried = commands.compact.handler("", {
          }
       end,
       context_tokens = function(messages)
-         if #messages == 1 then return math.ceil(#messages[1].content / 4) end
-         return #messages * 1000
+         if #messages == 0 then return 4800 end
+         if #messages == 1 then return 4800 + math.ceil(#messages[1].content / 4) end
+         return 4800 + #messages * 2000
       end,
    },
    agent = {
@@ -117,7 +118,7 @@ assert(retry_calls == 3, "oversized checkpoints should be compressed more than o
 assert(retry_prompts[1]:find("within 500 tokens", 1, true))
 assert(retry_prompts[2]:find("within 400 tokens", 1, true))
 assert(retry_prompts[3]:find("within 300 tokens", 1, true))
-assert(table.concat(retry_limits, ",") == "8000,400,300",
+assert(table.concat(retry_limits, ",") == "500,400,300",
    "compression generation must be capped to its requested checkpoint target")
 
 local failed_calls = 0
