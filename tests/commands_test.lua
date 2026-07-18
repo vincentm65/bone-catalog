@@ -79,6 +79,7 @@ for _, heading in ipairs(headings) do
 end
 local retry_calls = 0
 local retry_prompts = {}
+local retry_limits = {}
 local retried = commands.compact.handler("", {
    config = {
       get = function(_, key)
@@ -101,9 +102,10 @@ local retried = commands.compact.handler("", {
       end,
    },
    agent = {
-      run = function(prompt)
+      run = function(prompt, opts)
          retry_calls = retry_calls + 1
          retry_prompts[#retry_prompts + 1] = prompt
+         retry_limits[#retry_limits + 1] = opts.max_tokens
          local content = retry_calls < 3 and table.concat(oversized, "\n\n")
             or table.concat(summary, "\n\n")
          return { ok = true, content = content }
@@ -115,6 +117,42 @@ assert(retry_calls == 3, "oversized checkpoints should be compressed more than o
 assert(retry_prompts[1]:find("within 500 tokens", 1, true))
 assert(retry_prompts[2]:find("within 400 tokens", 1, true))
 assert(retry_prompts[3]:find("within 300 tokens", 1, true))
+assert(table.concat(retry_limits, ",") == "8000,400,300",
+   "compression generation must be capped to its requested checkpoint target")
+
+local failed_calls = 0
+local failed = commands.compact.handler("", {
+   config = {
+      get = function(_, key)
+         if key == "compact_keep_tokens" then return "1" end
+         if key == "compact_checkpoint_tokens" then return "500" end
+      end,
+   },
+   conversation = {
+      history = function()
+         return {
+            { role = "user", content = "old question" },
+            { role = "assistant", content = "old answer" },
+            { role = "user", content = "recent question" },
+            { role = "assistant", content = "recent answer" },
+         }
+      end,
+      context_tokens = function(messages)
+         if #messages == 1 then return math.ceil(#messages[1].content / 4) end
+         return #messages * 1000
+      end,
+   },
+   agent = {
+      run = function()
+         failed_calls = failed_calls + 1
+         return { ok = true, content = table.concat(oversized, "\n\n") }
+      end,
+   },
+})
+assert(failed_calls == 4, "oversized checkpoints should exhaust three bounded compression attempts")
+assert(not failed.action, "failed compaction must preserve the original conversation")
+assert(failed.display:find(" > 500 tokens)", 1, true),
+   "failure should report measured and configured checkpoint sizes")
 
 local usage = commands.usage.handler(nil, {
    usage = {

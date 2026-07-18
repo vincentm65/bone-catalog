@@ -174,8 +174,9 @@ local function validate_checkpoint(ctx, checkpoint, max_tokens, pins)
     if type(checkpoint) ~= "string" or checkpoint:sub(1, #CHECKPOINT_MARKER) ~= CHECKPOINT_MARKER then
         return false, "missing checkpoint marker"
     end
-    if checkpoint_token_count(ctx, checkpoint) > max_tokens then
-        return false, "checkpoint exceeds output budget"
+    local tokens = checkpoint_token_count(ctx, checkpoint)
+    if tokens > max_tokens then
+        return false, "checkpoint exceeds output budget", tokens
     end
     local previous_at = 0
     for _, heading in ipairs(REQUIRED_SECTIONS) do
@@ -325,13 +326,13 @@ local function compression_prompt(candidate, pins, max_tokens)
     return table.concat(parts, "\n\n")
 end
 
-local function run_prompt(ctx, prompt, pins, config)
+local function run_prompt(ctx, prompt, pins, config, max_tokens)
     local result = ctx.agent and ctx.agent.run and ctx.agent.run(prompt, {
         tools = {},
         system_prompt = "You are a precise context checkpoint writer. Return only the requested structured checkpoint sections.",
         timeout_ms = 120000,
         wall_timeout_ms = 180000,
-        max_tokens = config.generation_tokens,
+        max_tokens = math.min(config.generation_tokens, max_tokens or config.generation_tokens),
     }) or nil
     if type(result) ~= "table" then return nil, "summarizer returned no result" end
     if not result.ok then return nil, result.error or "summarization failed" end
@@ -346,7 +347,7 @@ local function run_summary(ctx, previous, excerpt, pins, config, repair)
 end
 
 local function run_compression(ctx, candidate, pins, config, target_tokens)
-    return run_prompt(ctx, compression_prompt(candidate, pins, target_tokens), pins, config)
+    return run_prompt(ctx, compression_prompt(candidate, pins, target_tokens), pins, config, target_tokens)
 end
 
 local function summarize_bounded(ctx, old_checkpoint, older, pins, config)
@@ -365,25 +366,37 @@ local function summarize_bounded(ctx, old_checkpoint, older, pins, config)
     for _, excerpt in ipairs(excerpts) do
         local candidate, err = run_summary(ctx, checkpoint, excerpt, pins, config, nil)
         if not candidate then return nil, err end
-        local valid, reason = validate_checkpoint(ctx, candidate, config.checkpoint_tokens, pins)
+        local valid, reason, measured = validate_checkpoint(
+            ctx, candidate, config.checkpoint_tokens, pins)
         if not valid and reason == "checkpoint exceeds output budget" then
-            -- Keep the larger generation allowance for reasoning models, but
-            -- progressively lower the requested rendered size when a model
-            -- ignores the first limit. Validation remains the hard boundary.
+            -- Keep a larger allowance for the initial summary, then enforce each
+            -- progressively smaller compression target at the provider boundary.
+            -- Retry from the original candidate so a truncated attempt cannot
+            -- discard information needed by the next one.
+            local oversized_candidate = candidate
             for attempt = 1, 3 do
                 local target = math.max(1,
                     math.floor(config.checkpoint_tokens * (1 - attempt * 0.2)))
-                candidate, err = run_compression(ctx, candidate, pins, config, target)
+                candidate, err = run_compression(
+                    ctx, oversized_candidate, pins, config, target)
                 if not candidate then return nil, err end
-                valid, reason = validate_checkpoint(ctx, candidate, config.checkpoint_tokens, pins)
+                valid, reason, measured = validate_checkpoint(
+                    ctx, candidate, config.checkpoint_tokens, pins)
                 if valid or reason ~= "checkpoint exceeds output budget" then break end
             end
         elseif not valid then
             candidate, err = run_summary(ctx, checkpoint, excerpt, pins, config, reason)
             if not candidate then return nil, err end
-            valid, reason = validate_checkpoint(ctx, candidate, config.checkpoint_tokens, pins)
+            valid, reason, measured = validate_checkpoint(
+                ctx, candidate, config.checkpoint_tokens, pins)
         end
-        if not valid then return nil, "checkpoint validation failed: " .. reason end
+        if not valid then
+            if reason == "checkpoint exceeds output budget" and measured then
+                reason = string.format("checkpoint exceeds output budget (%d > %d tokens)",
+                    measured, config.checkpoint_tokens)
+            end
+            return nil, "checkpoint validation failed: " .. reason
+        end
         checkpoint = candidate
     end
     return checkpoint
