@@ -72,6 +72,44 @@ assert(checkpoint:find("\nCurrent objective:\n", 1, true))
 assert(not checkpoint:find("##", 1, true))
 assert(not checkpoint:find("**", 1, true))
 
+local auto_statuses = {}
+local auto_notices = {}
+local auto_result = before_turn_handlers[1](nil, {
+   config = {
+      get = function(_, key)
+         if key == "auto_compact_tokens" or key == "compact_keep_tokens" then return "1" end
+      end,
+      get_table = function() return {} end,
+   },
+   usage = {
+      snapshot = function() return { context_length = 8000 } end,
+   },
+   conversation = {
+      current = function() return { id = 42 } end,
+      history = function()
+         return {
+            { role = "user", content = "old question" },
+            { role = "assistant", content = "old answer" },
+            { role = "user", content = "recent question" },
+            { role = "assistant", content = "recent answer" },
+         }
+      end,
+      context_tokens = function(messages) return #messages * 100 end,
+   },
+   agent = {
+      run = function() return { ok = true, content = table.concat(summary, "\n\n") } end,
+   },
+   ui = {
+      status = function(message) auto_statuses[#auto_statuses + 1] = message end,
+      notice = function(message) auto_notices[#auto_notices + 1] = message end,
+   },
+})
+assert(auto_result.action == "conversation.replace")
+assert(#auto_statuses == 1 and auto_statuses[1]:find("Compacting context", 1, true),
+   "automatic compaction should emit transient progress")
+assert(#auto_notices == 1 and auto_notices[1]:find("Context compacted", 1, true),
+   "automatic compaction should emit a persistent success notice")
+
 local oversized = {}
 for _, heading in ipairs(headings) do
    oversized[#oversized + 1] = heading .. ":\n- " .. string.rep("detail ", 200)

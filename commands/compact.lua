@@ -530,8 +530,8 @@ bone.on("before_turn", function(_, ctx)
         return nil
     end
     last_auto_context[key] = new_context
-    if ctx.ui and ctx.ui.status then
-        ctx.ui.status(string.format(
+    if ctx.ui and ctx.ui.notice then
+        ctx.ui.notice(string.format(
             "Context compacted · ~%d → ~%d tokens · %d recent messages preserved",
             context_length, new_context, details.recent_messages))
     end
