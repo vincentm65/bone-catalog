@@ -51,6 +51,8 @@ assert(registered, "ask_user tool was not registered")
 local properties = registered.parameters.properties
 assert(properties.type and properties.default.type == "integer")
 assert(properties.options.items.anyOf, "top-level options must accept strings or objects")
+assert(properties.options.items.anyOf[2].properties.preview,
+    "object options must expose rich previews")
 assert(properties.questions.items.properties.options.items.anyOf,
     "question options must accept strings or objects")
 
@@ -69,7 +71,21 @@ end
 
 local result = run({
     question = "Pick one",
-    options = { "A", { label = "Bee", value = "B", description = "second" } },
+    options = {
+        "A",
+        {
+            label = "Bee",
+            value = "B",
+            description = "second",
+            preview = {
+                title = "Bee diagram",
+                lines = {
+                    "A ──▶ B",
+                    { spans = { { text = "ready", fg = "#78B373", modifiers = { "bold" } } } },
+                },
+            },
+        },
+    },
     default = 2,
 }, { { value = "B", selected = 2 } })
 assert(result:find('"cancelled":false', 1, true))
@@ -78,6 +94,10 @@ assert(result:find('"value":"B"', 1, true))
 assert(calls[1].kind == "select" and calls[1].spec.default == 2)
 assert(calls[1].spec.options[2].value == "B")
 assert(calls[1].spec.options[2].description == "second")
+assert(calls[1].spec.options[2].preview.title == "Bee diagram")
+assert(calls[1].spec.options[2].preview.lines[1] == "A ──▶ B")
+assert(calls[1].spec.options[2].preview.lines[2].spans[1].fg == "#78B373")
+assert(calls[1].spec.options[2].preview.lines[2].spans[1].modifiers[1] == "bold")
 
 result = run({ question = "Notes", type = "text_input" }, {
     { value = "first line\nsecond line" },
@@ -132,6 +152,11 @@ expect_error({ question = "One", questions = { { question = "Two" } } },
     "fields 'question' and 'questions' are mutually exclusive")
 expect_error({ questions = { { question = "Bad", options = { { description = "missing label" } } } } },
     "question 1 field 'options[1].label'")
+expect_error({ question = "Bad", options = { { label = "A", preview = { lines = {} } } } },
+    "question 1 field 'options[1].preview.lines': must contain at least one line")
+expect_error({ question = "Bad", options = { {
+    label = "A", preview = { lines = { { spans = { { text = 1 } } } } },
+} } }, "question 1 field 'options[1].preview.lines[1].spans[1].text'")
 assert(#calls == 0, "validation must finish before opening or clearing UI")
 
 expect_error({ questions = {

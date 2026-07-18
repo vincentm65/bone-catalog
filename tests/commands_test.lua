@@ -73,6 +73,49 @@ assert(checkpoint:find("\nCurrent objective:\n", 1, true))
 assert(not checkpoint:find("##", 1, true))
 assert(not checkpoint:find("**", 1, true))
 
+local oversized = {}
+for _, heading in ipairs(headings) do
+   oversized[#oversized + 1] = heading .. ":\n- " .. string.rep("detail ", 200)
+end
+local retry_calls = 0
+local retry_prompts = {}
+local retried = commands.compact.handler("", {
+   config = {
+      get = function(_, key)
+         if key == "compact_keep_tokens" then return "1" end
+         if key == "compact_checkpoint_tokens" then return "500" end
+      end,
+   },
+   conversation = {
+      history = function()
+         return {
+            { role = "user", content = "old question" },
+            { role = "assistant", content = "old answer" },
+            { role = "user", content = "recent question" },
+            { role = "assistant", content = "recent answer" },
+         }
+      end,
+      context_tokens = function(messages)
+         if #messages == 1 then return math.ceil(#messages[1].content / 4) end
+         return #messages * 1000
+      end,
+   },
+   agent = {
+      run = function(prompt)
+         retry_calls = retry_calls + 1
+         retry_prompts[#retry_prompts + 1] = prompt
+         local content = retry_calls < 3 and table.concat(oversized, "\n\n")
+            or table.concat(summary, "\n\n")
+         return { ok = true, content = content }
+      end,
+   },
+})
+assert(retried.action == "conversation.replace", retried.display)
+assert(retry_calls == 3, "oversized checkpoints should be compressed more than once")
+assert(retry_prompts[1]:find("within 500 tokens", 1, true))
+assert(retry_prompts[2]:find("within 400 tokens", 1, true))
+assert(retry_prompts[3]:find("within 300 tokens", 1, true))
+
 local usage = commands.usage.handler(nil, {
    usage = {
       snapshot = function()

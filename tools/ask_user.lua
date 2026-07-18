@@ -2,7 +2,7 @@
 --
 -- Supports single_select, multi_select, and text_input question types.
 -- Questions are rendered in the bottom pane with keyboard-driven
--- selection and optional custom text input.
+-- selection, optional custom text input, and optional per-option rich previews.
 --
 -- Two calling modes:
 --   1. Single question: { question, options, allow_custom, type, default }
@@ -40,16 +40,81 @@ local function get_qtype(q)
     return q.options and #q.options > 0 and "single_select" or "text_input"
 end
 
+local function normalize_preview(preview)
+    if not preview then return nil end
+    local out = { title = preview.title, lines = {} }
+    for i, raw in ipairs(preview.lines) do
+        if type(raw) == "string" then
+            out.lines[i] = raw
+        else
+            local spans = {}
+            for j, value_span in ipairs(raw.spans) do
+                spans[j] = {
+                    text = value_span.text,
+                    fg = value_span.fg,
+                    modifiers = value_span.modifiers,
+                }
+            end
+            out.lines[i] = { spans = spans, bg = raw.bg }
+        end
+    end
+    return out
+end
+
 local function normalize_options(options)
     local out = {}
     for i, opt in ipairs(options or {}) do
         if type(opt) == "table" then
-            out[i] = { label = opt.label, value = opt.value, description = opt.description }
+            out[i] = {
+                label = opt.label,
+                value = opt.value,
+                description = opt.description,
+                preview = normalize_preview(opt.preview),
+            }
         else
             out[i] = { label = opt, value = opt }
         end
     end
     return out
+end
+
+local function validate_preview(preview, index, field)
+    if type(preview) ~= "table" then fail(index, field, "must be an object") end
+    if preview.title ~= nil and type(preview.title) ~= "string" then
+        fail(index, field .. ".title", "must be a string")
+    end
+    local line_count = array_length(preview.lines, index, field .. ".lines")
+    if line_count == 0 then fail(index, field .. ".lines", "must contain at least one line") end
+    for line_index, raw in ipairs(preview.lines) do
+        local line_field = string.format("%s.lines[%d]", field, line_index)
+        if type(raw) == "string" then
+            -- Plain preview line.
+        elseif type(raw) == "table" then
+            local span_count = array_length(raw.spans, index, line_field .. ".spans")
+            if span_count == 0 then fail(index, line_field .. ".spans", "must contain at least one span") end
+            if raw.bg ~= nil and type(raw.bg) ~= "string" then
+                fail(index, line_field .. ".bg", "must be a string")
+            end
+            for span_index, value_span in ipairs(raw.spans) do
+                local span_field = string.format("%s.spans[%d]", line_field, span_index)
+                if type(value_span) ~= "table" then fail(index, span_field, "must be an object") end
+                if type(value_span.text) ~= "string" then fail(index, span_field .. ".text", "must be a string") end
+                if value_span.fg ~= nil and type(value_span.fg) ~= "string" then
+                    fail(index, span_field .. ".fg", "must be a string")
+                end
+                if value_span.modifiers ~= nil then
+                    array_length(value_span.modifiers, index, span_field .. ".modifiers")
+                    for modifier_index, modifier in ipairs(value_span.modifiers) do
+                        if type(modifier) ~= "string" then
+                            fail(index, string.format("%s.modifiers[%d]", span_field, modifier_index), "must be a string")
+                        end
+                    end
+                end
+            end
+        else
+            fail(index, line_field, "must be a string or styled line object")
+        end
+    end
 end
 
 local function validate_question(q, index)
@@ -77,6 +142,7 @@ local function validate_question(q, index)
                 if opt.description ~= nil and type(opt.description) ~= "string" then
                     fail(index, field .. ".description", "must be a string")
                 end
+                if opt.preview ~= nil then validate_preview(opt.preview, index, field .. ".preview") end
             else
                 fail(index, field, "must be a string or option object")
             end
@@ -258,6 +324,68 @@ local function execute(params, ctx)
     return encode_answers(questions, results)
 end
 
+local PREVIEW_SCHEMA = {
+    type = "object",
+    ["description"] = "Optional rich preview shown beside this option when it is highlighted.",
+    properties = {
+        title = { type = "string", ["description"] = "Optional heading shown above the preview." },
+        lines = {
+            type = "array",
+            minItems = 1,
+            ["description"] = "Preview content. Plain strings preserve whitespace; styled lines contain spans.",
+            items = {
+                anyOf = {
+                    { type = "string" },
+                    {
+                        type = "object",
+                        properties = {
+                            spans = {
+                                type = "array",
+                                minItems = 1,
+                                items = {
+                                    type = "object",
+                                    properties = {
+                                        text = { type = "string" },
+                                        fg = { type = "string", ["description"] = "Optional named or hex foreground color." },
+                                        modifiers = {
+                                            type = "array",
+                                            items = { type = "string", enum = { "bold", "dim", "italic", "strike" } },
+                                        },
+                                    },
+                                    required = { "text" },
+                                    additionalProperties = false,
+                                },
+                            },
+                            bg = { type = "string", ["description"] = "Optional named or hex line background color." },
+                        },
+                        required = { "spans" },
+                        additionalProperties = false,
+                    },
+                },
+            },
+        },
+    },
+    required = { "lines" },
+    additionalProperties = false,
+}
+
+local OPTION_ITEMS = {
+    anyOf = {
+        { type = "string" },
+        {
+            type = "object",
+            properties = {
+                label = { type = "string", ["description"] = "The option text shown to the user." },
+                value = { type = "string", ["description"] = "Optional value returned instead of the label." },
+                description = { type = "string", ["description"] = "Optional one-line explanation of this option." },
+                preview = PREVIEW_SCHEMA,
+            },
+            required = { "label" },
+            additionalProperties = false,
+        },
+    },
+}
+
 bone.tool.register({
     name = "ask_user",
     description = "Ask the user one or more questions with selectable options or custom answers. Use the 'questions' array to ask several questions back-to-back in a single call, or use top-level 'question' + 'options' for a single question.",
@@ -270,25 +398,10 @@ bone.tool.register({
             },
             options = {
                 type = "array",
-                description = "Options to choose from (single-question mode). Each item is "
-                    .. "an object with a 'label' and an optional 'description' explaining "
-                    .. "the trade-off. A plain string is also accepted as shorthand for "
-                    .. "{ label = <string> }.",
-                items = {
-                    anyOf = {
-                        { type = "string" },
-                        {
-                            type = "object",
-                            properties = {
-                                label = { type = "string", description = "The option text shown to the user." },
-                                value = { type = "string", description = "Optional value returned instead of the label." },
-                                description = { type = "string", description = "Optional one-line explanation of this option." },
-                            },
-                            required = { "label" },
-                            additionalProperties = false,
-                        },
-                    },
-                },
+                description = "Options to choose from (single-question mode). Object options may include "
+                    .. "a description and a rich preview shown beside the selector. A plain string is "
+                    .. "accepted as shorthand for { label = <string> }.",
+                items = OPTION_ITEMS,
             },
             allow_custom = {
                 type = "boolean",
@@ -314,24 +427,10 @@ bone.tool.register({
                         question = { type = "string", description = "The question to ask." },
                         options = {
                             type = "array",
-                            description = "Options to choose from. Each item is an object with a "
-                                .. "'label' and an optional 'description'. A plain string is "
-                                .. "also accepted as shorthand for { label = <string> }.",
-                            items = {
-                                anyOf = {
-                                    { type = "string" },
-                                    {
-                                        type = "object",
-                                        properties = {
-                                            label = { type = "string", description = "The option text shown to the user." },
-                                            value = { type = "string", description = "Optional value returned instead of the label." },
-                                            description = { type = "string", description = "Optional one-line explanation of this option." },
-                                        },
-                                        required = { "label" },
-                                        additionalProperties = false,
-                                    },
-                                },
-                            },
+                            description = "Options to choose from. Object options may include a description "
+                                .. "and a rich preview shown beside the selector. A plain string is accepted "
+                                .. "as shorthand for { label = <string> }.",
+                            items = OPTION_ITEMS,
                         },
                         allow_custom = {
                             type = "boolean",
