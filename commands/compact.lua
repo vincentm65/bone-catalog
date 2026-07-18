@@ -256,7 +256,7 @@ local function group_turns(messages)
     return turns
 end
 
-local function select_regions(history, config)
+local function select_regions(history, config, force)
     local old_checkpoint, messages = strip_checkpoint(history)
     local turns = group_turns(messages)
     if #turns <= 1 then return old_checkpoint, {}, messages, 0 end
@@ -275,6 +275,7 @@ local function select_regions(history, config)
         keep_from = i
         kept_tokens = kept_tokens + turn.tokens
         kept_user_assistant = kept_user_assistant + turn.user_assistant_count
+        if force then break end
     end
 
     if keep_from == 1 then return old_checkpoint, {}, messages, kept_tokens end
@@ -430,9 +431,9 @@ local function context_tokens(ctx, messages)
     return estimate_tokens(encode(messages))
 end
 
-local function compact_history(history, ctx, config)
+local function compact_history(history, ctx, config, force)
     if not history or #history == 0 then return nil, "nothing to compact" end
-    local old_checkpoint, older, recent, kept_tokens = select_regions(history, config)
+    local old_checkpoint, older, recent, kept_tokens = select_regions(history, config, force)
     if #older == 0 then return nil, "history is already within the recent-context budget" end
     local pins = checkpoint_pins(old_checkpoint)
     local checkpoint, err = summarize_bounded(ctx, old_checkpoint, older, pins, config)
@@ -582,7 +583,7 @@ local function handle_preview(ctx)
     local history, err = history_or_error(ctx)
     if not history then return err end
     local config = compact_config(ctx)
-    local checkpoint, older, recent, kept_tokens = select_regions(history, config)
+    local checkpoint, older, recent, kept_tokens = select_regions(history, config, true)
     local old_tokens = context_tokens(ctx, history)
     if #older == 0 then
         return command_result(string.format(
@@ -647,7 +648,7 @@ local function handle_compact(ctx)
     if not history then return err end
     local config = compact_config(ctx)
     if ctx.ui and ctx.ui.status then ctx.ui.status("Compacting context… preserving recent work") end
-    local messages, compact_err, details = compact_history(history, ctx, config)
+    local messages, compact_err, details = compact_history(history, ctx, config, true)
     if not messages then
         return command_result("Compaction made no changes; original context preserved: " .. compact_err)
     end

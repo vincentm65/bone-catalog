@@ -123,6 +123,10 @@ local function validate_question(q, index)
     if q.allow_custom ~= nil and type(q.allow_custom) ~= "boolean" then
         fail(index, "allow_custom", "must be a boolean")
     end
+    if q.visible_rows ~= nil and (type(q.visible_rows) ~= "number"
+            or q.visible_rows % 1 ~= 0 or q.visible_rows < 1) then
+        fail(index, "visible_rows", "must be a positive integer")
+    end
     if q.type ~= nil and (type(q.type) ~= "string" or not VALID_TYPES[q.type]) then
         fail(index, "type", "must be single_select, multi_select, or text_input")
     end
@@ -206,6 +210,7 @@ local function ask_one(q, ctx, index, total, previous)
         question = q.question,
         options = q._options,
         default = q.default,
+        visible_rows = q.visible_rows,
         allow_custom = q.allow_custom == true,
     }
     if previous then
@@ -418,6 +423,11 @@ bone.tool.register({
                 type = "integer",
                 description = "Default selected option index (1-based).",
             },
+            visible_rows = {
+                type = "integer",
+                minimum = 1,
+                description = "Requested menu height in rows. Defaults to 12.",
+            },
             questions = {
                 type = "array",
                 description = "Multiple questions to ask sequentially with backtracking. After answering all, you can revise any question. Each item is an object with {question, options, allow_custom, type, default}.",
@@ -446,6 +456,11 @@ bone.tool.register({
                         default = {
                             type = "integer",
                             description = "Default selected option index (1-based).",
+                        },
+                        visible_rows = {
+                            type = "integer",
+                            minimum = 1,
+                            description = "Requested menu height in rows. Defaults to 12.",
                         },
                     },
                     required = { "question" },

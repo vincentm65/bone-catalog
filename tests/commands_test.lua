@@ -44,9 +44,7 @@ end
 local agent_calls = 0
 local compact = commands.compact.handler("", {
    config = {
-      get = function(_, key)
-         if key == "compact_keep_tokens" then return "1" end
-      end,
+      get = function() return nil end,
    },
    conversation = {
       history = function()
@@ -67,6 +65,7 @@ local compact = commands.compact.handler("", {
    },
 })
 assert(compact.action == "conversation.replace", compact.display)
+assert(agent_calls == 1, "manual compaction should ignore the recent-context budget")
 assert(agent_calls == 1, "normalized Markdown headings should not require a repair pass")
 local checkpoint = compact.messages[1].content
 assert(checkpoint:find("\nCurrent objective:\n", 1, true))

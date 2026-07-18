@@ -50,11 +50,13 @@ assert(registered, "ask_user tool was not registered")
 
 local properties = registered.parameters.properties
 assert(properties.type and properties.default.type == "integer")
+assert(properties.visible_rows and properties.visible_rows.minimum == 1)
 assert(properties.options.items.anyOf, "top-level options must accept strings or objects")
 assert(properties.options.items.anyOf[2].properties.preview,
     "object options must expose rich previews")
 assert(properties.questions.items.properties.options.items.anyOf,
     "question options must accept strings or objects")
+assert(properties.questions.items.properties.visible_rows.minimum == 1)
 
 local ctx = { ui = {} }
 local function run(params, mocked)
@@ -87,17 +89,31 @@ local result = run({
         },
     },
     default = 2,
+    visible_rows = 18,
 }, { { value = "B", selected = 2 } })
 assert(result:find('"cancelled":false', 1, true))
 assert(result:find('"question":"Pick one"', 1, true))
 assert(result:find('"value":"B"', 1, true))
 assert(calls[1].kind == "select" and calls[1].spec.default == 2)
+assert(calls[1].spec.visible_rows == 18)
 assert(calls[1].spec.options[2].value == "B")
 assert(calls[1].spec.options[2].description == "second")
 assert(calls[1].spec.options[2].preview.title == "Bee diagram")
 assert(calls[1].spec.options[2].preview.lines[1] == "A ──▶ B")
 assert(calls[1].spec.options[2].preview.lines[2].spans[1].fg == "#78B373")
 assert(calls[1].spec.options[2].preview.lines[2].spans[1].modifiers[1] == "bold")
+
+result = run({
+    question = "Adaptive preview",
+    options = {
+        { label = "Short", preview = { lines = { "one" } } },
+        { label = "Diagram", preview = { lines = { "1", "2", "3" } } },
+    },
+}, { { value = "Short", selected = 1 } })
+assert(calls[1].spec.visible_rows == nil, "preview menus must use the core adaptive height")
+
+result = run({ question = "No preview", options = { "A" } }, { { value = "A", selected = 1 } })
+assert(calls[1].spec.visible_rows == nil, "ordinary menus must retain their default height")
 
 result = run({ question = "Notes", type = "text_input" }, {
     { value = "first line\nsecond line" },
@@ -109,7 +125,7 @@ assert(result:find('"cancelled":true', 1, true), result)
 assert(result:find('"answers":[]', 1, true), result)
 
 local questions = {
-    { question = "Single?", options = { "A", "C" } },
+    { question = "Single?", options = { "A", "C" }, visible_rows = 16 },
     { question = "Many?", type = "multi_select", options = { "B", "D" }, allow_custom = true },
     { question = "Text?", type = "text_input" },
 }
@@ -126,6 +142,7 @@ result = run({ questions = questions }, {
     { value = "submit" },
 })
 assert(calls[1].spec.title == "Question 1 of 3")
+assert(calls[1].spec.visible_rows == 16)
 assert(calls[5].spec.default == 1, "single-select selection was not restored")
 assert(calls[7].spec.default == 2, "multi-select highlight was not restored")
 assert(calls[7].spec.initial_checked[1] == "B", "multi-select checks were not restored")
@@ -146,6 +163,8 @@ expect_error({ question = "Bad", options = { "A" }, default = 1.5 },
     "question 1 field 'default': must be an integer")
 expect_error({ question = "Bad", options = { "A" }, default = 2 },
     "question 1 field 'default': must be a valid 1-based option index")
+expect_error({ question = "Bad", options = { "A" }, visible_rows = 0 },
+    "question 1 field 'visible_rows': must be a positive integer")
 expect_error({ question = "Bad", type = "text_input", default = 1 },
     "question 1 field 'default': does not apply")
 expect_error({ question = "One", questions = { { question = "Two" } } },
