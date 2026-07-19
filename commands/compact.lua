@@ -5,7 +5,7 @@
 -- the resulting model context is smaller than the original.
 
 local CHECKPOINT_MARKER = "[Context checkpoint v1]"
-local KEEP_TOKENS = 12000
+local KEEP_TOKENS = 6000
 local INPUT_TOKENS = 30000
 local CHECKPOINT_TOKENS = 10000
 local GENERATION_TOKENS = 8000
