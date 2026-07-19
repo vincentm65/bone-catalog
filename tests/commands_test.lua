@@ -32,7 +32,6 @@ local function settings(values)
          if values[path] ~= nil then return values[path] end
          if path == "compact.auto" then return true end
          if path == "compact.trigger_percentage" then return 80 end
-         if path == "compact.fallback_context_window_tokens" then return 100000 end
       end,
    }
 end
@@ -43,10 +42,9 @@ assert(loadfile("commands/usage.lua"))()
 assert(commands.compact, "compact command was not registered")
 assert(commands.usage, "usage command was not registered")
 assert(settings_page and settings_page.namespace == "compact", "compact settings were not registered")
-assert(#settings_page.fields == 3, "compact should expose exactly three settings")
+assert(#settings_page.fields == 2, "compact should expose exactly two settings")
 assert(settings_page.fields[1].key == "auto")
 assert(settings_page.fields[2].key == "trigger_percentage")
-assert(settings_page.fields[3].key == "fallback_context_window_tokens")
 assert(#before_turn_handlers == 1, "compact should register one before_turn handler")
 
 local headings = {
@@ -73,6 +71,10 @@ local compact = commands.compact.handler("", {
             { role = "user", content = "old question" },
             { role = "assistant", content = "old answer" },
             { role = "user", content = "recent question" },
+            { role = "assistant", content = "", tool_calls = {
+               { id = "call-1", name = "read_file", arguments = { path = "src/main.rs" } },
+            } },
+            { role = "tool", content = "file contents", tool_call_id = "call-1" },
             { role = "assistant", content = "recent answer" },
          }
       end,
@@ -87,17 +89,21 @@ local compact = commands.compact.handler("", {
 })
 assert(compact.action == "conversation.replace", compact.display)
 assert(agent_calls == 1, "manual compaction should ignore the recent-context budget")
-assert(agent_calls == 1, "normalized Markdown headings should not require a repair pass")
+assert(#compact.messages == 5, "manual compaction should preserve the complete recent turn")
+assert(compact.messages[2].role == "user")
+assert(compact.messages[3].tool_calls[1].id == "call-1")
+assert(compact.messages[4].tool_call_id == "call-1")
+assert(compact.messages[5].role == "assistant")
 local checkpoint = compact.messages[1].content
-assert(checkpoint:find("\nCurrent objective:\n", 1, true))
-assert(not checkpoint:find("##", 1, true))
-assert(not checkpoint:find("**", 1, true))
+assert(checkpoint:find("[Context checkpoint v1]", 1, true))
+assert(checkpoint:find("Current objective", 1, true))
 
 local auto_statuses = {}
 local auto_notices = {}
 local large_message = string.rep("context ", 10000)
 local auto_result = before_turn_handlers[1](nil, {
    settings = settings({ ["compact.trigger_percentage"] = 80 }),
+   model = { context_window_tokens = 100000 },
    config = {
       get_table = function() return {} end,
    },
@@ -129,6 +135,21 @@ assert(#auto_statuses == 1 and auto_statuses[1]:find("Compacting context", 1, tr
    "automatic compaction should emit transient progress")
 assert(#auto_notices == 1 and auto_notices[1]:find("Context compacted", 1, true),
    "automatic compaction should emit a persistent success notice")
+
+local unknown_notices = {}
+local unknown_result = before_turn_handlers[1](nil, {
+   settings = settings(),
+   config = { get_table = function() return {} end },
+   usage = { snapshot = function() return { context_length = 90000 } end },
+   conversation = {
+      current = function() return { id = 43 } end,
+      history = function() return {} end,
+   },
+   ui = { notice = function(message) unknown_notices[#unknown_notices + 1] = message end },
+})
+assert(not unknown_result)
+assert(#unknown_notices == 1 and unknown_notices[1]:find("capacity is unknown", 1, true),
+   "unknown model capacity should disable only automatic compaction with a clear reason")
 
 local oversized = {}
 for _, heading in ipairs(headings) do
@@ -168,8 +189,8 @@ local retried = commands.compact.handler("", {
 assert(retried.action == "conversation.replace", retried.display)
 assert(retry_calls == 3, "oversized checkpoints should be compressed more than once")
 assert(retry_prompts[1]:find("within 10000 tokens", 1, true))
-assert(retry_prompts[2]:find("within 8000 tokens", 1, true))
-assert(retry_prompts[3]:find("within 6000 tokens", 1, true))
+assert(retry_prompts[2]:find("fit within 8000 tokens", 1, true))
+assert(retry_prompts[3]:find("fit within 6000 tokens", 1, true))
 assert(table.concat(retry_limits, ",") == "8000,8000,6000",
    "compression generation must be capped to its requested checkpoint target")
 
