@@ -17,7 +17,6 @@ local REQUIRED_SECTIONS = {
     "Critical verbatim details:",
 }
 local PROTECTED_SECTION = "Protected context (verbatim):"
-local DEFAULT_CONTEXT_WINDOW_TOKENS = 100000
 local KEEP_TOKENS = 12000
 local INPUT_TOKENS = 30000
 local CHECKPOINT_TOKENS = 10000
@@ -44,6 +43,14 @@ bone.settings.register({
             min = 50,
             max = 95,
         },
+        {
+            key = "fallback_context_window_tokens",
+            label = "Fallback context capacity (tokens)",
+            type = "number",
+            default = 100000,
+            integer = true,
+            min = 1,
+        },
     },
 })
 
@@ -54,6 +61,7 @@ end
 local function compact_config(ctx)
     return {
         auto = ctx.settings.get("compact.auto"),
+        fallback_context_window_tokens = ctx.settings.get("compact.fallback_context_window_tokens"),
         keep_tokens = KEEP_TOKENS,
         input_tokens = INPUT_TOKENS,
         checkpoint_tokens = CHECKPOINT_TOKENS,
@@ -444,14 +452,14 @@ local function compact_history(history, ctx, config, force)
     }
 end
 
-local function current_window(ctx)
+local function current_window(ctx, config)
     local window = ctx.model and tonumber(ctx.model.context_window_tokens)
     if window and window > 0 then return window end
-    return DEFAULT_CONTEXT_WINDOW_TOKENS
+    return config.fallback_context_window_tokens
 end
 
 local function effective_threshold(ctx, config)
-    local window = current_window(ctx)
+    local window = current_window(ctx, config)
     if not window then return nil end
     local safe_limit = window - config.safety_tokens
     if safe_limit < 1 then return nil end

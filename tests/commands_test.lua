@@ -32,6 +32,7 @@ local function settings(values)
          if values[path] ~= nil then return values[path] end
          if path == "compact.auto" then return true end
          if path == "compact.trigger_percentage" then return 80 end
+         if path == "compact.fallback_context_window_tokens" then return 100000 end
       end,
    }
 end
@@ -42,9 +43,10 @@ assert(loadfile("commands/usage.lua"))()
 assert(commands.compact, "compact command was not registered")
 assert(commands.usage, "usage command was not registered")
 assert(settings_page and settings_page.namespace == "compact", "compact settings were not registered")
-assert(#settings_page.fields == 2, "compact should expose exactly two settings")
+assert(#settings_page.fields == 3, "compact should expose exactly three settings")
 assert(settings_page.fields[1].key == "auto")
 assert(settings_page.fields[2].key == "trigger_percentage")
+assert(settings_page.fields[3].key == "fallback_context_window_tokens")
 assert(#before_turn_handlers == 1, "compact should register one before_turn handler")
 
 local headings = {
