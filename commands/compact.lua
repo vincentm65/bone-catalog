@@ -17,54 +17,48 @@ local REQUIRED_SECTIONS = {
     "Critical verbatim details:",
 }
 local PROTECTED_SECTION = "Protected context (verbatim):"
-local DEFAULT_KEEP_TOKENS = 12000
-local DEFAULT_INPUT_TOKENS = 30000
-local DEFAULT_CHECKPOINT_TOKENS = 10000
-local DEFAULT_GENERATION_TOKENS = 8000
-local DEFAULT_SAFETY_TOKENS = 8000
+local KEEP_TOKENS = 12000
+local INPUT_TOKENS = 30000
+local CHECKPOINT_TOKENS = 10000
+local GENERATION_TOKENS = 8000
+local SAFETY_TOKENS = 8000
 local CHARS_PER_TOKEN = 3.8
+
+bone.settings.register({
+    namespace = "compact",
+    title = "Compaction",
+    fields = {
+        {
+            key = "auto",
+            label = "Automatic compaction",
+            type = "bool",
+            default = true,
+        },
+        {
+            key = "trigger_percentage",
+            label = "Context capacity trigger (%)",
+            type = "number",
+            default = 80,
+            integer = true,
+            min = 50,
+            max = 95,
+        },
+    },
+})
 
 local function trim(s)
     return (s or ""):gsub("^%s+", ""):gsub("%s+$", "")
 end
 
-local function config_value(ctx, key)
-    if not ctx.config or not ctx.config.get then return nil end
-    return ctx.config.get("general", key)
-end
-
-local function config_int(ctx, key)
-    local value = config_value(ctx, key)
-    if value == nil then return nil end
-    if type(value) == "string" then
-        value = trim(value)
-        if value == "" then return nil end
-    end
-    local number = tonumber(value)
-    if not number or number < 1 or number ~= math.floor(number) then return nil end
-    return number
-end
-
 local function compact_config(ctx)
-    local percentage = config_int(ctx, "compact_trigger_percentage") or 80
-    if percentage > 100 then percentage = 100 end
-    local checkpoint_tokens = config_int(ctx, "compact_checkpoint_tokens")
-        or config_int(ctx, "compact_summary_tokens") or DEFAULT_CHECKPOINT_TOKENS
-    -- Existing installs inherited 2500 from Bone's legacy config page. Treat
-    -- that seeded value as the old default so the catalog update actually
-    -- raises the effective budget without requiring a separate config edit.
-    if checkpoint_tokens == 2500 then checkpoint_tokens = DEFAULT_CHECKPOINT_TOKENS end
     return {
-        auto_tokens = config_int(ctx, "auto_compact_tokens"),
-        legacy_keep_messages = config_int(ctx, "auto_compact_keep_messages"),
-        keep_tokens = config_int(ctx, "compact_keep_tokens") or DEFAULT_KEEP_TOKENS,
-        input_tokens = config_int(ctx, "compact_input_tokens") or DEFAULT_INPUT_TOKENS,
-        checkpoint_tokens = checkpoint_tokens,
-        generation_tokens = config_int(ctx, "compact_generation_tokens") or DEFAULT_GENERATION_TOKENS,
-        safety_tokens = config_int(ctx, "compact_safety_tokens") or DEFAULT_SAFETY_TOKENS,
-        trigger_mode = config_value(ctx, "compact_trigger_mode") or "absolute",
-        trigger_percentage = percentage,
-        configured_context_window = config_int(ctx, "compact_context_window_tokens"),
+        auto = ctx.settings.get("compact.auto"),
+        keep_tokens = KEEP_TOKENS,
+        input_tokens = INPUT_TOKENS,
+        checkpoint_tokens = CHECKPOINT_TOKENS,
+        generation_tokens = GENERATION_TOKENS,
+        safety_tokens = SAFETY_TOKENS,
+        trigger_percentage = ctx.settings.get("compact.trigger_percentage"),
     }
 end
 
@@ -449,26 +443,19 @@ local function compact_history(history, ctx, config, force)
     }
 end
 
-local function current_window(ctx, config, snapshot)
-    if snapshot and tonumber(snapshot.context_window) and tonumber(snapshot.context_window) > 0 then
-        return tonumber(snapshot.context_window)
-    end
-    local current = ctx.conversation and ctx.conversation.current and ctx.conversation.current() or nil
-    if current and tonumber(current.context_window) and tonumber(current.context_window) > 0 then
-        return tonumber(current.context_window)
-    end
-    return config.configured_context_window
+local function current_window(ctx)
+    local window = ctx.model and tonumber(ctx.model.context_window_tokens)
+    if window and window > 0 then return window end
+    return nil
 end
 
-local function effective_threshold(ctx, config, snapshot)
-    local window = current_window(ctx, config, snapshot)
-    if config.trigger_mode == "percentage" and window then
-        local safe_limit = window - config.safety_tokens
-        if safe_limit < 1 then return nil end
-        local threshold = math.floor(window * config.trigger_percentage / 100)
-        return math.min(threshold, safe_limit)
-    end
-    return config.auto_tokens
+local function effective_threshold(ctx, config)
+    local window = current_window(ctx)
+    if not window then return nil end
+    local safe_limit = window - config.safety_tokens
+    if safe_limit < 1 then return nil end
+    local threshold = math.floor(window * config.trigger_percentage / 100)
+    return math.min(threshold, safe_limit)
 end
 
 local function compact_enabled(ctx)
@@ -486,6 +473,7 @@ local function compact_enabled(ctx)
 end
 
 local last_auto_context = {}
+local missing_capacity_notified = {}
 
 bone.on("before_turn", function(_, ctx)
     if not compact_enabled(ctx) then return nil end
@@ -494,13 +482,22 @@ bone.on("before_turn", function(_, ctx)
     local snapshot = ctx.usage.snapshot()
     if not snapshot then return nil end
     local config = compact_config(ctx)
-    local threshold = effective_threshold(ctx, config, snapshot)
-    if not threshold then return nil end
-    local context_length = snapshot.context_length or 0
-    if context_length < threshold then return nil end
+    if not config.auto then return nil end
 
     local current = ctx.conversation.current and ctx.conversation.current() or nil
     local key = current and current.id or "default"
+    local threshold = effective_threshold(ctx, config)
+    if not threshold then
+        if not missing_capacity_notified[key] and ctx.ui and ctx.ui.notice then
+            ctx.ui.notice("Automatic compaction is disabled because this model's context capacity is unknown.")
+            missing_capacity_notified[key] = true
+        end
+        return nil
+    end
+    missing_capacity_notified[key] = nil
+    local context_length = snapshot.context_length or 0
+    if context_length < threshold then return nil end
+
     local previous = last_auto_context[key]
     local retry_growth = math.max(2000, math.floor(threshold / 20))
     if previous and context_length - previous < retry_growth then return nil end

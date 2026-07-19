@@ -1,6 +1,7 @@
 -- Run with: lua tests/commands_test.lua
 local commands = {}
 local before_turn_handlers = {}
+local settings_page
 
 cjson = {
    encode = function() return "[]" end,
@@ -12,6 +13,11 @@ bone = {
          commands[name] = spec
       end,
    },
+   settings = {
+      register = function(page)
+         settings_page = page
+      end,
+   },
    on = function(event, handler)
       if event == "before_turn" then
          before_turn_handlers[#before_turn_handlers + 1] = handler
@@ -19,11 +25,26 @@ bone = {
    end,
 }
 
+local function settings(values)
+   values = values or {}
+   return {
+      get = function(path)
+         if values[path] ~= nil then return values[path] end
+         if path == "compact.auto" then return true end
+         if path == "compact.trigger_percentage" then return 80 end
+      end,
+   }
+end
+
 assert(loadfile("commands/compact.lua"))()
 assert(loadfile("commands/usage.lua"))()
 
 assert(commands.compact, "compact command was not registered")
 assert(commands.usage, "usage command was not registered")
+assert(settings_page and settings_page.namespace == "compact", "compact settings were not registered")
+assert(#settings_page.fields == 2, "compact should expose exactly two settings")
+assert(settings_page.fields[1].key == "auto")
+assert(settings_page.fields[2].key == "trigger_percentage")
 assert(#before_turn_handlers == 1, "compact should register one before_turn handler")
 
 local headings = {
@@ -43,9 +64,7 @@ for _, heading in ipairs(headings) do
 end
 local agent_calls = 0
 local compact = commands.compact.handler("", {
-   config = {
-      get = function() return nil end,
-   },
+   settings = settings(),
    conversation = {
       history = function()
          return {
@@ -74,24 +93,24 @@ assert(not checkpoint:find("**", 1, true))
 
 local auto_statuses = {}
 local auto_notices = {}
+local large_message = string.rep("context ", 10000)
 local auto_result = before_turn_handlers[1](nil, {
+   settings = settings({ ["compact.trigger_percentage"] = 50 }),
+   model = { context_window_tokens = 20000 },
    config = {
-      get = function(_, key)
-         if key == "auto_compact_tokens" or key == "compact_keep_tokens" then return "1" end
-      end,
       get_table = function() return {} end,
    },
    usage = {
-      snapshot = function() return { context_length = 8000 } end,
+      snapshot = function() return { context_length = 15000 } end,
    },
    conversation = {
       current = function() return { id = 42 } end,
       history = function()
          return {
-            { role = "user", content = "old question" },
-            { role = "assistant", content = "old answer" },
-            { role = "user", content = "recent question" },
-            { role = "assistant", content = "recent answer" },
+            { role = "user", content = large_message },
+            { role = "assistant", content = large_message },
+            { role = "user", content = large_message },
+            { role = "assistant", content = large_message },
          }
       end,
       context_tokens = function(messages) return #messages * 100 end,
@@ -112,18 +131,13 @@ assert(#auto_notices == 1 and auto_notices[1]:find("Context compacted", 1, true)
 
 local oversized = {}
 for _, heading in ipairs(headings) do
-   oversized[#oversized + 1] = heading .. ":\n- " .. string.rep("detail ", 200)
+   oversized[#oversized + 1] = heading .. ":\n- " .. string.rep("detail ", 5000)
 end
 local retry_calls = 0
 local retry_prompts = {}
 local retry_limits = {}
 local retried = commands.compact.handler("", {
-   config = {
-      get = function(_, key)
-         if key == "compact_keep_tokens" then return "1" end
-         if key == "compact_checkpoint_tokens" then return "500" end
-      end,
-   },
+   settings = settings(),
    conversation = {
       history = function()
          return {
@@ -152,20 +166,15 @@ local retried = commands.compact.handler("", {
 })
 assert(retried.action == "conversation.replace", retried.display)
 assert(retry_calls == 3, "oversized checkpoints should be compressed more than once")
-assert(retry_prompts[1]:find("within 500 tokens", 1, true))
-assert(retry_prompts[2]:find("within 400 tokens", 1, true))
-assert(retry_prompts[3]:find("within 300 tokens", 1, true))
-assert(table.concat(retry_limits, ",") == "500,400,300",
+assert(retry_prompts[1]:find("within 10000 tokens", 1, true))
+assert(retry_prompts[2]:find("within 8000 tokens", 1, true))
+assert(retry_prompts[3]:find("within 6000 tokens", 1, true))
+assert(table.concat(retry_limits, ",") == "8000,8000,6000",
    "compression generation must be capped to its requested checkpoint target")
 
 local failed_calls = 0
 local failed = commands.compact.handler("", {
-   config = {
-      get = function(_, key)
-         if key == "compact_keep_tokens" then return "1" end
-         if key == "compact_checkpoint_tokens" then return "500" end
-      end,
-   },
+   settings = settings(),
    conversation = {
       history = function()
          return {
@@ -189,7 +198,7 @@ local failed = commands.compact.handler("", {
 })
 assert(failed_calls == 4, "oversized checkpoints should exhaust three bounded compression attempts")
 assert(not failed.action, "failed compaction must preserve the original conversation")
-assert(failed.display:find(" > 500 tokens)", 1, true),
+assert(failed.display:find(" > 10000 tokens)", 1, true),
    "failure should report measured and configured checkpoint sizes")
 
 local usage = commands.usage.handler(nil, {
