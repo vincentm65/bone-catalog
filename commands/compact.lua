@@ -17,6 +17,7 @@ local REQUIRED_SECTIONS = {
     "Critical verbatim details:",
 }
 local PROTECTED_SECTION = "Protected context (verbatim):"
+local DEFAULT_CONTEXT_WINDOW_TOKENS = 100000
 local KEEP_TOKENS = 12000
 local INPUT_TOKENS = 30000
 local CHECKPOINT_TOKENS = 10000
@@ -446,7 +447,7 @@ end
 local function current_window(ctx)
     local window = ctx.model and tonumber(ctx.model.context_window_tokens)
     if window and window > 0 then return window end
-    return nil
+    return DEFAULT_CONTEXT_WINDOW_TOKENS
 end
 
 local function effective_threshold(ctx, config)
@@ -473,7 +474,6 @@ local function compact_enabled(ctx)
 end
 
 local last_auto_context = {}
-local missing_capacity_notified = {}
 
 bone.on("before_turn", function(_, ctx)
     if not compact_enabled(ctx) then return nil end
@@ -487,14 +487,6 @@ bone.on("before_turn", function(_, ctx)
     local current = ctx.conversation.current and ctx.conversation.current() or nil
     local key = current and current.id or "default"
     local threshold = effective_threshold(ctx, config)
-    if not threshold then
-        if not missing_capacity_notified[key] and ctx.ui and ctx.ui.notice then
-            ctx.ui.notice("Automatic compaction is disabled because this model's context capacity is unknown.")
-            missing_capacity_notified[key] = true
-        end
-        return nil
-    end
-    missing_capacity_notified[key] = nil
     local context_length = snapshot.context_length or 0
     if context_length < threshold then return nil end
 

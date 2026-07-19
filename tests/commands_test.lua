@@ -95,13 +95,12 @@ local auto_statuses = {}
 local auto_notices = {}
 local large_message = string.rep("context ", 10000)
 local auto_result = before_turn_handlers[1](nil, {
-   settings = settings({ ["compact.trigger_percentage"] = 50 }),
-   model = { context_window_tokens = 20000 },
+   settings = settings({ ["compact.trigger_percentage"] = 80 }),
    config = {
       get_table = function() return {} end,
    },
    usage = {
-      snapshot = function() return { context_length = 15000 } end,
+      snapshot = function() return { context_length = 90000 } end,
    },
    conversation = {
       current = function() return { id = 42 } end,
