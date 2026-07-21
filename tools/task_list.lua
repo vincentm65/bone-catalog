@@ -70,11 +70,16 @@ local function emit(state, all_done_msg)
         table.insert(lines, styled_line(t.text, t.status))
     end
 
-    local content = string.format("%d/%d done", done, total)
-    if all_done_msg then content = all_done_msg end
+    local content = { all_done_msg or string.format("%d/%d done", done, total) }
+    for _, t in ipairs(tasks) do
+        local mark = t.status == "done" and "[x]" or (t.status == "in_progress" and "[~]" or "[ ]")
+        table.insert(content, string.format("%s %s", mark, t.text))
+    end
 
     local output = {
-        content = content,
+        -- Keep the current checklist in the persisted tool result so later
+        -- requests retain it without a cache-breaking transient reminder.
+        content = table.concat(content, "\n"),
         state = cjson.encode(state),
         pane = {
             source = "task_list",
@@ -206,89 +211,3 @@ bone.tool.register({
     },
     execute = execute,
 })
-
--- ---------------------------------------------------------------------------
--- before_turn: keep the list salient and nudge the model to maintain it.
--- Root agent only (the pane renders only at depth 0). Uses turn_message (a
--- transient trailing input item), not system_prompt_append: this text changes
--- as the list changes, and a mutating system prompt busts the provider's
--- prefix cache for the whole conversation.
--- ---------------------------------------------------------------------------
-
-local last_turn_message = {}
-
-local function conversation_key(ctx)
-    local conv = ctx.conversation and ctx.conversation.current and ctx.conversation.current() or nil
-    if conv and conv.id then
-        return tostring(conv.id)
-    end
-    return "default"
-end
-
-local function emit_turn_message_once(ctx, message)
-    local key = conversation_key(ctx)
-    if last_turn_message[key] == message then
-        return nil
-    end
-    last_turn_message[key] = message
-    return { turn_message = message }
-end
-
-local function render_list_text(tasks)
-    local lines = {}
-    for _, t in ipairs(tasks) do
-        local mark = "[ ]"
-        if t.status == "done" then
-            mark = "[x]"
-        elseif t.status == "in_progress" then
-            mark = "[~]"
-        end
-        table.insert(lines, string.format("  %s %s", mark, t.text))
-    end
-    return table.concat(lines, "\n")
-end
-
-bone.on("before_turn", function(_event, ctx)
-    if bone.agent_depth ~= 0 then return end
-
-    local raw = ctx.state.get("task_list")
-    local state
-    if raw and raw ~= "" then
-        local ok, decoded = pcall(cjson.decode, raw)
-        if ok then state = decoded end
-    end
-
-    -- No active list → brief suggestion to use one for multi-step work.
-    if not state or type(state.tasks) ~= "table" or #state.tasks == 0 then
-        return emit_turn_message_once(ctx,
-            "For any task with ~3+ steps or multi-file work, call task_list (action=write) to track progress in a visible checklist.")
-    end
-
-    local tasks = state.tasks
-    local done = 0
-    local current = nil
-    for _, t in ipairs(tasks) do
-        if t.status == "done" then
-            done = done + 1
-        elseif t.status == "in_progress" and not current then
-            current = t.text
-        end
-    end
-
-    -- All done → offer to clear (dedup ok: situational, not state-bearing).
-    if done >= #tasks then
-        return emit_turn_message_once(ctx,
-            "Your task list is complete. Leave it visible, and call task_list (action=clear) only once the user has confirmed you're finished.")
-    end
-
-    -- Active list: always emit the full list (no dedup) so the model can
-    -- reproduce it even after compaction drops its prior tool-call args.
-    local current_line = current
-        and string.format("In-progress: \"%s\".", current)
-        or "No item is in_progress — mark the next one you're working on."
-    return {
-        turn_message = string.format(
-            "Active task list (%d/%d done). %s\n%s\nUse task_list (action=write) to update progress. Once the work is genuinely complete, call task_list (action=complete) before your final answer.",
-            done, #tasks, current_line, render_list_text(tasks)),
-    }
-end)
