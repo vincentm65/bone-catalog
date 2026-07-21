@@ -1,20 +1,29 @@
 -- /shotgun — fan a prompt out to several provider sub-agents, then let the
 -- primary chat agent synthesize their answers into one final reply.
 --
--- Configure the fan-out targets in your init.lua. Each entry is either a
--- provider id (uses that provider's default model) or a table pinning a model:
+-- Configure fan-out targets in /config under Shotgun. Targets are a
+-- comma-separated list of provider ids, optionally followed by /model:
 --
---   bone.config.shotgun = {
---     "deepseek",
---     "minimax",
---     { provider = "openrouter", model = "..." },
---   }
+--   deepseek, minimax, openrouter/anthropic/claude-sonnet-4
 --
 -- Usage: /shotgun <prompt>
 --   The prompt is sent to every configured provider as an independent
 --   sub-agent (visible in the normal subagent pane). When they finish, their
 --   answers are handed back to the current chat model, which reviews them and
 --   writes the final synthesized answer as its normal turn.
+
+bone.settings.register({
+  namespace = "shotgun",
+  title = "Shotgun",
+  fields = {
+    {
+      key = "targets",
+      label = "Reviewer targets",
+      type = "string",
+      default = "",
+    },
+  },
+})
 
 local CONFIG = {
   timeout_ms = 300000,
@@ -48,16 +57,15 @@ local function truncate(s, max)
   return s:sub(1, max) .. "\n... (truncated)"
 end
 
-local function shotgun_targets()
-  if not (bone and bone.config and type(bone.config.shotgun) == "table") then
-    return {}
-  end
+local function shotgun_targets(ctx)
   local entries = {}
-  for _, item in ipairs(bone.config.shotgun) do
-    if type(item) == "string" and item ~= "" then
-      entries[#entries + 1] = { provider = item }
-    elseif type(item) == "table" and item.provider and item.provider ~= "" then
-      entries[#entries + 1] = { provider = item.provider, model = item.model }
+  local configured = ctx.settings.get("shotgun.targets") or ""
+  for raw_target in tostring(configured):gmatch("[^,]+") do
+    local target = trim(raw_target)
+    local provider, model = target:match("^([^/]+)/(.+)$")
+    if not provider then provider = target end
+    if provider ~= "" then
+      entries[#entries + 1] = { provider = provider, model = model }
     end
   end
   return entries
@@ -136,15 +144,13 @@ bone.command.register("shotgun", {
       return { display = "shotgun: provide a prompt, e.g. /shotgun should we cache this?", submit = false }
     end
 
-    local entries = shotgun_targets()
+    local entries = shotgun_targets(ctx)
     if #entries == 0 then
       return {
         display = table.concat({
-          "shotgun: no targets configured. Add this to your init.lua:",
+          "shotgun: no targets configured.",
           "",
-          "  bone.config.shotgun = { \"deepseek\", \"minimax\" }",
-          "",
-          "Each entry is a provider id, or { provider = \"...\", model = \"...\" }.",
+          "Set Shotgun > Reviewer targets in /config using comma-separated provider or provider/model entries.",
         }, "\n"),
         submit = false,
       }
