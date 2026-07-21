@@ -126,7 +126,7 @@ bone.on("turn_end", function(event, _ctx)
     end
 
     -- working or missing sentinel → continue
-    bone.api.submit("Continue the goal.")
+    bone.submit("Continue the goal.")
 end)
 
 -- ---------------------------------------------------------------------------
