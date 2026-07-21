@@ -66,40 +66,45 @@ for _, heading in ipairs(headings) do
    summary[#summary + 1] = "## **" .. heading .. ":**\n- value"
 end
 local agent_calls = 0
+local summary_prompts = {}
+local long_turn = { { role = "user", content = "Fix the compaction bug" } }
+for i = 1, 100 do
+   long_turn[#long_turn + 1] = { role = "assistant", content = "", tool_calls = {
+      { id = "call-" .. i, name = "read_file", arguments = { path = "src/main.rs" } },
+   } }
+   long_turn[#long_turn + 1] = {
+      role = "tool",
+      content = "tool result " .. i,
+      tool_call_id = "call-" .. i,
+   }
+end
+long_turn[#long_turn + 1] = { role = "assistant", content = "Continue debugging next" }
 local compact = commands.compact.handler("", {
    settings = settings(),
    conversation = {
-      history = function()
-         return {
-            { role = "user", content = "old question" },
-            { role = "assistant", content = "old answer" },
-            { role = "user", content = "recent question" },
-            { role = "assistant", content = "", tool_calls = {
-               { id = "call-1", name = "read_file", arguments = { path = "src/main.rs" } },
-            } },
-            { role = "tool", content = "file contents", tool_call_id = "call-1" },
-            { role = "assistant", content = "recent answer" },
-         }
-      end,
+      history = function() return long_turn end,
       context_tokens = function(messages) return #messages * 1000 end,
    },
    agent = {
-      run = function()
+      run = function(prompt)
          agent_calls = agent_calls + 1
+         summary_prompts[#summary_prompts + 1] = prompt
          return { ok = true, content = table.concat(summary, "\n\n") }
       end,
    },
 })
 assert(compact.action == "conversation.replace", compact.display)
-assert(agent_calls == 1, "manual compaction should ignore the recent-context budget")
-assert(#compact.messages == 5, "manual compaction should preserve the complete recent turn")
-assert(compact.messages[2].role == "user")
-assert(compact.messages[3].tool_calls[1].id == "call-1")
-assert(compact.messages[4].tool_call_id == "call-1")
-assert(compact.messages[5].role == "assistant")
+assert(agent_calls == 1)
+assert(#compact.messages == 1, "compaction should replace all raw messages with one checkpoint")
+assert(compact.messages[1].role == "user")
 local checkpoint = compact.messages[1].content
 assert(checkpoint:find("[Context checkpoint v1]", 1, true))
 assert(checkpoint:find("Objective", 1, true))
+assert(summary_prompts[1]:find("Fix the compaction bug", 1, true))
+assert(summary_prompts[1]:find("tool_call_id=call%-100"))
+assert(summary_prompts[1]:find("tool result 100", 1, true))
+assert(summary_prompts[1]:find("Continue debugging next", 1, true))
+assert(compact.display:find("continuation checkpoint created", 1, true))
 
 local auto_statuses = {}
 local auto_notices = {}
@@ -133,10 +138,39 @@ local auto_result = before_turn_handlers[1](nil, {
    },
 })
 assert(auto_result.action == "conversation.replace")
+assert(#auto_result.messages == 1, "automatic compaction should preserve no raw messages")
 assert(#auto_statuses == 1 and auto_statuses[1]:find("Compacting context", 1, true),
    "automatic compaction should emit transient progress")
-assert(#auto_notices == 1 and auto_notices[1]:find("Context compacted", 1, true),
+assert(#auto_notices == 1 and auto_notices[1]:find("continuation checkpoint created", 1, true),
    "automatic compaction should emit a persistent success notice")
+
+local incremental_prompt
+local previous_checkpoint = "[Context checkpoint v1]\n\n## Objective\n- Existing objective"
+local incremental = commands.compact.handler("", {
+   settings = settings(),
+   conversation = {
+      history = function()
+         return {
+            { role = "user", content = previous_checkpoint },
+            { role = "assistant", content = "Ran validation" },
+            { role = "tool", content = "tests passed", tool_call_id = "call-test" },
+         }
+      end,
+      context_tokens = function(messages) return #messages * 1000 end,
+   },
+   agent = {
+      run = function(prompt)
+         incremental_prompt = prompt
+         return { ok = true, content = table.concat(summary, "\n\n") }
+      end,
+   },
+})
+assert(incremental.action == "conversation.replace", incremental.display)
+assert(#incremental.messages == 1)
+assert(incremental_prompt:find(previous_checkpoint, 1, true),
+   "incremental compaction should fold from the previous checkpoint")
+assert(incremental_prompt:find("Ran validation", 1, true))
+assert(incremental_prompt:find("tests passed", 1, true))
 
 local fallback_notices = {}
 local fallback_history_calls = 0
