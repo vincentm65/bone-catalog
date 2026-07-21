@@ -32,6 +32,7 @@ local function settings(values)
          if values[path] ~= nil then return values[path] end
          if path == "compact.auto" then return true end
          if path == "compact.trigger_percentage" then return 80 end
+         if path == "compact.context_window_tokens" then return 100000 end
       end,
    }
 end
@@ -42,9 +43,15 @@ assert(loadfile("commands/usage.lua"))()
 assert(commands.compact, "compact command was not registered")
 assert(commands.usage, "usage command was not registered")
 assert(settings_page and settings_page.namespace == "compact", "compact settings were not registered")
-assert(#settings_page.fields == 2, "compact should expose exactly two settings")
+assert(#settings_page.fields == 3, "compact should expose exactly three settings")
 assert(settings_page.fields[1].key == "auto")
 assert(settings_page.fields[2].key == "trigger_percentage")
+local context_window_field = settings_page.fields[3]
+assert(context_window_field.key == "context_window_tokens")
+assert(context_window_field.type == "number")
+assert(context_window_field.default == 100000)
+assert(context_window_field.integer == true)
+assert(context_window_field.min == 10000)
 assert(#before_turn_handlers == 1, "compact should register one before_turn handler")
 
 local headings = {
@@ -103,7 +110,6 @@ local auto_notices = {}
 local large_message = string.rep("context ", 10000)
 local auto_result = before_turn_handlers[1](nil, {
    settings = settings({ ["compact.trigger_percentage"] = 80 }),
-   model = { context_window_tokens = 100000 },
    config = {
       get_table = function() return {} end,
    },
@@ -136,20 +142,26 @@ assert(#auto_statuses == 1 and auto_statuses[1]:find("Compacting context", 1, tr
 assert(#auto_notices == 1 and auto_notices[1]:find("Context compacted", 1, true),
    "automatic compaction should emit a persistent success notice")
 
-local unknown_notices = {}
-local unknown_result = before_turn_handlers[1](nil, {
-   settings = settings(),
+local fallback_notices = {}
+local fallback_history_calls = 0
+local fallback_result = before_turn_handlers[1](nil, {
+   settings = settings({ ["compact.context_window_tokens"] = 200000 }),
    config = { get_table = function() return {} end },
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
       current = function() return { id = 43 } end,
-      history = function() return {} end,
+      history = function()
+         fallback_history_calls = fallback_history_calls + 1
+         return {}
+      end,
    },
-   ui = { notice = function(message) unknown_notices[#unknown_notices + 1] = message end },
+   ui = { notice = function(message) fallback_notices[#fallback_notices + 1] = message end },
 })
-assert(not unknown_result)
-assert(#unknown_notices == 1 and unknown_notices[1]:find("capacity is unknown", 1, true),
-   "unknown model capacity should disable only automatic compaction with a clear reason")
+assert(not fallback_result)
+assert(fallback_history_calls == 0,
+   "the configured context capacity should control the automatic threshold")
+assert(#fallback_notices == 0,
+   "the configured fallback capacity should keep automatic compaction enabled")
 
 local oversized = {}
 for _, heading in ipairs(headings) do

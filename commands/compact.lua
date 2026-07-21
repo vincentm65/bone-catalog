@@ -31,6 +31,14 @@ bone.settings.register({
             min = 50,
             max = 95,
         },
+        {
+            key = "context_window_tokens",
+            label = "Default context window (tokens)",
+            type = "number",
+            default = 100000,
+            integer = true,
+            min = 10000,
+        },
     },
 })
 
@@ -47,6 +55,7 @@ local function compact_config(ctx)
         generation_tokens = GENERATION_TOKENS,
         safety_tokens = SAFETY_TOKENS,
         trigger_percentage = ctx.settings.get("compact.trigger_percentage"),
+        context_window_tokens = ctx.settings.get("compact.context_window_tokens"),
     }
 end
 
@@ -306,7 +315,10 @@ end
 
 local function effective_threshold(ctx, config)
     local window = ctx.model and tonumber(ctx.model.context_window_tokens)
-    if not window or window <= 0 then return nil end
+    if not window or window <= config.safety_tokens then
+        window = tonumber(config.context_window_tokens)
+    end
+    if not window or window <= config.safety_tokens then return nil end
     local safe_limit = window - config.safety_tokens
     if safe_limit < 1 then return nil end
     local threshold = math.floor(window * config.trigger_percentage / 100)
