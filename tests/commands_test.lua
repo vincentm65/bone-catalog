@@ -55,15 +55,11 @@ assert(context_window_field.min == 10000)
 assert(#before_turn_handlers == 1, "compact should register one before_turn handler")
 
 local headings = {
-   "Current objective",
-   "User constraints and preferences",
-   "Verified facts and decisions",
-   "Files and symbols",
-   "Commands and validation",
-   "Completed work",
-   "Unresolved issues",
-   "Pending tasks / next action",
-   "Critical verbatim details",
+   "Objective",
+   "Constraints",
+   "Current state",
+   "Artifacts and validation",
+   "Next actions",
 }
 local summary = {}
 for _, heading in ipairs(headings) do
@@ -103,7 +99,7 @@ assert(compact.messages[4].tool_call_id == "call-1")
 assert(compact.messages[5].role == "assistant")
 local checkpoint = compact.messages[1].content
 assert(checkpoint:find("[Context checkpoint v1]", 1, true))
-assert(checkpoint:find("Current objective", 1, true))
+assert(checkpoint:find("Objective", 1, true))
 
 local auto_statuses = {}
 local auto_notices = {}
@@ -163,6 +159,26 @@ assert(fallback_history_calls == 0,
 assert(#fallback_notices == 0,
    "the configured fallback capacity should keep automatic compaction enabled")
 
+local unavailable_notices = {}
+local unavailable_result = before_turn_handlers[1](nil, {
+   settings = {
+      get = function(path)
+         if path == "compact.auto" then return true end
+         if path == "compact.trigger_percentage" then return 80 end
+      end,
+   },
+   config = { get_table = function() return {} end },
+   usage = { snapshot = function() return { context_length = 90000 } end },
+   conversation = {
+      current = function() return { id = 44 } end,
+      history = function() error("history should not be read without a threshold") end,
+   },
+   ui = { notice = function(message) unavailable_notices[#unavailable_notices + 1] = message end },
+})
+assert(not unavailable_result)
+assert(#unavailable_notices == 0,
+   "unavailable context capacity should not emit an inaccurate warning")
+
 local oversized = {}
 for _, heading in ipairs(headings) do
    oversized[#oversized + 1] = heading .. ":\n- " .. string.rep("detail ", 5000)
@@ -192,19 +208,18 @@ local retried = commands.compact.handler("", {
          retry_calls = retry_calls + 1
          retry_prompts[#retry_prompts + 1] = prompt
          retry_limits[#retry_limits + 1] = opts.max_tokens
-         local content = retry_calls < 3 and table.concat(oversized, "\n\n")
+         local content = retry_calls < 2 and table.concat(oversized, "\n\n")
             or table.concat(summary, "\n\n")
          return { ok = true, content = content }
       end,
    },
 })
 assert(retried.action == "conversation.replace", retried.display)
-assert(retry_calls == 3, "oversized checkpoints should be compressed more than once")
-assert(retry_prompts[1]:find("within 10000 tokens", 1, true))
-assert(retry_prompts[2]:find("fit within 8000 tokens", 1, true))
-assert(retry_prompts[3]:find("fit within 6000 tokens", 1, true))
-assert(table.concat(retry_limits, ",") == "8000,8000,6000",
-   "compression generation must be capped to its requested checkpoint target")
+assert(retry_calls == 2, "oversized checkpoints should get one bounded compression attempt")
+assert(retry_prompts[1]:find("within 4000 tokens", 1, true))
+assert(retry_prompts[2]:find("fit within 3200 tokens", 1, true))
+assert(table.concat(retry_limits, ",") == "4000,3200",
+   "summary and compression generation must use their requested capsule targets")
 
 local failed_calls = 0
 local failed = commands.compact.handler("", {
@@ -230,9 +245,9 @@ local failed = commands.compact.handler("", {
       end,
    },
 })
-assert(failed_calls == 4, "oversized checkpoints should exhaust three bounded compression attempts")
+assert(failed_calls == 2, "oversized checkpoints should stop after one bounded compression attempt")
 assert(not failed.action, "failed compaction must preserve the original conversation")
-assert(failed.display:find(" > 10000 tokens)", 1, true),
+assert(failed.display:find(" > 4000 tokens)", 1, true),
    "failure should report measured and configured checkpoint sizes")
 
 local usage = commands.usage.handler(nil, {
