@@ -1,8 +1,8 @@
--- Sub-agent tool: discovery, dispatch, and status reporting.
+-- Sub-agent tool: manage named agents, discovery, dispatch, and status reporting.
+-- Catalog description = "Manage named sub-agents and delegate tasks to them."
 --
--- Only active when sub-agents are registered via bone.subagent.register in
--- init.lua.  When no agents are registered, this file is a no-op (zero
--- overhead) — the tool is never created.
+-- The /agents manager is active in top-level sessions. The model-facing tool
+-- is created only when sub-agents are registered via bone.subagent.register.
 --
 -- The live status pane is rendered natively in Rust (src/ui/subagent_pane.rs)
 -- so it stays responsive even while this tool blocks the Lua VM.
@@ -13,11 +13,287 @@
 -- Early exits
 -- ---------------------------------------------------------------------------
 
--- Sub-agents must not spawn nested sub-agents: never register the tool
+-- Sub-agents must not spawn nested sub-agents: never register either surface
 -- inside a sub-agent VM.
 if bone.agent_depth and bone.agent_depth > 0 then
     return
 end
+
+-- ---------------------------------------------------------------------------
+-- /agents command
+-- ---------------------------------------------------------------------------
+
+local menu = require("ui.menu")
+local pane = require("ui.pane")
+
+local function trim(value)
+    return tostring(value or ""):match("^%s*(.-)%s*$")
+end
+
+local function optional(value)
+    value = trim(value)
+    if value == "" then return nil end
+    return value
+end
+
+local function notify(ctx, message, level)
+    if ctx and ctx.ui and type(ctx.ui.notify) == "function" then
+        ctx.ui.notify(message, level or "info")
+    end
+end
+
+local function ask(ctx, spec)
+    local ok, result = pcall(menu.select, ctx, spec)
+    if not ok then
+        notify(ctx, "Agent manager failed: " .. tostring(result), "error")
+        return nil
+    end
+    if type(result) ~= "table" or result.cancelled then return nil end
+    return result
+end
+
+local function edit_text(ctx, label, initial)
+    local ok, result = pcall(menu.text_input, ctx, {
+        title = "Sub-agents",
+        question = "Edit " .. label,
+        initial = tostring(initial or ""),
+    })
+    if not ok then
+        notify(ctx, "Could not edit " .. label .. ": " .. tostring(result), "error")
+        return nil
+    end
+    if type(result) ~= "table" or result.cancelled then return nil end
+    return result.value or ""
+end
+
+local function copy_agent(agent)
+    return {
+        name = agent and agent.name or "",
+        description = agent and agent.description or "",
+        system_prompt = agent and agent.system_prompt or nil,
+        provider = agent and agent.provider or nil,
+        model = agent and agent.model or nil,
+        approval = agent and agent.approval or "safe",
+        timeout_ms = agent and agent.timeout_ms or nil,
+        max_concurrency = agent and agent.max_concurrency or 1,
+        enabled = agent == nil or agent.enabled ~= false,
+        source = "config",
+    }
+end
+
+local function validate(draft)
+    if not draft.name:match("^[A-Za-z0-9_-]+$") then
+        return "Name may contain only letters, numbers, underscores, and hyphens."
+    end
+    if trim(draft.description) == "" then
+        return "Description must not be empty."
+    end
+    if draft.timeout_ms ~= nil then
+        local timeout = tonumber(draft.timeout_ms)
+        if not timeout or timeout % 1 ~= 0 or timeout < 1 or timeout > 900000 then
+            return "Timeout must be blank or an integer from 1 through 900000."
+        end
+        draft.timeout_ms = timeout
+    end
+    local max_concurrency = tonumber(draft.max_concurrency)
+    if not max_concurrency or max_concurrency % 1 ~= 0 or max_concurrency < 1 then
+        return "Max concurrency must be a positive integer."
+    end
+    draft.max_concurrency = max_concurrency
+    return nil
+end
+
+local function editor_options(draft, is_new)
+    return {
+        { label = "Name", description = is_new and draft.name or draft.name .. " (fixed)", value = "name" },
+        { label = "Description", description = draft.description, value = "description" },
+        { label = "System prompt", description = draft.system_prompt or "(blank)", value = "system_prompt" },
+        { label = "Provider", description = draft.provider or "inherit", value = "provider" },
+        { label = "Model", description = draft.model or "inherit", value = "model" },
+        { label = "Approval", description = draft.approval, value = "approval" },
+        { label = "Timeout", description = draft.timeout_ms and tostring(draft.timeout_ms) .. " ms" or "default", value = "timeout" },
+        { label = "Max concurrency", description = tostring(draft.max_concurrency), value = "max_concurrency" },
+        { label = "Enabled", description = draft.enabled and "yes" or "no", value = "enabled" },
+        { label = "Save", description = "Persist to subagents.yaml", value = "save" },
+    }
+end
+
+local function edit_agent(ctx, agent)
+    local is_new = agent == nil
+    local draft = copy_agent(agent)
+    local selected = 1
+    while true do
+        local result = ask(ctx, {
+            title = "Sub-agents",
+            question = (is_new and "Add config agent" or "Edit agent: " .. draft.name),
+            options = editor_options(draft, is_new),
+            default = selected,
+            visible_rows = 14,
+        })
+        if not result then return false end
+        selected = result.selected or selected
+        local field = result.value
+        if field == "name" then
+            if is_new then
+                local value = edit_text(ctx, "name", draft.name)
+                if value ~= nil then draft.name = trim(value) end
+            else
+                notify(ctx, "Existing names are fixed; create a new agent to rename it.", "warn")
+            end
+        elseif field == "description" then
+            local value = edit_text(ctx, "description", draft.description)
+            if value ~= nil then draft.description = value end
+        elseif field == "system_prompt" then
+            local value = edit_text(ctx, "system prompt", draft.system_prompt)
+            if value ~= nil then draft.system_prompt = optional(value) end
+        elseif field == "provider" then
+            local value = edit_text(ctx, "provider", draft.provider)
+            if value ~= nil then draft.provider = optional(value) end
+        elseif field == "model" then
+            local value = edit_text(ctx, "model", draft.model)
+            if value ~= nil then draft.model = optional(value) end
+        elseif field == "approval" then
+            draft.approval = draft.approval == "danger" and "safe" or "danger"
+        elseif field == "timeout" then
+            local value = edit_text(ctx, "timeout in milliseconds (blank for default)", draft.timeout_ms)
+            if value ~= nil then draft.timeout_ms = optional(value) end
+        elseif field == "max_concurrency" then
+            local value = edit_text(ctx, "max concurrent jobs", draft.max_concurrency)
+            if value ~= nil then draft.max_concurrency = trim(value) end
+        elseif field == "enabled" then
+            draft.enabled = not draft.enabled
+        elseif field == "save" then
+            draft.description = trim(draft.description)
+            local problem = validate(draft)
+            if problem then
+                notify(ctx, problem, "warn")
+            else
+                local ok, err = pcall(ctx.config.upsert_subagent, draft)
+                if ok then return true end
+                notify(ctx, "Could not save agent: " .. tostring(err), "error")
+            end
+        end
+    end
+end
+
+local function agent_option(agent)
+    local status = agent.enabled and "enabled" or "disabled"
+    local source = agent.source == "config" and "config" or "Lua"
+    local prompt = agent.system_prompt or "(none)"
+    return {
+        label = agent.name,
+        value = agent.name,
+        description = string.format("%s · %s · %s", status, source, agent.description or ""),
+        search_text = table.concat({ agent.name, status, source, agent.description or "" }, " "),
+        preview = {
+            title = agent.name,
+            lines = {
+                agent.description or "",
+                "Source: " .. source,
+                "Enabled: " .. (agent.enabled and "yes" or "no"),
+                "Provider: " .. (agent.provider or "inherit"),
+                "Model: " .. (agent.model or "inherit"),
+                "Approval: " .. (agent.approval or "safe"),
+                "Timeout: " .. (agent.timeout_ms and tostring(agent.timeout_ms) .. " ms" or "default"),
+                "Max concurrency: " .. tostring(agent.max_concurrency or 1),
+                "System prompt:",
+                prompt,
+            },
+        },
+    }
+end
+
+local function list_options(agents)
+    local options = {}
+    for _, agent in ipairs(agents) do options[#options + 1] = agent_option(agent) end
+    if #options == 0 then
+        options[1] = {
+            label = "No sub-agents",
+            value = "__empty",
+            description = "Press n to add a config agent.",
+            preview = { title = "Sub-agents", lines = { "No agents are registered." } },
+        }
+    end
+    return options
+end
+
+local function find_listed_agent(agents, name)
+    for _, agent in ipairs(agents) do
+        if agent.name == name then return agent end
+    end
+    return nil
+end
+
+local function confirm_delete(ctx, agent)
+    local result = ask(ctx, {
+        title = "Sub-agents",
+        question = "Delete config agent '" .. agent.name .. "'?",
+        options = {
+            { label = "Delete", value = "delete", description = "Remove it from subagents.yaml" },
+            { label = "Cancel", value = "cancel" },
+        },
+        default = 2,
+    })
+    return result and result.value == "delete"
+end
+
+local function run_agents(ctx)
+    local changed = false
+    local selected = 1
+    while true do
+        local listed, agents = pcall(bone.subagent.list)
+        if not listed then
+            notify(ctx, "Could not list agents: " .. tostring(agents), "error")
+            break
+        end
+        local result = ask(ctx, {
+            title = "Sub-agents",
+            question = "Enter edit · n add · Space toggle · d delete · Esc close",
+            options = list_options(agents),
+            default = selected,
+            action_keys = { n = "add", [" "] = "toggle", d = "delete" },
+            preview = { focusable = false },
+            visible_rows = 18,
+        })
+        if not result then break end
+        selected = result.selected or selected
+
+        if result.value == "add" then
+            if edit_agent(ctx, nil) then changed = true end
+        else
+            local option = list_options(agents)[selected]
+            local agent = option and find_listed_agent(agents, option.value) or nil
+            if agent then
+                if result.value == "toggle" then
+                    local ok, err = pcall(function()
+                        ctx.config.set_subagent_enabled(agent.name, not agent.enabled)
+                    end)
+                    if ok then changed = true else notify(ctx, "Could not update agent: " .. tostring(err), "error") end
+                elseif result.value == "delete" then
+                    if agent.source ~= "config" then
+                        notify(ctx, "Lua-defined agents must be promoted by editing them before deletion.", "warn")
+                    elseif confirm_delete(ctx, agent) then
+                        local ok, err = pcall(ctx.config.delete_subagent, agent.name)
+                        if ok then changed = true else notify(ctx, "Could not delete agent: " .. tostring(err), "error") end
+                    end
+                elseif edit_agent(ctx, agent) then
+                    changed = true
+                end
+            end
+        end
+    end
+
+    pane.new(ctx, { id = "interact" }):close()
+    if changed then return { action = "config.reload_tools", submit = false } end
+    return nil
+end
+
+bone.command.register("agents", {
+    description = "manage named sub-agents",
+    handler = function(_, ctx)
+        return run_agents(ctx)
+    end,
+})
 
 local subagents = bone._subagents
 if not subagents or #subagents == 0 then
