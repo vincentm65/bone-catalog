@@ -284,25 +284,59 @@ assert(not failed.action, "failed compaction must preserve the original conversa
 assert(failed.display:find(" > 4000 tokens)", 1, true),
    "failure should report measured and configured checkpoint sizes")
 
-local usage = commands.usage.handler(nil, {
-   usage = {
-      snapshot = function()
-         return {
-            request_count = 1,
-            sent = 100,
-            received = 25,
-            context_length = 80,
-            tool_count = 2,
-            tool_schema_tokens = 10,
-            tool_schema_chars = 38,
-            system_prompt_tokens = 20,
-            system_prompt_chars = 76,
-         }
-      end,
-   },
-})
+local usage_snapshot = {
+   request_count = 1,
+   sent = 100,
+   received = 25,
+   context_length = 80,
+   tool_count = 2,
+   tool_schema_tokens = 10,
+   tool_schema_chars = 38,
+   system_prompt_tokens = 20,
+   system_prompt_chars = 76,
+}
+local function usage_ctx(files)
+   return {
+      config_dir = "/config",
+      cwd = "/work/project",
+      fs = { is_file = function(path) return files and files[path] ~= nil end },
+      read_file = function(path) return files[path] end,
+      usage = { snapshot = function() return usage_snapshot end },
+   }
+end
+
+local usage = commands.usage.handler(nil, usage_ctx())
 assert(usage.submit == false)
 assert(usage.display:find("Conversation usage", 1, true))
 assert(usage.display:find("125 total", 1, true))
+assert(not usage.display:find("Memory:", 1, true))
+
+local memory_files = {
+   ["/config/memory/global.md"] = "  global preference  ",
+   ["/config/memory/projects/_work_project.md"] = "project preference",
+}
+usage = commands.usage.handler(nil, usage_ctx(memory_files))
+assert(usage.display:find("Memory:", 1, true), "usage should report injected memory overhead")
+assert(usage.display:find("memory/global.md", 1, true), "usage should list global memory")
+assert(usage.display:find("memory/projects/_work_project.md", 1, true),
+   "usage should list current-project memory")
+
+memory_files["/config/memory/global.md"] = nil
+memory_files["/config/memory.md"] = "legacy preference"
+usage = commands.usage.handler(nil, usage_ctx(memory_files))
+assert(usage.display:find("memory.md", 1, true), "usage should report legacy global memory fallback")
+
+memory_files["/config/memory/global.md"] = ""
+memory_files["/config/memory.md"] = "must not be injected"
+usage = commands.usage.handler(nil, usage_ctx(memory_files))
+assert(not usage.display:find("memory.md", 1, true),
+   "an existing scoped global file should suppress legacy fallback")
+assert(usage.display:find("memory/projects/_work_project.md", 1, true))
+
+memory_files["/config/memory/global.md"] = string.rep("x", 2100)
+memory_files["/config/memory/projects/_work_project.md"] = nil
+usage = commands.usage.handler(nil, usage_ctx(memory_files))
+assert(usage.display:find("2,000 chars", 1, true),
+   "usage should apply the same memory truncation as prompt injection")
 
 print("catalog command tests passed")

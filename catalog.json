@@ -12,5 +12,5 @@
   { "name": "review.lua", "kind": "command", "description": "Review uncommitted changes for real bugs (verification-first; /review [low|high])", "sha256": "47481990e8b4c73f68f74319f4c56047e1fea4662c071c22ab240fc37113361a" },
   { "name": "shotgun.lua", "kind": "command", "description": "Fan a prompt out to configured providers; the chat agent synthesizes the answers", "sha256": "95fa06f53d1d7ed87f61157ec401bf2d7a769de9ad1f95df4eca99a123c2f63f" },
   { "name": "themes.lua", "kind": "command", "description": "Pick or apply a color theme", "sha256": "b2cbc1784bb5384a92c15a12fe4029fdb3ad5d4bb0d8c7ea87afb067850d47ca" },
-  { "name": "usage.lua", "kind": "command", "description": "Show token usage for current conversation", "sha256": "f8b57c8187516463dae5e0799ed97bcb850a275bab8bc7acf59ecc9d4de9d99c" }
+  { "name": "usage.lua", "kind": "command", "description": "Show token usage for current conversation", "sha256": "5e1da121ac9fd1535a67e483baa8ea313ebc2e95873025b9cb9e027c6101d370" }
 ]

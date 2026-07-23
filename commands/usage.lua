@@ -54,6 +54,73 @@ local function sep()
   return string.format("%s%s%s", DIM, string.rep("─", 52), RESET)
 end
 
+local MEMORY_MAX_CHARS = 2000
+local CHARS_PER_TOKEN = 3.8
+
+local function estimate_tokens(chars)
+  return math.ceil(chars / CHARS_PER_TOKEN)
+end
+
+local function trim(s)
+  return (s or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function truncate_utf8(s, max_bytes)
+  if #s <= max_bytes then return s end
+  local suffix = "..."
+  local limit = math.max(0, max_bytes - #suffix)
+  for cut = limit, math.max(limit - 4, 1), -1 do
+    local chunk = s:sub(1, cut)
+    local ok, len = pcall(utf8.len, chunk)
+    if ok and len then return chunk .. suffix end
+  end
+  return suffix
+end
+
+local function project_key(cwd)
+  local key = (cwd or "unknown"):gsub("[^%w%._%-]", "_")
+  if #key > 96 then key = key:sub(#key - 95) end
+  return key ~= "" and key or "unknown"
+end
+
+local function memory_overhead(ctx)
+  if not ctx.config_dir or not ctx.fs or not ctx.fs.is_file then return nil end
+
+  local root = ctx.config_dir .. "/memory"
+  local global_path = root .. "/global.md"
+  local global_label = "memory/global.md"
+  if not ctx.fs.is_file(global_path) then
+    global_path = ctx.config_dir .. "/memory.md"
+    global_label = "memory.md"
+  end
+  local key = project_key(ctx.cwd or bone.cwd)
+  local project_path = root .. "/projects/" .. key .. ".md"
+
+  local function read(path)
+    if not ctx.fs.is_file(path) then return nil end
+    local ok, content = pcall(ctx.read_file, path)
+    content = ok and trim(content) or ""
+    return content ~= "" and truncate_utf8(content, MEMORY_MAX_CHARS) or nil
+  end
+
+  local global = read(global_path)
+  local project = read(project_path)
+  local sections, files = {}, {}
+  if global then
+    sections[#sections + 1] = "## Global\n" .. global
+    files[#files + 1] = { path = global_label, chars = #global }
+  end
+  if project then
+    sections[#sections + 1] = "## Current project\n" .. project
+    files[#files + 1] = { path = "memory/projects/" .. key .. ".md", chars = #project }
+  end
+  if #sections == 0 then return nil end
+
+  local prompt = "# User Memory\nThe following scoped preferences were extracted from past conversations:\n\n"
+    .. table.concat(sections, "\n\n")
+  return { chars = #prompt, tokens = estimate_tokens(#prompt), files = files }
+end
+
 bone.command.register("usage", {
   description = "Show token usage for current conversation",
   handler = function(_, ctx)
@@ -89,6 +156,15 @@ bone.command.register("usage", {
     table.insert(lines, sep())
     table.insert(lines, klabel("Tools") .. kvalue(comma(usage.tool_count) .. " tools, ~" .. tokens(usage.tool_schema_tokens) .. " tokens (" .. kdim(comma(usage.tool_schema_chars) .. " chars)") .. ")"))
     table.insert(lines, klabel("System") .. kvalue("~" .. tokens(usage.system_prompt_tokens) .. " tokens (" .. kdim(comma(usage.system_prompt_chars) .. " chars)") .. ")"))
+
+    local memory = memory_overhead(ctx)
+    if memory then
+      table.insert(lines, klabel("Memory") .. kvalue("~" .. tokens(memory.tokens) .. " tokens (" .. kdim(comma(memory.chars) .. " chars)") .. ")"))
+      for _, file in ipairs(memory.files) do
+        table.insert(lines, "  " .. kdim(file.path) .. " — "
+          .. kvalue("~" .. tokens(estimate_tokens(file.chars)) .. " tokens (" .. comma(file.chars) .. " chars)"))
+      end
+    end
 
     if usage.by_provider and #usage.by_provider > 1 then
       table.insert(lines, "")
