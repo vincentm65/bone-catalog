@@ -312,14 +312,15 @@ end
 assert(usage.submit == false)
 assert(usage.display:find("Conversation usage", 1, true))
 assert(usage.display:find("125 total", 1, true))
-assert(not usage.display:find("Memory:", 1, true))
-assert(plain(usage.display):find("Tools:      2 tools · ~10 tokens · 38 chars", 1, true))
-assert(plain(usage.display):find("System:     ~20 tokens · 76 chars", 1, true))
-assert(plain(usage.display):find("Total:      ~30 tokens", 1, true),
-   "total should include tool and system prompt overhead")
+assert(not usage.display:find("Memory total:", 1, true))
+assert(plain(usage.display):find("Tools:        2 tools · ~10 tokens", 1, true))
+assert(plain(usage.display):find("System:       ~20 tokens", 1, true))
+assert(plain(usage.display):find("Prompt total: ~30 tokens", 1, true),
+   "prompt total should include tool and system overhead")
 assert(not plain(usage.display):find("Global:", 1, true))
 assert(not plain(usage.display):find("Project:", 1, true))
-assert(not plain(usage.display):find("chars))", 1, true))
+assert(not plain(usage.display):find("chars", 1, true),
+   "prompt overhead should omit noisy character counts")
 
 local memory_files = {
    ["/config/memory/global.md"] = "  global preference  ",
@@ -327,14 +328,17 @@ local memory_files = {
 }
 usage = commands.usage.handler(nil, usage_ctx(memory_files))
 local usage_text = plain(usage.display)
-assert(usage_text:find("Memory:", 1, true), "usage should report injected memory overhead")
-assert(usage_text:find("Global:     ~5 tokens · 17 chars · memory/global.md", 1, true),
-   "usage should show aligned global memory metrics and path")
-assert(usage_text:find("Project:    ~5 tokens · 18 chars · memory/projects/_work_project.md", 1, true),
-   "usage should show aligned current-project memory metrics and path")
-assert(usage_text:find("Total:      ~71 tokens", 1, true),
-   "total should include reconstructed memory prompt overhead")
-assert(not usage_text:find("chars))", 1, true))
+assert(usage_text:find("Memory total: ~41 tokens", 1, true),
+   "usage should label the complete injected memory overhead")
+assert(usage_text:find("  Global:     ~5 tokens · memory/global.md", 1, true),
+   "usage should show indented global memory tokens and path")
+assert(usage_text:find("  Project:    ~5 tokens · memory/projects/_work_project.md", 1, true),
+   "usage should show indented current-project memory tokens and path")
+assert(usage_text:find("  Framing:    ~31 tokens", 1, true),
+   "usage should explain memory wrapper and heading overhead")
+assert(usage_text:find("Prompt total: ~71 tokens", 1, true),
+   "prompt total should include reconstructed memory overhead")
+assert(not usage_text:find("chars", 1, true))
 
 memory_files["/config/memory/global.md"] = nil
 memory_files["/config/memory.md"] = "legacy preference"
@@ -359,7 +363,7 @@ assert(usage_text:find("memory/projects/_work_project.md", 1, true))
 memory_files["/config/memory/global.md"] = string.rep("x", 2100)
 memory_files["/config/memory/projects/_work_project.md"] = nil
 usage = commands.usage.handler(nil, usage_ctx(memory_files))
-assert(usage.display:find("2,000 chars", 1, true),
+assert(plain(usage.display):find("  Global:     ~527 tokens · memory/global.md", 1, true),
    "usage should apply the same memory truncation as prompt injection")
 
 print("catalog command tests passed")

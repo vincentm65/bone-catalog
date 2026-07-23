@@ -39,7 +39,7 @@ local function section(title)
 end
 
 local function klabel(label)
-  return string.format("%s%-12s%s", DIM, label .. ":", RESET)
+  return string.format("%s%-14s%s", DIM, label .. ":", RESET)
 end
 
 local function kvalue(v)
@@ -159,27 +159,29 @@ bone.command.register("usage", {
     table.insert(lines, section("Prompt overhead"))
     table.insert(lines, sep())
     table.insert(lines, klabel("Tools")
-      .. kvalue(comma(usage.tool_count) .. " tools · ~" .. tokens(usage.tool_schema_tokens) .. " tokens")
-      .. kdim(" · " .. comma(usage.tool_schema_chars) .. " chars"))
+      .. kvalue(comma(usage.tool_count) .. " tools · ~" .. tokens(usage.tool_schema_tokens) .. " tokens"))
     table.insert(lines, klabel("System")
-      .. kvalue("~" .. tokens(usage.system_prompt_tokens) .. " tokens")
-      .. kdim(" · " .. comma(usage.system_prompt_chars) .. " chars"))
+      .. kvalue("~" .. tokens(usage.system_prompt_tokens) .. " tokens"))
 
     local memory = memory_overhead(ctx)
     if memory then
-      table.insert(lines, klabel("Memory")
-        .. kvalue("~" .. tokens(memory.tokens) .. " tokens")
-        .. kdim(" · " .. comma(memory.chars) .. " chars"))
+      table.insert(lines, klabel("Memory total")
+        .. kvalue("~" .. tokens(memory.tokens) .. " tokens"))
+      local file_tokens = 0
       for _, file in ipairs(memory.files) do
-        table.insert(lines, klabel(file.scope)
-          .. kvalue("~" .. tokens(estimate_tokens(file.chars)) .. " tokens")
-          .. kdim(" · " .. comma(file.chars) .. " chars · " .. file.path))
+        local estimated = estimate_tokens(file.chars)
+        file_tokens = file_tokens + estimated
+        table.insert(lines, klabel("  " .. file.scope)
+          .. kvalue("~" .. tokens(estimated) .. " tokens")
+          .. kdim(" · " .. file.path))
       end
+      table.insert(lines, klabel("  Framing")
+        .. kvalue("~" .. tokens(math.max(0, memory.tokens - file_tokens)) .. " tokens"))
     end
     local overhead_tokens = (usage.tool_schema_tokens or 0)
       + (usage.system_prompt_tokens or 0)
       + (memory and memory.tokens or 0)
-    table.insert(lines, klabel("Total") .. kvalue("~" .. tokens(overhead_tokens) .. " tokens"))
+    table.insert(lines, klabel("Prompt total") .. kvalue("~" .. tokens(overhead_tokens) .. " tokens"))
 
     if usage.by_provider and #usage.by_provider > 1 then
       table.insert(lines, "")
