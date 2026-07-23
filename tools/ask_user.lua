@@ -193,7 +193,7 @@ end
 
 local function valid_result(result, qtype)
     if type(result) ~= "table" then return false end
-    if result.cancelled == true then return true end
+    if result.cancelled == true or result.back == true then return true end
     if qtype == "multi_select" then
         if type(result.values) ~= "table" then return false end
         for _, value in ipairs(result.values) do
@@ -204,9 +204,12 @@ local function valid_result(result, qtype)
     return type(result.value) == "string"
 end
 
-local function ask_one(q, ctx, index, total, previous)
+local function ask_one(q, ctx, index, total, previous, allow_back, allow_forward)
     local spec = {
         title = total and string.format("Question %d of %d", index, total) or nil,
+        progress = total and string.format("Question %d of %d", index, total) or nil,
+        allow_back = allow_back == true and index > 1,
+        allow_forward = allow_forward == true and total ~= nil and index < total,
         question = q.question,
         options = q._options,
         default = q.default,
@@ -216,6 +219,10 @@ local function ask_one(q, ctx, index, total, previous)
     if previous then
         if q._type == "single_select" then
             spec.default = previous.selected
+            if previous.custom then
+                spec.initial = previous.value
+                spec.initial_custom = true
+            end
         elseif q._type == "multi_select" then
             spec.default = previous.selected
             spec.initial_checked = previous.values
@@ -233,8 +240,9 @@ local function ask_one(q, ctx, index, total, previous)
     if not valid_result(result, q._type) then
         error(string.format("question %d menu returned a malformed result", index), 0)
     end
-    if result.cancelled then return nil, true end
-    return result, false
+    if result.cancelled then return nil, true, false end
+    if result.back then return result, false, true end
+    return result, false, false
 end
 
 local function answer_summary(result)
@@ -282,10 +290,25 @@ end
 
 local function ask_all(questions, multiple, ctx)
     local answers = {}
-    for i, q in ipairs(questions) do
-        local result, cancelled = ask_one(q, ctx, i, multiple and #questions or nil)
+    local index = 1
+    while index <= #questions do
+        local result, cancelled, back = ask_one(
+            questions[index],
+            ctx,
+            index,
+            multiple and #questions or nil,
+            answers[index],
+            multiple,
+            multiple and index < #questions
+        )
         if cancelled then return nil, true end
-        answers[i] = result
+        if back then
+            answers[index] = result
+            index = index - 1
+        else
+            answers[index] = result
+            index = index + 1
+        end
     end
     if not multiple then return answers, false end
 
