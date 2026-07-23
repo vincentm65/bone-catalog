@@ -108,11 +108,15 @@ local function memory_overhead(ctx)
   local sections, files = {}, {}
   if global then
     sections[#sections + 1] = "## Global\n" .. global
-    files[#files + 1] = { path = global_label, chars = #global }
+    files[#files + 1] = { scope = "Global", path = global_label, chars = #global }
   end
   if project then
     sections[#sections + 1] = "## Current project\n" .. project
-    files[#files + 1] = { path = "memory/projects/" .. key .. ".md", chars = #project }
+    files[#files + 1] = {
+      scope = "Project",
+      path = "memory/projects/" .. key .. ".md",
+      chars = #project,
+    }
   end
   if #sections == 0 then return nil end
 
@@ -167,12 +171,15 @@ bone.command.register("usage", {
         .. kvalue("~" .. tokens(memory.tokens) .. " tokens")
         .. kdim(" · " .. comma(memory.chars) .. " chars"))
       for _, file in ipairs(memory.files) do
-        table.insert(lines, "  " .. kdim(file.path))
-        table.insert(lines, "    "
+        table.insert(lines, klabel(file.scope)
           .. kvalue("~" .. tokens(estimate_tokens(file.chars)) .. " tokens")
-          .. kdim(" · " .. comma(file.chars) .. " chars"))
+          .. kdim(" · " .. comma(file.chars) .. " chars · " .. file.path))
       end
     end
+    local overhead_tokens = (usage.tool_schema_tokens or 0)
+      + (usage.system_prompt_tokens or 0)
+      + (memory and memory.tokens or 0)
+    table.insert(lines, klabel("Total") .. kvalue("~" .. tokens(overhead_tokens) .. " tokens"))
 
     if usage.by_provider and #usage.by_provider > 1 then
       table.insert(lines, "")
