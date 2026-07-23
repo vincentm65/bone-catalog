@@ -154,15 +154,23 @@ bone.command.register("usage", {
     table.insert(lines, "")
     table.insert(lines, section("Prompt overhead"))
     table.insert(lines, sep())
-    table.insert(lines, klabel("Tools") .. kvalue(comma(usage.tool_count) .. " tools, ~" .. tokens(usage.tool_schema_tokens) .. " tokens (" .. kdim(comma(usage.tool_schema_chars) .. " chars)") .. ")"))
-    table.insert(lines, klabel("System") .. kvalue("~" .. tokens(usage.system_prompt_tokens) .. " tokens (" .. kdim(comma(usage.system_prompt_chars) .. " chars)") .. ")"))
+    table.insert(lines, klabel("Tools")
+      .. kvalue(comma(usage.tool_count) .. " tools · ~" .. tokens(usage.tool_schema_tokens) .. " tokens")
+      .. kdim(" · " .. comma(usage.tool_schema_chars) .. " chars"))
+    table.insert(lines, klabel("System")
+      .. kvalue("~" .. tokens(usage.system_prompt_tokens) .. " tokens")
+      .. kdim(" · " .. comma(usage.system_prompt_chars) .. " chars"))
 
     local memory = memory_overhead(ctx)
     if memory then
-      table.insert(lines, klabel("Memory") .. kvalue("~" .. tokens(memory.tokens) .. " tokens (" .. kdim(comma(memory.chars) .. " chars)") .. ")"))
+      table.insert(lines, klabel("Memory")
+        .. kvalue("~" .. tokens(memory.tokens) .. " tokens")
+        .. kdim(" · " .. comma(memory.chars) .. " chars"))
       for _, file in ipairs(memory.files) do
-        table.insert(lines, "  " .. kdim(file.path) .. " — "
-          .. kvalue("~" .. tokens(estimate_tokens(file.chars)) .. " tokens (" .. comma(file.chars) .. " chars)"))
+        table.insert(lines, "  " .. kdim(file.path))
+        table.insert(lines, "    "
+          .. kvalue("~" .. tokens(estimate_tokens(file.chars)) .. " tokens")
+          .. kdim(" · " .. comma(file.chars) .. " chars"))
       end
     end
 

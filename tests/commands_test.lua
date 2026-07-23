@@ -306,10 +306,16 @@ local function usage_ctx(files)
 end
 
 local usage = commands.usage.handler(nil, usage_ctx())
+local function plain(text)
+   return text:gsub("\27%[[0-9;]*m", "")
+end
 assert(usage.submit == false)
 assert(usage.display:find("Conversation usage", 1, true))
 assert(usage.display:find("125 total", 1, true))
 assert(not usage.display:find("Memory:", 1, true))
+assert(plain(usage.display):find("Tools:      2 tools · ~10 tokens · 38 chars", 1, true))
+assert(plain(usage.display):find("System:     ~20 tokens · 76 chars", 1, true))
+assert(not plain(usage.display):find("chars))", 1, true))
 
 local memory_files = {
    ["/config/memory/global.md"] = "  global preference  ",
@@ -320,6 +326,9 @@ assert(usage.display:find("Memory:", 1, true), "usage should report injected mem
 assert(usage.display:find("memory/global.md", 1, true), "usage should list global memory")
 assert(usage.display:find("memory/projects/_work_project.md", 1, true),
    "usage should list current-project memory")
+assert(plain(usage.display):find("  memory/global.md\n    ~", 1, true),
+   "memory file metrics should use a compact indented line")
+assert(not plain(usage.display):find("chars))", 1, true))
 
 memory_files["/config/memory/global.md"] = nil
 memory_files["/config/memory.md"] = "legacy preference"
