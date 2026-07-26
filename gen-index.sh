@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate catalog.json from the tools/ and commands/ .lua files.
+# Regenerate catalog.json from the tools/, commands/, and themes/ .lua files.
 #
 # Each entry: { name, kind, description, sha256 }.
 #  - description: prefer a `description = "..."` field, else the first `--`
@@ -32,7 +32,7 @@ json_escape() { python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().r
 
 echo "[" > "$out"
 first=1
-for kind in tools commands; do
+for kind in tools commands themes; do
   [[ -d "$kind" ]] || continue
   singular=${kind%s}
   for file in "$kind"/*.lua; do

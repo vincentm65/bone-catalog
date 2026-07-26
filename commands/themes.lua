@@ -1,189 +1,60 @@
 local menu = require("ui.menu")
 
-local themes = {
-  nord = {
-    palette = {
-      bg = "#0B0F14",
-      fg = "#E5E9F0",
-      muted = "#4C566A",
-      subtle = "#3B4252",
-      border = "#4C566A",
-      accent = "#88C0D0",
-      good = "#A3BE8C",
-      warn = "#EBCB8B",
-      error = "#BF616A",
-      selection = "#3B4252",
-    },
-    tab_active = "#88C0D0",
-  },
-  solarized = {
-    palette = {
-      bg = "#001014",
-      fg = "#EEE8D5",
-      muted = "#586E75",
-      subtle = "#073642",
-      border = "#586E75",
-      accent = "#2AA198",
-      good = "#859900",
-      warn = "#B58900",
-      error = "#DC322F",
-      selection = "#073642",
-    },
-    tab_active = "#2AA198",
-  },
-  tokyo_night = {
-    palette = {
-      bg = "#080912",
-      fg = "#C0CAF5",
-      muted = "#565F89",
-      subtle = "#24283B",
-      border = "#565F89",
-      accent = "#7DCFFF",
-      good = "#9ECE6A",
-      warn = "#E0AF68",
-      error = "#F7768E",
-      selection = "#283457",
-    },
-    tab_active = "#BB9AF7",
-  },
-  catppuccin = {
-    palette = {
-      bg = "#0B0A12",
-      fg = "#CDD6F4",
-      muted = "#6C7086",
-      subtle = "#313244",
-      border = "#6C7086",
-      accent = "#89DCEB",
-      good = "#A6E3A1",
-      warn = "#F9E2AF",
-      error = "#F38BA8",
-      selection = "#313244",
-    },
-    tab_active = "#F5C2E7",
-  },
-  mono = {
-    palette = {
-      bg = "#0E0E0E",
-      fg = "#D4D4D4",
-      muted = "#707070",
-      subtle = "#262626",
-      border = "#505050",
-      accent = "#FFFFFF",
-      good = "#A8A8A8",
-      warn = "#909090",
-      error = "#E0E0E0",
-      selection = "#262626",
-    },
-    tab_active = "#FFFFFF",
-  },
-}
-
-local names = { "catppuccin", "nord", "solarized", "tokyo_night", "mono", "default" }
 local M = {}
 
-local function highlights(theme)
-  local p = theme.palette
-  return {
-    bg = p.bg,
-    user_msg = p.fg,
-    user_msg_bg = p.selection,
-    status_text = p.muted,
-    input_border = p.border,
-    system_msg = p.fg,
-    approval_safe = p.good,
-    approval_danger = p.error,
-    tool_call = p.accent,
-    tool_error = p.error,
-    thinking = p.accent,
-    tab_active = theme.tab_active or p.accent,
-  }
-end
-
-local function reset()
-  local seen = {}
-  for _, theme in pairs(themes) do
-    for k in pairs(highlights(theme)) do
-      if not seen[k] then bone.api.ui.set_highlight(k, nil); seen[k] = true end
-    end
-  end
-  M.current = nil
+function M.list()
+  local ok, names = pcall(function() return bone.theme.list() end)
+  if not ok then return nil, tostring(names) end
+  return names
 end
 
 function M.apply(name)
-  local theme = themes[name]
-  if not theme then return false end
-  for k, v in pairs(highlights(theme)) do bone.api.ui.set_highlight(k, v) end
-  M.current = name
-  return true
+  local ok, err = pcall(function() bone.theme.load(name) end)
+  if not ok then return false, tostring(err) end
+  return true, "Theme applied: " .. name
 end
 
-local function save(ctx, name)
-  local path = ctx.config_dir .. "/init.lua"
-  local ok, content = pcall(ctx.read_file, path)
-  if not ok then content = "" end
-
-  -- Strip any prior theme-apply line — catches both `commands.themes` and the
-  -- legacy `themes` module path, with or without the `-- bone theme` marker.
-  content = content:gsub("\n?[^\n]*themes[^\n]*%.apply[^\n]*", "")
-  content = content:gsub("\n*$", "\n")
-  if name then content = content .. 'require("commands.themes").apply("' .. name .. '") -- bone theme\n' end
-
-  if not ok then return pcall(ctx.write_file, path, content) end
-  return ctx.tools.call("edit_file", { path = path, mode = "rewrite", content = content }, { approval = "danger" }).ok
-end
-
-local function set(ctx, name)
-  if name == "default" then
-    reset()
-    local saved = save(ctx)
-    return saved, saved and "Theme reset to default" or "Theme reset for this session, but failed to save"
+local function available_message(names)
+  if #names == 0 then
+    return "No themes installed. Install one from /catalog first."
   end
-  if not M.apply(name) then
-    return false, "Unknown theme: " .. tostring(name) .. ". Available: " .. table.concat(names, ", ")
-  end
-  local saved = save(ctx, name)
-  return saved, saved and ("Theme applied: " .. name) or ("Theme applied for this session, but failed to save: " .. name)
+  return "Available themes: " .. table.concat(names, ", ")
 end
 
 if not bone._themes_command_registered then
   bone._themes_command_registered = true
   bone.command.register("themes", {
-    description = "Pick or apply a color theme",
+    description = "Pick or apply an installed color theme",
     handler = function(arg, ctx)
-      local text = tostring(arg or "")
-      local name = text:match("^%s*apply%s+(%S+)") or text:match("^%s*(%S+)")
-
-      if name then
-        local ok, msg = set(ctx, name)
-        ctx.ui.notify(msg, ok and "info" or "error")
+      local names, list_err = M.list()
+      if not names then
+        ctx.ui.notify("Could not list themes: " .. list_err, "error")
         return { submit = false }
       end
 
-      -- Live preview: cursor starts on the active theme, themes swap as you
-      -- scroll, Enter persists + closes, Esc reverts to the original.
-      local original = M.current
-      local start = 1
-      for i, n in ipairs(names) do
-        if n == (original or "default") then start = i; break end
+      local name = tostring(arg or ""):match("^%s*apply%s+(%S+)")
+        or tostring(arg or ""):match("^%s*(%S+)")
+      if name then
+        local ok, message = M.apply(name)
+        if not ok then message = message .. ". " .. available_message(names) end
+        ctx.ui.notify(message, ok and "info" or "error")
+        return { submit = false }
+      end
+
+      if #names == 0 then
+        ctx.ui.notify(available_message(names), "info")
+        return { submit = false }
       end
 
       local result = menu.select(ctx, {
-        question = "Theme  (Enter to apply, Esc to cancel)",
+        question = "Choose a theme",
         options = names,
-        default = start,
-        on_change = function(value)
-          if value == "default" then reset() else M.apply(value) end
-        end,
       })
       menu.clear(ctx)
+      if not result or result.cancelled then return { submit = false } end
 
-      if not result or result.cancelled then
-        if original then M.apply(original) else reset() end
-        return { submit = false }
-      end
-
-      local ok, msg = set(ctx, result.value)
-      ctx.ui.notify(msg, ok and "info" or "error")
+      local ok, message = M.apply(result.value)
+      ctx.ui.notify(message, ok and "info" or "error")
       return { submit = false }
     end,
   })
