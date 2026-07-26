@@ -46,12 +46,23 @@ if not bone._themes_command_registered then
         return { submit = false }
       end
 
+      local original = bone.settings.get("theme.name")
+      local start = 1
+      for i, candidate in ipairs(names) do
+        if candidate == original then start = i; break end
+      end
+
       local result = menu.select(ctx, {
-        question = "Choose a theme",
+        question = "Choose a theme  (Enter to apply, Esc to cancel)",
         options = names,
+        default = start,
+        on_change = function(value) M.apply(value) end,
       })
       menu.clear(ctx)
-      if not result or result.cancelled then return { submit = false } end
+      if not result or result.cancelled then
+        if original then bone.theme.load(original) else bone.settings.reset("theme") end
+        return { submit = false }
+      end
 
       local ok, message = M.apply(result.value)
       ctx.ui.notify(message, ok and "info" or "error")

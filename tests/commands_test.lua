@@ -366,4 +366,33 @@ usage = commands.usage.handler(nil, usage_ctx(memory_files))
 assert(plain(usage.display):find("  Global:     ~527 tokens · memory/global.md", 1, true),
    "usage should apply the same memory truncation as prompt injection")
 
+local loaded_themes = {}
+local current_theme = "nord"
+bone.theme = {
+   list = function() return { "catppuccin", "nord" } end,
+   load = function(name)
+      loaded_themes[#loaded_themes + 1] = name
+      current_theme = name
+   end,
+}
+bone.settings.get = function(path)
+   assert(path == "theme.name")
+   return current_theme
+end
+bone.settings.reset = function() error("cancel should restore the named theme") end
+package.preload["ui.menu"] = function()
+   return {
+      select = function(_, spec)
+         assert(spec.default == 2, "selector should start on the active theme")
+         spec.on_change("catppuccin")
+         return { cancelled = true }
+      end,
+      clear = function() end,
+   }
+end
+assert(loadfile("commands/themes.lua"))()
+commands.themes.handler("", { ui = { notify = function() end } })
+assert(table.concat(loaded_themes, ",") == "catppuccin,nord",
+   "theme navigation should preview live and cancellation should restore the original")
+
 print("catalog command tests passed")
