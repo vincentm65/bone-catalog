@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Regenerate catalog.json from the tools/, commands/, and themes/ .lua files.
+# Regenerate catalog.json from the visible tools/ and commands/ .lua files.
+# Theme files are bundled with commands/themes.lua rather than indexed items.
 #
-# Each entry: { name, kind, description, sha256 }.
+# Each entry: { name, kind, description, sha256, files? }.
 #  - description: prefer a `description = "..."` field, else the first `--`
 #    comment line (mirrors `extract_description` in src/ext/mod.rs).
 #  - sha256: over the file bytes. The bone client both verifies downloads and
@@ -32,7 +33,7 @@ json_escape() { python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().r
 
 echo "[" > "$out"
 first=1
-for kind in tools commands themes; do
+for kind in tools commands; do
   [[ -d "$kind" ]] || continue
   singular=${kind%s}
   for file in "$kind"/*.lua; do
@@ -42,8 +43,22 @@ for kind in tools commands themes; do
     sha=$(sha256sum "$file" | cut -d' ' -f1)
     if [[ $first -eq 0 ]]; then echo "," >> "$out"; fi
     first=0
-    printf '  { "name": %s, "kind": "%s", "description": %s, "sha256": "%s" }' \
+    printf '  { "name": %s, "kind": "%s", "description": %s, "sha256": "%s"' \
       "\"$name\"" "$singular" "$desc" "$sha" >> "$out"
+    if [[ "$file" == "commands/themes.lua" ]]; then
+      printf ', "files": [' >> "$out"
+      bundle_first=1
+      for bundled in themes/*.lua; do
+        [[ -e "$bundled" ]] || continue
+        bundled_sha=$(sha256sum "$bundled" | cut -d' ' -f1)
+        if [[ $bundle_first -eq 0 ]]; then printf ', ' >> "$out"; fi
+        bundle_first=0
+        printf '{ "path": "%s", "sha256": "%s" }' \
+          "$bundled" "$bundled_sha" >> "$out"
+      done
+      printf ']' >> "$out"
+    fi
+    printf ' }' >> "$out"
   done
 done
 echo "" >> "$out"
