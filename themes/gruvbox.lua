@@ -1,7 +1,7 @@
 -- Gruvbox Dark: retro warm colors with strong, readable contrast.
 return {
   palette = {
-    bg = "#282828", fg = "#ebdbb2", muted = "#bdae93", subtle = "#665c54",
+    bg = "#181818", fg = "#ebdbb2", muted = "#bdae93", subtle = "#665c54",
     border = "#504945", accent = "#fabd2f", good = "#b8bb26", warn = "#fe8019",
     error = "#fb4934", selection = "#3c3836",
   },

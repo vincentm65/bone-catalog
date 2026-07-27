@@ -1,7 +1,7 @@
 -- Nord: an arctic, north-bluish palette with restrained contrast.
 return {
   palette = {
-    bg = "#2e3440", fg = "#eceff4", muted = "#d8dee9", subtle = "#4c566a",
+    bg = "#1b1f26", fg = "#eceff4", muted = "#d8dee9", subtle = "#4c566a",
     border = "#4c566a", accent = "#88c0d0", good = "#a3be8c", warn = "#ebcb8b",
     error = "#bf616a", selection = "#3b4252",
   },

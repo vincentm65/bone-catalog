@@ -1,7 +1,7 @@
 -- Dracula: vivid purple, pink, and cyan on a charcoal background.
 return {
   palette = {
-    bg = "#282a36", fg = "#f8f8f2", muted = "#b9bac1", subtle = "#6272a4",
+    bg = "#171820", fg = "#f8f8f2", muted = "#b9bac1", subtle = "#6272a4",
     border = "#44475a", accent = "#bd93f9", good = "#50fa7b", warn = "#f1fa8c",
     error = "#ff5555", selection = "#44475a",
   },

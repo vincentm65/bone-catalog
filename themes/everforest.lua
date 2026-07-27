@@ -1,7 +1,7 @@
 -- Everforest: soft green and earth tones with balanced contrast.
 return {
   palette = {
-    bg = "#2d353b", fg = "#d3c6aa", muted = "#9da9a0", subtle = "#7a8478",
+    bg = "#1c2224", fg = "#d3c6aa", muted = "#9da9a0", subtle = "#7a8478",
     border = "#475258", accent = "#a7c080", good = "#a7c080", warn = "#dbbc7f",
     error = "#e67e80", selection = "#3d484d",
   },

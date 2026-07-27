@@ -1,7 +1,7 @@
 -- One Dark: Atom's balanced cool palette with clear syntax accents.
 return {
   palette = {
-    bg = "#282c34", fg = "#abb2bf", muted = "#8b929e", subtle = "#5c6370",
+    bg = "#181b20", fg = "#abb2bf", muted = "#8b929e", subtle = "#5c6370",
     border = "#3e4451", accent = "#61afef", good = "#98c379", warn = "#e5c07b",
     error = "#e06c75", selection = "#353b45",
   },
