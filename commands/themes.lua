@@ -14,6 +14,12 @@ function M.apply(name)
   return true, "Theme applied: " .. name
 end
 
+function M.preview(name)
+  local ok, err = pcall(function() bone.theme.preview(name) end)
+  if not ok then return false, tostring(err) end
+  return true
+end
+
 local function available_message(names)
   if #names == 0 then
     return "No themes installed. Install one from /catalog first."
@@ -56,11 +62,11 @@ if not bone._themes_command_registered then
         question = "Choose a theme  (Enter to apply, Esc to cancel)",
         options = names,
         default = start,
-        on_change = function(value) M.apply(value) end,
+        on_change = function(value) M.preview(value) end,
       })
       menu.clear(ctx)
       if not result or result.cancelled then
-        if original then bone.theme.load(original) else bone.settings.reset("theme") end
+        M.preview(nil)
         return { submit = false }
       end
 

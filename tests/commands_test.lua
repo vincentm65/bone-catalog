@@ -367,6 +367,7 @@ assert(plain(usage.display):find("  Global:     ~527 tokens · memory/global.md"
    "usage should apply the same memory truncation as prompt injection")
 
 local loaded_themes = {}
+local previewed_themes = {}
 local current_theme = "nord"
 bone.theme = {
    list = function() return { "catppuccin", "nord" } end,
@@ -374,25 +375,37 @@ bone.theme = {
       loaded_themes[#loaded_themes + 1] = name
       current_theme = name
    end,
+   preview = function(name)
+      previewed_themes[#previewed_themes + 1] = name or "<configured>"
+   end,
 }
 bone.settings.get = function(path)
    assert(path == "theme.name")
    return current_theme
 end
-bone.settings.reset = function() error("cancel should restore the named theme") end
+bone.settings.reset = function() error("themes should not reset settings directly") end
+local selection = 0
 package.preload["ui.menu"] = function()
    return {
       select = function(_, spec)
+         selection = selection + 1
          assert(spec.default == 2, "selector should start on the active theme")
          spec.on_change("catppuccin")
-         return { cancelled = true }
+         if selection == 1 then return { cancelled = true } end
+         return { value = "catppuccin" }
       end,
       clear = function() end,
    }
 end
 assert(loadfile("commands/themes.lua"))()
 commands.themes.handler("", { ui = { notify = function() end } })
-assert(table.concat(loaded_themes, ",") == "catppuccin,nord",
-   "theme navigation should preview live and cancellation should restore the original")
+assert(#loaded_themes == 0, "navigation and cancellation must not persist a theme")
+assert(table.concat(previewed_themes, ",") == "catppuccin,<configured>",
+   "cancellation should restore the configured theme through preview(nil)")
+commands.themes.handler("", { ui = { notify = function() end } })
+assert(table.concat(loaded_themes, ",") == "catppuccin",
+   "confirmation should persist only the final selection once")
+assert(table.concat(previewed_themes, ",") == "catppuccin,<configured>,catppuccin",
+   "confirmed navigation should still preview before the one persistent load")
 
 print("catalog command tests passed")
