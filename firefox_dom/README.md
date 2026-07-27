@@ -1,0 +1,30 @@
+# Firefox DOM (`firefox_dom`)
+
+This independent tool uses native host `dev.bone.firefox_dom`, owner-only socket `bone-firefox-dom.sock`, extension ID `firefox-dom@bone.local`, and package `bone-firefox-dom-0.1.0.zip`. It does not share protocol, state, sockets, or files with the existing Firefox/browser tools.
+
+## Use
+
+Call the tool with one required `action`: `tabs`, `outline`, `find`, `inspect`, `act`, `changes`, `navigate`, or `select_tab`. Start with a narrow `tabs` or `outline`/`find`, use only returned stable refs, then inspect or perform one action at a time and observe again. Do not guess refs, selectors, or ambiguous matches.
+
+## Setup
+
+Setup requires a working Rust/Cargo installation and builds the bundled bridge with `cargo build --release --locked`. The command installs state under the Bone configuration directory (`<config_dir>/firefox_dom`), copies an owner-only bridge binary and launcher, creates an owner-only native-messaging manifest, copies the extension, and creates the package ZIP. It never uses sudo and never modifies a Firefox profile.
+
+From the installed catalog command:
+
+```text
+/firefox_dom setup
+/firefox_dom doctor
+/firefox_dom remove
+```
+
+After setup, install the extension through Firefox's normal workflow. For a persistent install, open `about:addons`, choose the gear menu, select **Install Add-on From File**, and choose the reported `bone-firefox-dom-0.1.0.zip`. For a temporary install, open `about:debugging` → **This Firefox** → **Load Temporary Add-on**, and choose the reported copied `extension/manifest.json`. Firefox may require the temporary extension to be loaded again after restart. These are the exact supported loading paths; setup does not silently alter profiles.
+
+`doctor` checks the native-host manifest, launcher, built binary, copied extension and manifest, package ZIP, and canonical socket (`<config_dir>/firefox_dom/bone-firefox-dom.sock`). A socket is reported as listening only when it is a Unix socket. `remove` removes only this tool's manifest, extension state, package, launcher, binary, socket, and empty state directory; it does not touch Firefox profiles or the existing browser tool. Symlinked unsafe targets are refused rather than followed.
+
+## DOM reach and limitations
+
+The extension can discover ordinary HTML/SVG elements, custom elements, open shadow roots, slots, ancestry, bounded text, geometry, focus and interaction state. It can search the live DOM and act on supported controls by ref: click, focus, type/set value, press, scroll, check/uncheck, submit, and native-select by exact label/value/index. Firefox-privileged pages, inaccessible frames, closed shadow roots, canvas/video/image pixels, and trusted physical input remain unavailable.
+
+DOM inspection can expose personal or financial data. Passwords, hidden values, token/secret/session/authorization/credential-like fields, URL userinfo, script bodies, and style contents are redacted or omitted conservatively. Use narrow scopes and budgets.
+

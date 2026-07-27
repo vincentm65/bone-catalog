@@ -39,17 +39,26 @@ for kind in tools commands; do
   for file in "$kind"/*.lua; do
     [[ -e "$file" ]] || continue
     name=$(basename "$file")
+    # firefox_dom is one visible command-owned item with its tool and runtime assets.
+    [[ "$file" == "tools/firefox_dom.lua" ]] && continue
     desc=$(extract_desc "$file" | json_escape)
     sha=$(sha256sum "$file" | cut -d' ' -f1)
     if [[ $first -eq 0 ]]; then echo "," >> "$out"; fi
     first=0
     printf '  { "name": %s, "kind": "%s", "description": %s, "sha256": "%s"' \
       "\"$name\"" "$singular" "$desc" "$sha" >> "$out"
+    bundled_files=()
     if [[ "$file" == "commands/themes.lua" ]]; then
+      mapfile -t bundled_files < <(find themes -maxdepth 1 -type f -name '*.lua' | sort)
+    elif [[ "$file" == "commands/firefox_dom.lua" ]]; then
+      bundled_files=(tools/firefox_dom.lua bone-firefox-dom-0.1.0.zip)
+      mapfile -t firefox_dom_files < <(find firefox_dom -type f ! -path 'firefox_dom/bridge/target/*' | sort)
+      bundled_files+=("${firefox_dom_files[@]}")
+    fi
+    if [[ ${#bundled_files[@]} -gt 0 ]]; then
       printf ', "files": [' >> "$out"
       bundle_first=1
-      for bundled in themes/*.lua; do
-        [[ -e "$bundled" ]] || continue
+      for bundled in "${bundled_files[@]}"; do
         bundled_sha=$(sha256sum "$bundled" | cut -d' ' -f1)
         if [[ $bundle_first -eq 0 ]]; then printf ', ' >> "$out"; fi
         bundle_first=0
