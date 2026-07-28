@@ -51,7 +51,7 @@ for kind in tools commands; do
     if [[ "$file" == "commands/themes.lua" ]]; then
       mapfile -t bundled_files < <(find themes -maxdepth 1 -type f -name '*.lua' | sort)
     elif [[ "$file" == "commands/firefox_dom.lua" ]]; then
-      bundled_files=(tools/firefox_dom.lua bone-firefox-dom-0.1.0.zip)
+      bundled_files=(tools/firefox_dom.lua)
       mapfile -t firefox_dom_files < <(find firefox_dom -type f ! -path 'firefox_dom/bridge/target/*' | sort)
       bundled_files+=("${firefox_dom_files[@]}")
     fi
