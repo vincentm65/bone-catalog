@@ -57,6 +57,26 @@ test('outline enforces node and text budgets with narrowing guidance', () => {
   assert.match(result.continuation_hint, /Narrow|subtree/);
 });
 
+test('text budgets trim content without hiding actionable nodes', () => {
+  const { element, document, ns } = loadView();
+  const button = element('button', { textContent: 'Continue checkout' });
+  document.body.append(button);
+  const outlined = ns.modules.view.outline({ scope: 'document', max_nodes: 20, max_text: 4, document });
+  const record = outlined.nodes.find((node) => node.ref === ns.modules.core.refFor(button));
+  assert.equal(record.direct_text, 'Cont');
+  assert.equal(record.truncated, true);
+  assert.equal(outlined.omitted_nodes, 0);
+  assert.equal(outlined.omitted_text, 'Continue checkout'.length - 4);
+  assert.equal(outlined.truncated, true);
+
+  const inspected = ns.modules.view.inspect({
+    ref: ns.modules.core.refFor(button), include: [], max_text: 5, document
+  });
+  assert.equal(inspected.node.direct_text, 'Conti');
+  assert.equal(inspected.omitted_text, 'Continue checkout'.length - 5);
+  assert.equal(inspected.truncated, true);
+});
+
 test('inspect returns ancestors, siblings, relations, and bounded select options', () => {
   const { element, document, ns } = loadView();
   const form = element('form', { id: 'checkout' });
@@ -128,6 +148,11 @@ test('compact records distinguish controls with bounded safe identity fields and
   assert.equal(record.placeholder, 'you@example.test');
   assert.equal(record.accessible_name, 'Email address');
   assert.doesNotMatch(record.accessible_name, /private-token/);
+  const limited = ns.modules.view.inspect({
+    ref: ns.modules.core.refFor(input), include: [], max_text: 5, document
+  });
+  assert.equal(limited.node.accessible_name, 'Email');
+  assert.equal(limited.omitted_text, ' address'.length);
 });
 
 test('geometry and interaction hints describe covered/visible context without leaking values', () => {

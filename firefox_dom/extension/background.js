@@ -137,23 +137,28 @@
     var omittedText = frames.reduce(function (total, frame) {
       return total + (Number(frame.result && frame.result.omitted_text) || 0);
     }, 0);
+    var textFields = ['direct_text', 'accessible_name', 'label'];
+    function textLength(record) {
+      return textFields.reduce(function (total, field) { return total + (typeof record[field] === 'string' ? record[field].length : 0); }, 0);
+    }
     function keepRecord(record) {
       if (usedNodes >= maxNodes) {
         omittedNodes += 1;
-        omittedText += typeof record.direct_text === 'string' ? record.direct_text.length : 0;
+        omittedText += textLength(record);
         return null;
       }
       var out = Object.assign({}, record);
       usedNodes += 1;
-      if (typeof out.direct_text === 'string') {
+      textFields.forEach(function (field) {
+        if (typeof out[field] !== 'string') return;
         var remaining = Math.max(0, maxText - usedText);
-        if (out.direct_text.length > remaining) {
-          omittedText += out.direct_text.length - remaining;
-          out.direct_text = out.direct_text.slice(0, remaining);
+        if (out[field].length > remaining) {
+          omittedText += out[field].length - remaining;
+          out[field] = out[field].slice(0, remaining);
           out.truncated = true;
         }
-        usedText += out.direct_text.length;
-      }
+        usedText += out[field].length;
+      });
       return out;
     }
     function trimResult(result) {

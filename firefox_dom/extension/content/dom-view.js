@@ -45,6 +45,25 @@
     return String(value).replace(/\s+/g, ' ').trim();
   }
   function bounded(value, limit) { value = String(value == null ? '' : value); return value.length > limit ? value.slice(0, limit) : value; }
+  function newTextBudget(value, fallback) {
+    value = Number(value);
+    var limit = Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+    return { remaining: Math.min(limit, B.totalText), omitted: 0 };
+  }
+  function budgetText(record, input) {
+    var budget = input && input._textBudget;
+    if (!budget) return record;
+    ['direct_text', 'accessible_name', 'label'].forEach(function (field) {
+      if (typeof record[field] !== 'string') return;
+      if (record[field].length > budget.remaining) {
+        budget.omitted += record[field].length - budget.remaining;
+        record[field] = record[field].slice(0, budget.remaining);
+        record.truncated = true;
+      }
+      budget.remaining -= record[field].length;
+    });
+    return record;
+  }
   function redacted(n, value, field) {
     var c = core();
     try { if (typeof c.redact === 'function') { var r = c.redact(n, value, field); if (r !== undefined) return r; } } catch (_) {}
@@ -184,18 +203,23 @@
       out.children = childNodes.slice(0, B.maxNodes).map(ref).filter(Boolean); out.child_count = childNodes.length;
       if (childNodes.length > out.children.length) { out.children_truncated = true; out.omitted_children = childNodes.length - out.children.length; }
     }
-    return out;
+    return budgetText(out, input);
   }
-  function metadata(omitted, hint) { return { truncated: omitted > 0, omitted_nodes: omitted, continuation_hint: omitted > 0 ? hint : undefined }; }
+  function metadata(omitted, hint, omittedText) {
+    var truncated = omitted > 0 || omittedText > 0;
+    var result = { truncated: truncated, omitted_nodes: omitted, continuation_hint: truncated ? hint : undefined };
+    if (omittedText > 0) result.omitted_text = omittedText;
+    return result;
+  }
   view.describe = function (n, level, input) { return base(n, level === 'inspect' ? 'inspect' : 'outline', input || {}); };
   view.outline = function (input) {
-    input = input || {}; input._layoutCache = { rect: new WeakMap(), visible: new WeakMap() }; var all = elements(input), selected = scopeNodes(input, all), max = Math.min(Math.max(1, input.max_nodes || B.outlineNodes), B.maxNodes || 500), depth = Math.min(Math.max(0, input.depth == null ? 12 : input.depth), B.maxDepth), keep = new Set();
+    input = input || {}; input._layoutCache = { rect: new WeakMap(), visible: new WeakMap() }; input._textBudget = newTextBudget(input.max_text, B.outlineText); var all = elements(input), selected = scopeNodes(input, all), max = Math.min(Math.max(1, input.max_nodes || B.outlineNodes), B.maxNodes || 500), depth = Math.min(Math.max(0, input.depth == null ? 12 : input.depth), B.maxDepth), keep = new Set();
     selected.forEach(function (n) { var desc = children(n).some(function (c) { return important(c, false); }); if (important(n, desc)) { keep.add(n); var p = parent(n); while (p && selected.indexOf(p) >= 0) { keep.add(p); p = parent(p); } } });
-    var records = [], usedText = 0, omitted = 0; selected.forEach(function (n) { if (!keep.has(n)) return; var level = 0, p = n; while (p && p !== input._scopeRoot && (p = parent(p))) level++; if (level > depth) { omitted++; return; } if (records.length >= max) { omitted++; return; } var rec = base(n, 'outline', input); var kids = children(n).filter(function (c) { return keep.has(c); }); if (kids.length) rec.children = kids.map(ref).filter(Boolean); usedText += (rec.direct_text || '').length; if (usedText > Math.min(input.max_text || B.outlineText, B.totalText)) { delete rec.direct_text; omitted++; return; } records.push(rec); });
-    var result = { scope: input.scope || 'viewport', nodes: records }; Object.assign(result, metadata(omitted, 'Narrow scope, reduce depth, or inspect a subtree; continue with subtree ref.')); return result;
+    var records = [], omitted = 0; selected.forEach(function (n) { if (!keep.has(n)) return; var level = 0, p = n; while (p && p !== input._scopeRoot && (p = parent(p))) level++; if (level > depth) { omitted++; return; } if (records.length >= max) { omitted++; return; } var rec = base(n, 'outline', input); var kids = children(n).filter(function (c) { return keep.has(c); }); if (kids.length) rec.children = kids.map(ref).filter(Boolean); records.push(rec); });
+    var result = { scope: input.scope || 'viewport', nodes: records }; Object.assign(result, metadata(omitted, 'Narrow scope, reduce depth, or inspect a subtree; continue with subtree ref.', input._textBudget.omitted)); return result;
   };
   view.inspect = function (input) {
-    input = input || {}; input._layoutCache = { rect: new WeakMap(), visible: new WeakMap() }; var all = elements(input), n = getNode(input.ref, all); if (!n) return { error: ns.error('invalid_ref', 'Node reference was not found') }; var result = { node: base(n, 'inspect', input), ancestors: [], relations: {}, siblings: [], descendants: [] }, include = input.include || ['ancestors','children'], max = Math.min(Math.max(1, Math.floor(input.max_nodes || 200)), B.maxNodes), depth = Math.min(Math.max(0, Math.floor(input.depth == null ? 2 : input.depth)), B.maxDepth), remaining = max - 1, omitted = 0, p = parent(n);
+    input = input || {}; input._layoutCache = { rect: new WeakMap(), visible: new WeakMap() }; input._textBudget = newTextBudget(input.max_text, B.inspectText); var all = elements(input), n = getNode(input.ref, all); if (!n) return { error: ns.error('invalid_ref', 'Node reference was not found') }; var result = { node: base(n, 'inspect', input), ancestors: [], relations: {}, siblings: [], descendants: [] }, include = input.include || ['ancestors','children'], max = Math.min(Math.max(1, Math.floor(input.max_nodes || 200)), B.maxNodes), depth = Math.min(Math.max(0, Math.floor(input.depth == null ? 2 : input.depth)), B.maxDepth), remaining = max - 1, omitted = 0, p = parent(n);
     function appendRecords(target, candidates, level) { var count = Math.min(remaining, candidates.length); for (var i = 0; i < count; i++) target.push(base(candidates[i], level, input)); remaining -= count; omitted += candidates.length - count; }
     if (include.indexOf('ancestors') >= 0) { var ancestors = []; while (p && ancestors.length < depth) { ancestors.push(p); p = parent(p); } appendRecords(result.ancestors, ancestors, 'outline'); }
     if (include.indexOf('siblings') >= 0 && parent(n)) appendRecords(result.siblings, children(parent(n)).filter(function (x) { return x !== n; }), 'outline');
@@ -204,9 +228,9 @@
       function collect(node, level) { if (level > depth) return; children(node).forEach(function (child) { if (seen.has(child)) return; seen.add(child); descendants.push(child); collect(child, level + 1); }); }
       collect(n, 1); appendRecords(result.descendants, descendants, 'inspect');
     }
-    if (include.indexOf('options') >= 0 && String(n.localName).toLowerCase() === 'select') { result.options = children(n).slice(0, B.maxOptions).map(function (o) { return { label: bounded(text(o), B.directText), value: redacted(o, o.value != null ? o.value : attr(o,'value'), 'option'), selected: !!o.selected, ref: ref(o) }; }); if (children(n).length > B.maxOptions) omitted += children(n).length - B.maxOptions; }
+    if (include.indexOf('options') >= 0 && String(n.localName).toLowerCase() === 'select') { result.options = children(n).slice(0, B.maxOptions).map(function (o) { return budgetText({ label: bounded(text(o), B.directText), value: redacted(o, o.value != null ? o.value : attr(o,'value'), 'option'), selected: !!o.selected, ref: ref(o) }, input); }); if (children(n).length > B.maxOptions) omitted += children(n).length - B.maxOptions; }
     if (include.indexOf('relations') >= 0) { ['aria-labelledby','aria-describedby','aria-controls','aria-owns','aria-activedescendant'].forEach(function (a) { var v = attr(n,a); if (v) { var relationName = { 'aria-labelledby': 'labelled_by', 'aria-describedby': 'described_by', 'aria-controls': 'controls', 'aria-owns': 'owns', 'aria-activedescendant': 'active_descendant' }[a]; result.relations[relationName] = v.split(/\s+/).map(function (id) { return getNodeById(id, n, all); }).filter(Boolean).map(ref); } }); var nativeLabels = labelledNodes(n).map(ref).filter(Boolean); if (nativeLabels.length) result.relations.labelled_by = Array.from(new Set((result.relations.labelled_by || []).concat(nativeLabels))); var f = attr(n,'for'); if (f) result.relations.label = getNodeById(f,n,all) && ref(getNodeById(f,n,all)); }
-    Object.assign(result, metadata(omitted, 'Narrow include/depth or continue by inspecting a returned subtree ref.')); return result;
+    Object.assign(result, metadata(omitted, 'Narrow include/depth or continue by inspecting a returned subtree ref.', input._textBudget.omitted)); return result;
   };
   function getNodeById(id, n, all) { for (var i=0;i<all.length;i++) if (attr(all[i],'id') === id) return all[i]; return null; }
   view.accessibleName = accessibleName;

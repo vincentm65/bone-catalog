@@ -196,6 +196,37 @@ test('global node and text budgets are not multiplied across frames', async () =
   assert.match(result.result.continuation_hint, /Narrow/);
 });
 
+test('global text budgets include accessible names', async () => {
+  const oldFrames = browser.webNavigation.getAllFrames;
+  const oldSendMessage = browser.tabs.sendMessage;
+  browser.webNavigation.getAllFrames = async () => [{ frameId: 0 }];
+  browser.tabs.sendMessage = async (id, request, options) => ({
+    ok: true,
+    action: request.action,
+    revision: 3,
+    document_id: 'd3',
+    result: {
+      matches: [{
+        ref: `7:d3:${options.frameId}:n1`,
+        direct_text: 'abc',
+        accessible_name: 'wxyz'
+      }]
+    }
+  });
+  try {
+    const result = await api.dispatch({ action: 'find', tab_id: 7, max_nodes: 10, max_text: 5 });
+    const match = result.result.frames[0].result.matches[0];
+    assert.equal(match.direct_text, 'abc');
+    assert.equal(match.accessible_name, 'wx');
+    assert.equal(match.truncated, true);
+    assert.equal(result.result.omitted_text, 2);
+    assert.equal(result.result.truncated, true);
+  } finally {
+    browser.webNavigation.getAllFrames = oldFrames;
+    browser.tabs.sendMessage = oldSendMessage;
+  }
+});
+
 test('cross-frame local refs are qualified on output and normalized for ref and within routing', async () => {
   const oldFrames = browser.webNavigation.getAllFrames;
   const oldSend = browser.tabs.sendMessage;
