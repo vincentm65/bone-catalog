@@ -36,6 +36,10 @@
   }
   function validate(request) {
     if (!request || typeof request !== 'object' || Array.isArray(request) || typeof request.action !== 'string') throw failure('invalid_request', 'action is required');
+    if (request.action === '_identity') {
+      if (Object.keys(request).some(function (key) { return key !== 'action'; })) throw failure('invalid_request', '_identity accepts no fields');
+      return;
+    }
     if (ns.ACTIONS.indexOf(request.action) < 0) throw failure('invalid_request', 'unsupported content action');
     Object.keys(request).forEach(function (key) { if (!allowed[key]) throw failure('invalid_request', 'unknown request field', { field: key }); });
     if (request.action === 'find' && request.predicates !== undefined) validatePredicates(request.predicates, 'predicates');
@@ -48,7 +52,8 @@
     try {
       validate(request);
       var result;
-      if (request.action === 'outline') result = view.outline(Object.assign({}, request, { document: root.document }));
+      if (request.action === '_identity') result = { document_id: core.documentId, frame_id: 0 };
+      else if (request.action === 'outline') result = view.outline(Object.assign({}, request, { document: root.document }));
       else if (request.action === 'find') result = query.find(Object.assign({}, request, { document: root.document }), { core: core, view: view, document: root.document });
       else if (request.action === 'inspect') result = view.inspect(Object.assign({}, request, { document: root.document }));
       else if (request.action === 'act') result = await actions.act(request, { document: root.document, document_id: core.documentId, frame_id: 0 });

@@ -78,7 +78,14 @@ test('navigate recognizes the Firefox tabs.onUpdated callback and removes its li
   for (const listener of listeners.updated) listener(7, { status: 'complete', url: 'https://example.test/next' }, tabs[0]);
   const result = await navigating;
   assert.equal(result.ok, true);
-  assert.deepEqual(result.result, { tab_id: 7, url: 'https://example.test/next' });
+  assert.equal(result.revision, 3);
+  assert.deepEqual(result.result, {
+    tab_id: 7,
+    url: 'https://example.test/next',
+    frame_id: 0,
+    document_id: 'd3'
+  });
+  assert.equal(calls.at(-1)[2].action, '_identity');
   assert.equal(listeners.updated.size, 0);
 });
 
@@ -92,6 +99,82 @@ test('navigate removes its listener when Firefox rejects the URL', async () => {
     assert.equal(listeners.updated.size, 0);
   } finally {
     browser.tabs.update = update;
+  }
+});
+
+test('navigate can return a bounded viewport outline with new-document refs', async () => {
+  const sendMessage = browser.tabs.sendMessage;
+  browser.tabs.sendMessage = async (id, request, options) => {
+    calls.push(['send', id, request, options]);
+    return {
+      ok: true,
+      action: request.action,
+      revision: 5,
+      document_id: 'new-document',
+      result: { nodes: [{ ref: '0:new-document:0:n1', direct_text: 'Ready' }] }
+    };
+  };
+  try {
+    const navigating = api.dispatch({ action: 'navigate', tab_id: 7, url: 'https://example.test/outlined', outline: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    for (const listener of listeners.updated) listener(7, { status: 'complete' }, tabs[0]);
+    const result = await navigating;
+    assert.equal(result.ok, true);
+    assert.equal(result.revision, 5);
+    assert.equal(result.result.document_id, 'new-document');
+    assert.equal(result.result.outline.nodes[0].ref, '7:new-document:0:n1');
+    assert.deepEqual(calls.at(-1)[2], {
+      action: 'outline',
+      scope: 'viewport',
+      max_nodes: 150,
+      max_text: 10000,
+      depth: 12
+    });
+  } finally {
+    browser.tabs.sendMessage = sendMessage;
+  }
+});
+
+test('navigate retries the short content-script readiness race', async () => {
+  const sendMessage = browser.tabs.sendMessage;
+  let attempts = 0;
+  browser.tabs.sendMessage = async (id, request, options) => {
+    calls.push(['send', id, request, options]);
+    attempts += 1;
+    if (attempts === 1) throw new Error('content script not ready');
+    return { ok: true, action: request.action, revision: 0, document_id: 'ready-document', result: { document_id: 'ready-document' } };
+  };
+  try {
+    const navigating = api.dispatch({ action: 'navigate', tab_id: 7, url: 'https://example.test/race' });
+    await new Promise((resolve) => setImmediate(resolve));
+    for (const listener of listeners.updated) listener(7, { status: 'complete' }, tabs[0]);
+    const result = await navigating;
+    assert.equal(result.ok, true);
+    assert.equal(result.result.document_id, 'ready-document');
+    assert.equal(attempts, 2);
+  } finally {
+    browser.tabs.sendMessage = sendMessage;
+  }
+});
+
+test('navigate preserves browser success when an optional outline fails', async () => {
+  const sendMessage = browser.tabs.sendMessage;
+  browser.tabs.sendMessage = async () => ({
+    ok: false,
+    action: 'outline',
+    revision: 0,
+    error: { code: 'invalid_request', message: 'outline failed' }
+  });
+  try {
+    const navigating = api.dispatch({ action: 'navigate', tab_id: 7, url: 'https://example.test/no-outline', outline: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    for (const listener of listeners.updated) listener(7, { status: 'complete' }, tabs[0]);
+    const result = await navigating;
+    assert.equal(result.ok, true);
+    assert.equal(result.result.document_id, null);
+    assert.equal(result.result.outline_error.code, 'invalid_request');
+  } finally {
+    browser.tabs.sendMessage = sendMessage;
   }
 });
 

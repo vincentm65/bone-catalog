@@ -7,6 +7,8 @@
   var DEFAULT_MAX_TEXT = 12000;
   var NAVIGATION_TIMEOUT = 15000;
   var MAX_NAVIGATION_TIMEOUT = 30000;
+  var CONTENT_READY_ATTEMPTS = 8;
+  var CONTENT_READY_DELAY = 25;
   var HOST = 'dev.bone.firefox_dom';
   var browserApi = root.browser || root.chrome;
   var mutationTail = Promise.resolve();
@@ -91,6 +93,22 @@
     } catch (e) {
       return { frame: frame, response: response(request.action, 0, null, failure('inaccessible_frame', 'frame is not accessible', { frame_id: frame.frameId })) };
     }
+  }
+  async function sendMainFrameWhenReady(tab, request) {
+    var frames;
+    try { frames = await frameList(tab.id); }
+    catch (_) { frames = []; }
+    var frame = frames.find(function (candidate) { return String(candidate.frameId) === '0'; });
+    if (!frame) {
+      return { frame: { frameId: 0 }, response: response(request.action, 0, null, failure('inaccessible_frame', 'main frame is not accessible', { frame_id: 0 })) };
+    }
+    var sent;
+    for (var attempt = 0; attempt < CONTENT_READY_ATTEMPTS; attempt++) {
+      sent = await sendFrame(tab, frame, request);
+      if (sent.response.ok || !sent.response.error || sent.response.error.code !== 'inaccessible_frame') return sent;
+      if (attempt + 1 < CONTENT_READY_ATTEMPTS) await new Promise(function (resolve) { setTimeout(resolve, CONTENT_READY_DELAY); });
+    }
+    return sent;
   }
   async function resolveTab(request) {
     if (request.tab_id != null) {
@@ -193,6 +211,7 @@
       if (typeof request.url !== 'string' || !request.url) return response(action, 0, null, failure('invalid_request', 'url is required'));
       var timeoutMs = navigationTimeout(request.timeout_ms);
       var finishNavigation = null;
+      var finalUrl = request.url;
       var completed = new Promise(function (resolve) {
         var settled = false, timer = null;
         var finish = function (value) {
@@ -205,8 +224,10 @@
         finishNavigation = finish;
         /* tabs.onUpdated supplies (tabId, changeInfo, tab), not a webNavigation
            details object. It only reports top-level tab navigation here. */
-        var listener = function (tabId, changeInfo) {
-          if (tabId === tab.id && changeInfo && changeInfo.status === 'complete') finish(true);
+        var listener = function (tabId, changeInfo, updatedTab) {
+          if (tabId !== tab.id) return;
+          finalUrl = changeInfo && changeInfo.url || updatedTab && updatedTab.url || finalUrl;
+          if (changeInfo && changeInfo.status === 'complete') finish(true);
         };
         if (browserApi.tabs.onUpdated && browserApi.tabs.onUpdated.addListener) browserApi.tabs.onUpdated.addListener(listener);
         timer = setTimeout(function () { finish(false); }, timeoutMs);
@@ -217,7 +238,19 @@
         return response(action, 0, null, failure('invalid_request', 'navigation failed'));
       }
       if (!(await completed)) return response(action, 0, null, failure('navigation_timeout', 'navigation did not complete', { timeout_ms: timeoutMs }));
-      return response(action, 0, { tab_id: tab.id, url: request.url });
+      var followup = request.outline
+        ? { action: 'outline', scope: 'viewport', max_nodes: DEFAULT_MAX_NODES, max_text: 10000, depth: 12 }
+        : { action: '_identity' };
+      var observed = await sendMainFrameWhenReady(tab, followup);
+      var result = { tab_id: tab.id, url: finalUrl, frame_id: 0 };
+      if (observed.response.ok) {
+        result.document_id = observed.response.document_id || observed.frame.document_id || null;
+        if (request.outline) result.outline = observed.response.result;
+      } else {
+        result.document_id = null;
+        result[request.outline ? 'outline_error' : 'document_error'] = observed.response.error;
+      }
+      return bounded(response(action, observed.response.revision || 0, result), action);
     }
     function parseInbound(name) {
       if (request[name] == null) return null;

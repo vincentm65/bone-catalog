@@ -161,3 +161,14 @@ test('content coordinator normalizes Error instances before extension messaging'
   assert.equal(result.error.code, 'invalid_ref');
   assert.equal(typeof result.error.message, 'string');
 });
+
+test('content coordinator exposes only its document identity to the internal probe', async () => {
+  const { ns, handle } = install();
+  const identity = await handle({ action: '_identity' });
+  assert.equal(identity.ok, true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(identity.result)),
+    { document_id: ns.modules.core.documentId, frame_id: 0 }
+  );
+  assert.equal((await handle({ action: '_identity', max_nodes: 1 })).error.code, 'invalid_request');
+});
