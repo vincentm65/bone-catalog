@@ -1,6 +1,9 @@
 -- firefox_dom: bounded DOM discovery and explicit node actions through its own bridge.
 
 local MAX_REQUEST = 4 * 1024 * 1024
+local DEFAULT_ACTION_TIMEOUT = 15000
+local MAX_ACTION_TIMEOUT = 30000
+local TRANSPORT_GRACE = 7000
 
 local PREDICATE_PROPERTIES = {
   tag = { type = "string" }, id = { type = "string" }, class = {},
@@ -31,7 +34,7 @@ local ACTION_FIELDS = {
   outline = { action = true, tab_id = true, frame_id = true, scope = true, ref = true, x = true, y = true, width = true, height = true, max_nodes = true, max_text = true, depth = true },
   find = { action = true, tab_id = true, frame_id = true, css = true, predicates = true, within = true, visible = true, limit = true },
   inspect = { action = true, ref = true, depth = true, include = true, max_nodes = true, max_text = true },
-  act = { action = true, ref = true, operation = true, value = true, text = true, key = true, label = true, index = true, observe_changes = true, settle_ms = true },
+  act = { action = true, ref = true, operation = true, value = true, text = true, key = true, code = true, label = true, index = true, x = true, y = true, block = true, inline = true, observe_changes = true, settle_ms = true },
   changes = { action = true, tab_id = true, frame_id = true, since_revision = true, max_nodes = true, max_text = true },
   navigate = { action = true, tab_id = true, url = true, timeout_ms = true, outline = true },
   select_tab = { action = true, tab_id = true },
@@ -66,7 +69,7 @@ local function validate(p)
   local allowed = ACTION_FIELDS[p.action]
   for k in pairs(p) do if not allowed[k] then return nil, bad("unknown field for action '" .. p.action .. "': " .. tostring(k)) end end
   local required = {
-    outline = { "scope" }, find = {}, inspect = { "ref" }, act = { "ref", "operation" },
+    outline = {}, find = {}, inspect = { "ref" }, act = { "ref", "operation" },
     changes = { "since_revision" }, navigate = { "url" }, select_tab = { "tab_id" }, tabs = {},
   }
   for _, k in ipairs(required[p.action]) do if p[k] == nil then return nil, bad("missing required field: " .. k) end end
@@ -80,6 +83,7 @@ local function validate(p)
   for _, k in ipairs({"tab_id","frame_id","max_nodes","max_text","depth","limit","since_revision","settle_ms","timeout_ms","index","x","y","width","height"}) do
     if p[k] ~= nil and not type_ok(p[k], "number") then return nil, bad(k .. " must be a number") end
   end
+  if p.timeout_ms ~= nil and (p.timeout_ms < 1000 or p.timeout_ms > MAX_ACTION_TIMEOUT) then return nil, bad("timeout_ms must be between 1000 and 30000") end
   if p.action == "find" and p.predicates ~= nil then
     local predicate_error = validate_predicates(p.predicates, "predicates")
     if predicate_error then return nil, predicate_error end
@@ -91,6 +95,8 @@ local function execute(params, ctx)
   local p, validation = validate(params); if not p then return validation end
   local payload = cjson.encode(p)
   if #payload > MAX_REQUEST then return error_object("response_limit", "request exceeds 4 MiB") end
+  local action_timeout = p.action == "navigate" and math.floor(p.timeout_ms or DEFAULT_ACTION_TIMEOUT) or DEFAULT_ACTION_TIMEOUT
+  local transport_timeout = action_timeout + TRANSPORT_GRACE
   local py = [[import socket,struct,sys
 MAX=4*1024*1024
 def exact(sock,n):
@@ -102,13 +108,13 @@ def exact(sock,n):
   return data
 payload=sys.argv[2].encode()
 if len(payload)>MAX: raise RuntimeError('request exceeds 4 MiB')
-s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.settimeout(8); s.connect(sys.argv[1]); s.sendall(struct.pack('>I',len(payload))+payload)
+s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.settimeout(int(sys.argv[3])/1000); s.connect(sys.argv[1]); s.sendall(struct.pack('>I',len(payload))+payload)
 header=exact(s,4); length=struct.unpack('>I',header)[0]
 if length>MAX: raise RuntimeError('response exceeds 4 MiB')
 data=exact(s,length); s.close(); sys.stdout.buffer.write(data)]]
   local socket = ctx.config_dir .. "/firefox_dom/bone-firefox-dom.sock"
-  local cmd = "python3 -c " .. shell_quote(py) .. " " .. shell_quote(socket) .. " " .. shell_quote(payload)
-  local result = ctx.shell(cmd, { timeout_ms = 12000 })
+  local cmd = "python3 -c " .. shell_quote(py) .. " " .. shell_quote(socket) .. " " .. shell_quote(payload) .. " " .. tostring(transport_timeout)
+  local result = ctx.shell(cmd, { timeout_ms = transport_timeout + 2000 })
   if result.exit_code ~= 0 then return error_object("bridge_unavailable", "dedicated Firefox DOM bridge unavailable", { stderr = (result.stderr or ""):sub(1, 1000) }) end
   local raw = result.stdout or ""
   if raw == "" then return error_object("bridge_protocol", "bridge returned no JSON") end
@@ -124,7 +130,7 @@ bone.tool.register({
     type = "object", additionalProperties = false,
     properties = {
       action = { type = "string", enum = { "tabs", "outline", "find", "inspect", "act", "changes", "navigate", "select_tab" }, description = "Required action discriminator." },
-      tab_id = { type = "number" }, frame_id = { type = "number" }, scope = { type = "string", enum = { "viewport", "document", "focused", "region", "subtree" } }, ref = { type = "string" }, css = { type = "string" }, predicates = PREDICATES, within = { type = "string" }, visible = { type = "boolean" }, limit = { type = "number" }, depth = { type = "number" }, include = { type = "array", items = { type = "string" } }, max_nodes = { type = "number" }, max_text = { type = "number" }, operation = { type = "string", enum = { "click", "focus", "type", "set_value", "select", "press", "scroll_into_view", "scroll", "check", "uncheck", "submit" } }, value = { type = "string" }, text = { type = "string" }, key = { type = "string" }, label = { type = "string" }, index = { type = "number" }, observe_changes = { type = "boolean" }, settle_ms = { type = "number" }, since_revision = { type = "number" }, url = { type = "string" }, timeout_ms = { type = "number" }, outline = { type = "boolean" }, x = { type = "number" }, y = { type = "number" }, width = { type = "number" }, height = { type = "number" },
+      tab_id = { type = "number" }, frame_id = { type = "number" }, scope = { type = "string", enum = { "viewport", "document", "focused", "region", "subtree" } }, ref = { type = "string" }, css = { type = "string" }, predicates = PREDICATES, within = { type = "string" }, visible = { type = "boolean" }, limit = { type = "number" }, depth = { type = "number" }, include = { type = "array", items = { type = "string" } }, max_nodes = { type = "number" }, max_text = { type = "number" }, operation = { type = "string", enum = { "click", "focus", "type", "set_value", "select", "press", "scroll_into_view", "scroll", "check", "uncheck", "submit" } }, value = { type = "string" }, text = { type = "string" }, key = { type = "string" }, code = { type = "string" }, label = { type = "string" }, index = { type = "number" }, block = { type = "string", enum = { "start", "center", "end", "nearest" } }, inline = { type = "string", enum = { "start", "center", "end", "nearest" } }, observe_changes = { type = "boolean" }, settle_ms = { type = "number" }, since_revision = { type = "number" }, url = { type = "string" }, timeout_ms = { type = "number", minimum = 1000, maximum = 30000 }, outline = { type = "boolean" }, x = { type = "number" }, y = { type = "number" }, width = { type = "number" }, height = { type = "number" },
     },
     required = { "action" },
   },

@@ -85,7 +85,9 @@
       var assigned = node.assignedNodes({ flatten: true }) || node.assignedNodes();
       if (assigned.length) return Array.prototype.map.call(assigned, descendantText).join(' ');
     }
-    return Array.prototype.map.call(node.childNodes || [], descendantText).join(' ').replace(/\s+/g, ' ').trim();
+    var children = node.childNodes || [];
+    var value = children.length ? Array.prototype.map.call(children, descendantText).join(' ') : node.textContent || '';
+    return String(value).replace(/\s+/g, ' ').trim();
   }
   function bool(v) { return v === true || v === false ? v : !!v; }
   function style(node, name) { return node && node.ownerDocument && node.ownerDocument.defaultView && node.ownerDocument.defaultView.getComputedStyle ? node.ownerDocument.defaultView.getComputedStyle(node)[name] : (node.style && node.style[name]); }
@@ -101,12 +103,28 @@
     if (node.tabIndex >= 0 || (node.hasAttribute && node.hasAttribute('tabindex') && Number(node.getAttribute('tabindex')) >= 0)) return true;
     return /^(a|area|button|input|select|textarea|summary|iframe)$/.test(node.localName || '') && (node.localName !== 'a' || node.hasAttribute('href'));
   }
+  function editable(node) {
+    if (node.disabled || node.readOnly || node.hasAttribute && (node.hasAttribute('disabled') || node.hasAttribute('readonly'))) return false;
+    if (node.localName === 'textarea') return true;
+    if (node.localName === 'input') {
+      var type = String(node.type || node.getAttribute && node.getAttribute('type') || 'text').toLowerCase();
+      return !/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/.test(type);
+    }
+    return node.isContentEditable === true || node.getAttribute && node.getAttribute('contenteditable') === 'true';
+  }
   function role(node) { return node.getAttribute && (node.getAttribute('role') || ({ button: 'button', a: 'link', input: 'textbox', select: 'combobox' }[node.localName] || '')); }
   function name(node) {
+    var view = ns.modules && ns.modules.view;
+    if (view && typeof view.accessibleName === 'function') return view.accessibleName(node);
     var n = node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('alt'));
     if (n) return n.trim();
     var ids = node.getAttribute && node.getAttribute('aria-labelledby');
     if (ids && node.ownerDocument) return ids.split(/\s+/).map(function (id) { var x = node.ownerDocument.getElementById(id); return x ? descendantText(x) : ''; }).join(' ').trim();
+    var labels = [];
+    try { labels = Array.prototype.map.call(node.labels || [], descendantText).filter(Boolean); } catch (_) {}
+    if (labels.length) return labels.join(' ');
+    var placeholder = node.getAttribute && node.getAttribute('placeholder');
+    if (placeholder) return placeholder.trim();
     return descendantText(node);
   }
   function textPredicate(value, actual) {
@@ -136,7 +154,7 @@
     if (p.text !== undefined && !textPredicate(p.text, descendantText(node))) return false;
     if (p.role !== undefined && role(node) !== p.role) return false;
     if (p.accessible_name !== undefined && !textPredicate(p.accessible_name, name(node))) return false;
-    var states = { visible: visible(node), focused: !!(doc && doc.activeElement === node), focusable: focusable(node), enabled: !node.disabled, editable: node.isContentEditable === true || node.getAttribute && node.getAttribute('contenteditable') === 'true' || /^(input|textarea)$/.test(node.localName || '') && !node.readOnly, selected: !!node.selected, checked: !!node.checked };
+    var states = { visible: visible(node), focused: !!(doc && doc.activeElement === node), focusable: focusable(node), enabled: !node.disabled, editable: editable(node), selected: !!node.selected, checked: !!node.checked };
     for (var s in states) if (p[s] !== undefined && bool(p[s]) !== states[s]) return false;
     var rr = p.rect || p.rectangle; if (rr) { var r = rect(node); var box = rr.x !== undefined ? { left: rr.x, top: rr.y, right: rr.x + rr.width, bottom: rr.y + rr.height } : rr; if (!intersects(r, box)) return false; }
     if (p.ancestor && !all.some(function (x) { return x !== node && isAncestor(x, node, all) && matchesPred(x, p.ancestor, doc, all, core); })) return false;
@@ -185,7 +203,9 @@
       try { doc.querySelectorAll(css); } catch (e) { throw failure('invalid_selector', 'Invalid CSS selector', { selector: css }); }
     }
     var elements = allElements(doc, core), scope = request.within || p.within, withinNode = scope && typeof scope !== 'object' ? (core.nodeFor ? core.nodeFor(scope) : null) : scope;
-    if (withinNode) elements = elements.filter(function (n) { return n === withinNode || isAncestor(withinNode, n); });
+    if (scope && !withinNode) throw failure('invalid_ref', 'within ref is not known');
+    if (withinNode && core.isConnected && !core.isConnected(withinNode)) throw failure('detached_node', 'within ref is detached');
+    if (withinNode) elements = elements.filter(function (n) { return n === withinNode || isAncestor(withinNode, n, elements); });
     var matches = [], truncated = false;
     for (var i = 0; i < elements.length; i++) {
       var n = elements[i];

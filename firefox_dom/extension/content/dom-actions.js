@@ -51,9 +51,11 @@
     return { x: r.x, y: r.y, width: r.width, height: r.height, top: r.top, left: r.left, right: r.right, bottom: r.bottom };
   }
   function hit(node) {
-    var d = docOf(node), w = d && d.defaultView, r = geometry(node);
-    if (!d || !r || typeof d.elementFromPoint !== 'function') return null;
-    var hitNode = d.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    var d = docOf(node), r = geometry(node), hitRoot = d, treeRoot = null;
+    try { treeRoot = node.getRootNode && node.getRootNode(); } catch (_) {}
+    if (treeRoot && typeof treeRoot.elementFromPoint === 'function') hitRoot = treeRoot;
+    if (!hitRoot || !r || typeof hitRoot.elementFromPoint !== 'function') return null;
+    var hitNode = hitRoot.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     if (!hitNode || hitNode === node || (typeof node.contains === 'function' && node.contains(hitNode))) return null;
     return hitNode;
   }
@@ -82,7 +84,22 @@
     if (desc && desc.set) desc.set.call(node, value); else node[prop] = value;
   }
   function editable(node) {
-    return /^(input|textarea|select)$/.test(node.localName) || node.isContentEditable || node.getAttribute && node.getAttribute('contenteditable') === 'true';
+    if (node.disabled || node.readOnly || node.getAttribute && (node.getAttribute('disabled') !== null || node.getAttribute('readonly') !== null)) return false;
+    if (node.localName === 'textarea') return true;
+    if (node.localName === 'input') {
+      var type = String(node.type || node.getAttribute && node.getAttribute('type') || 'text').toLowerCase();
+      return !/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/.test(type);
+    }
+    return node.isContentEditable || node.getAttribute && node.getAttribute('contenteditable') === 'true';
+  }
+  function editableValue(node) { return node.isContentEditable || node.getAttribute && node.getAttribute('contenteditable') === 'true' ? String(node.textContent || '') : String(node.value || ''); }
+  function setEditableValue(node, value) {
+    if (node.isContentEditable || node.getAttribute && node.getAttribute('contenteditable') === 'true') node.textContent = value;
+    else setNative(node, 'value', value);
+  }
+  function appendEditableValue(node, value) {
+    if ((node.isContentEditable || node.getAttribute && node.getAttribute('contenteditable') === 'true') && typeof node.insertAdjacentText === 'function') node.insertAdjacentText('beforeend', value);
+    else setEditableValue(node, editableValue(node) + value);
   }
   function targetState(node) {
     var d = docOf(node), s = style(node);
@@ -97,6 +114,7 @@
   function options(node) { return Array.prototype.slice.call(node.options || node.children || []).filter(function (o) { return o && (o.localName === 'option' || String(o.tagName).toLowerCase() === 'option'); }); }
   function nativeSelect(node, request) {
     if (node.localName !== 'select') fail('unsupported_operation', 'select operation requires a native select');
+    if (node.disabled || node.getAttribute && node.getAttribute('disabled') !== null) fail('unsupported_operation', 'disabled select cannot be changed');
     var keys = ['label', 'value', 'index'].filter(function (k) { return request[k] !== undefined; });
     if (keys.length !== 1) fail('invalid_request', 'select requires exactly one of label, value, or index');
     var os = options(node), matches;
@@ -109,6 +127,7 @@
     if (!matches.length) fail('no_match', 'no option matches ' + keys[0]);
     if (matches.length > 1) fail('ambiguous_match', 'more than one option matches ' + keys[0], { count: matches.length });
     var chosen = matches[0];
+    if (chosen.disabled || chosen.getAttribute && chosen.getAttribute('disabled') !== null) fail('unsupported_operation', 'disabled option cannot be selected');
     setNative(node, 'value', chosen.value);
     if (node.selectedIndex !== undefined) setNative(node, 'selectedIndex', os.indexOf(chosen));
     os.forEach(function (o) { if (o !== chosen) o.selected = false; o.selected = o === chosen; });
@@ -120,12 +139,12 @@
     if (ns.OPERATIONS.indexOf(request.operation) < 0) fail('unsupported_operation', 'unknown operation');
     var node = resolveNode(request, context), doc = docOf(node), beforeRevision = revision(), beforeFocus = focusState(doc), before = targetState(node), result = {};
     var op = request.operation;
-    if (op === 'click') { ensureInteractive(node, true); send(node, 'click'); result.clicked = true; }
+    if (op === 'click') { ensureInteractive(node, true); if (typeof node.click === 'function') node.click(); else send(node, 'click'); result.clicked = true; }
     else if (op === 'focus') { if (!visible(node)) fail('not_visible', 'target is not visible', { synthetic_events: true }); if (typeof node.focus !== 'function') fail('unsupported_operation', 'target cannot be focused'); node.focus(); result.focused = true; }
-    else if (op === 'type') { ensureInteractive(node, false); if (!editable(node)) fail('unsupported_operation', 'target is not editable'); if (typeof node.focus === 'function') node.focus(); var text = String(request.value == null ? '' : request.value); for (var i = 0; i < text.length; i++) { setNative(node, 'value', String(node.value || '') + text[i]); send(node, 'input', { data: text[i], inputType: 'insertText' }); } result.typed = text.length; }
-    else if (op === 'set_value') { ensureInteractive(node, false); if (!editable(node)) fail('unsupported_operation', 'target is not editable'); setNative(node, 'value', String(request.value == null ? '' : request.value)); send(node, 'input'); send(node, 'change'); result.value = redactValue(node); }
+    else if (op === 'type') { ensureInteractive(node, false); if (!editable(node)) fail('unsupported_operation', 'target is not editable'); if (typeof node.focus === 'function') node.focus(); var text = String(request.value == null ? request.text == null ? '' : request.text : request.value), characters = Array.from(text); for (var i = 0; i < characters.length; i++) { appendEditableValue(node, characters[i]); send(node, 'input', { data: characters[i], inputType: 'insertText' }); } result.typed = characters.length; }
+    else if (op === 'set_value') { ensureInteractive(node, false); if (!editable(node)) fail('unsupported_operation', 'target is not editable'); setEditableValue(node, String(request.value == null ? request.text == null ? '' : request.text : request.value)); send(node, 'input'); send(node, 'change'); result.value = redactValue(node); }
     else if (op === 'select') { ensureInteractive(node, false); result = nativeSelect(node, request); }
-    else if (op === 'press') { ensureInteractive(node, false); if (typeof node.focus === 'function') node.focus(); var key = String(request.value == null ? request.key || '' : request.value); if (!key) fail('invalid_request', 'press requires key'); var down = event('keydown', { key: key, code: request.code || key }); var allowed = node.dispatchEvent(down); if (allowed && !down.defaultPrevented && editable(node) && key.length === 1) { setNative(node, 'value', String(node.value || '') + key); send(node, 'input', { data: key, inputType: 'insertText' }); } if (allowed && !down.defaultPrevented && key === 'Enter' && node.form && typeof node.form.requestSubmit === 'function') node.form.requestSubmit(); send(node, 'keyup', { key: key, code: request.code || key }); result.key = key; result.default_applied = !!(allowed && !down.defaultPrevented); }
+    else if (op === 'press') { ensureInteractive(node, false); if (typeof node.focus === 'function') node.focus(); var key = String(request.value == null ? request.key || '' : request.value); if (!key) fail('invalid_request', 'press requires key'); var down = event('keydown', { key: key, code: request.code || key }); var allowed = node.dispatchEvent(down); if (allowed && !down.defaultPrevented && editable(node) && key.length === 1) { appendEditableValue(node, key); send(node, 'input', { data: key, inputType: 'insertText' }); } if (allowed && !down.defaultPrevented && key === 'Enter' && node.form && typeof node.form.requestSubmit === 'function') node.form.requestSubmit(); send(node, 'keyup', { key: key, code: request.code || key }); result.key = key; result.default_applied = !!(allowed && !down.defaultPrevented); }
     else if (op === 'scroll_into_view') { if (typeof node.scrollIntoView !== 'function') fail('unsupported_operation', 'target cannot scroll'); node.scrollIntoView({ block: request.block || 'center', inline: request.inline || 'nearest', behavior: 'auto' }); result.scrolled = true; }
     else if (op === 'scroll') { if (typeof node.scrollBy === 'function') node.scrollBy(Number(request.x || 0), Number(request.y || 0)); else if (doc.defaultView && typeof doc.defaultView.scrollBy === 'function') doc.defaultView.scrollBy(Number(request.x || 0), Number(request.y || 0)); else fail('unsupported_operation', 'target cannot scroll'); result.scrolled = true; }
     else if (op === 'check' || op === 'uncheck') { ensureInteractive(node, true); if (node.localName !== 'input' || node.type !== 'checkbox') fail('unsupported_operation', 'check requires a checkbox'); if (node.disabled) fail('unsupported_operation', 'disabled checkbox cannot be changed'); var checked = op === 'check'; setNative(node, 'checked', checked); send(node, 'input'); send(node, 'change'); result.checked = checked; }

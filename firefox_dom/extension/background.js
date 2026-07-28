@@ -6,6 +6,9 @@
   var DEFAULT_MAX_NODES = 150;
   var DEFAULT_MAX_TEXT = 12000;
   var NAVIGATION_TIMEOUT = 15000;
+  var MAX_NAVIGATION_TIMEOUT = 30000;
+  var CONTENT_READY_ATTEMPTS = 8;
+  var CONTENT_READY_DELAY = 25;
   var HOST = 'dev.bone.firefox_dom';
   var browserApi = root.browser || root.chrome;
   var mutationTail = Promise.resolve();
@@ -46,7 +49,7 @@
     if (Array.isArray(value)) return value.map(function (v) { return rewrite(v, tab, frame); });
     var out = {};
     var refKeys = { ref: true, parent: true, shadow_host: true, hit: true, covered_by: true, active_descendant: true, covering_ref: true };
-    var relationKeys = { labelled_by: true, described_by: true, controls: true, owns: true, active_descendant: true, label: true };
+    var relationKeys = { labelled_by: true, described_by: true, controls: true, owns: true, active_descendant: true, label: true, form: true };
     function rewriteRef(value) {
       if (typeof value !== 'string') return rewrite(value, tab, frame);
       var parsed = parseRef(value);
@@ -91,6 +94,22 @@
       return { frame: frame, response: response(request.action, 0, null, failure('inaccessible_frame', 'frame is not accessible', { frame_id: frame.frameId })) };
     }
   }
+  async function sendMainFrameWhenReady(tab, request) {
+    var frames;
+    try { frames = await frameList(tab.id); }
+    catch (_) { frames = []; }
+    var frame = frames.find(function (candidate) { return String(candidate.frameId) === '0'; });
+    if (!frame) {
+      return { frame: { frameId: 0 }, response: response(request.action, 0, null, failure('inaccessible_frame', 'main frame is not accessible', { frame_id: 0 })) };
+    }
+    var sent;
+    for (var attempt = 0; attempt < CONTENT_READY_ATTEMPTS; attempt++) {
+      sent = await sendFrame(tab, frame, request);
+      if (sent.response.ok || !sent.response.error || sent.response.error.code !== 'inaccessible_frame') return sent;
+      if (attempt + 1 < CONTENT_READY_ATTEMPTS) await new Promise(function (resolve) { setTimeout(resolve, CONTENT_READY_DELAY); });
+    }
+    return sent;
+  }
   async function resolveTab(request) {
     if (request.tab_id != null) {
       try { return (await browserApi.tabs.get(request.tab_id)); } catch (_) { return null; }
@@ -101,6 +120,11 @@
   function budgetNumber(value, fallback) {
     value = Number(value);
     return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+  }
+  function navigationTimeout(value) {
+    value = Number(value);
+    if (!Number.isFinite(value)) value = NAVIGATION_TIMEOUT;
+    return Math.max(1000, Math.min(MAX_NAVIGATION_TIMEOUT, Math.floor(value)));
   }
   function budgetResult(action, frames, request) {
     var maxNodes = budgetNumber(request.max_nodes, DEFAULT_MAX_NODES);
@@ -113,23 +137,28 @@
     var omittedText = frames.reduce(function (total, frame) {
       return total + (Number(frame.result && frame.result.omitted_text) || 0);
     }, 0);
+    var textFields = ['direct_text', 'accessible_name', 'label'];
+    function textLength(record) {
+      return textFields.reduce(function (total, field) { return total + (typeof record[field] === 'string' ? record[field].length : 0); }, 0);
+    }
     function keepRecord(record) {
       if (usedNodes >= maxNodes) {
         omittedNodes += 1;
-        omittedText += typeof record.direct_text === 'string' ? record.direct_text.length : 0;
+        omittedText += textLength(record);
         return null;
       }
       var out = Object.assign({}, record);
       usedNodes += 1;
-      if (typeof out.direct_text === 'string') {
+      textFields.forEach(function (field) {
+        if (typeof out[field] !== 'string') return;
         var remaining = Math.max(0, maxText - usedText);
-        if (out.direct_text.length > remaining) {
-          omittedText += out.direct_text.length - remaining;
-          out.direct_text = out.direct_text.slice(0, remaining);
+        if (out[field].length > remaining) {
+          omittedText += out[field].length - remaining;
+          out[field] = out[field].slice(0, remaining);
           out.truncated = true;
         }
-        usedText += out.direct_text.length;
-      }
+        usedText += out[field].length;
+      });
       return out;
     }
     function trimResult(result) {
@@ -185,24 +214,48 @@
     if (!tab) return response(action, 0, null, failure('invalid_request', 'tab does not exist'));
     if (action === 'navigate') {
       if (typeof request.url !== 'string' || !request.url) return response(action, 0, null, failure('invalid_request', 'url is required'));
+      var timeoutMs = navigationTimeout(request.timeout_ms);
+      var finishNavigation = null;
+      var finalUrl = request.url;
       var completed = new Promise(function (resolve) {
-        var settled = false;
+        var settled = false, timer = null;
         var finish = function (value) {
           if (settled) return;
           settled = true;
           if (browserApi.tabs.onUpdated && browserApi.tabs.onUpdated.removeListener) browserApi.tabs.onUpdated.removeListener(listener);
+          if (timer !== null) clearTimeout(timer);
           resolve(value);
         };
-        var listener = function (details) {
-          if (details.tabId === tab.id && details.frameId === 0 && (!details.status || details.status === 'complete')) finish(true);
+        finishNavigation = finish;
+        /* tabs.onUpdated supplies (tabId, changeInfo, tab), not a webNavigation
+           details object. It only reports top-level tab navigation here. */
+        var listener = function (tabId, changeInfo, updatedTab) {
+          if (tabId !== tab.id) return;
+          finalUrl = changeInfo && changeInfo.url || updatedTab && updatedTab.url || finalUrl;
+          if (changeInfo && changeInfo.status === 'complete') finish(true);
         };
         if (browserApi.tabs.onUpdated && browserApi.tabs.onUpdated.addListener) browserApi.tabs.onUpdated.addListener(listener);
-        setTimeout(function () { finish(false); }, NAVIGATION_TIMEOUT);
+        timer = setTimeout(function () { finish(false); }, timeoutMs);
       });
       try { await browserApi.tabs.update(tab.id, { url: request.url }); }
-      catch (_) { return response(action, 0, null, failure('invalid_request', 'navigation failed')); }
-      if (!(await completed)) return response(action, 0, null, failure('navigation_timeout', 'navigation did not complete', { timeout_ms: NAVIGATION_TIMEOUT }));
-      return response(action, 0, { tab_id: tab.id, url: request.url });
+      catch (_) {
+        finishNavigation(false);
+        return response(action, 0, null, failure('invalid_request', 'navigation failed'));
+      }
+      if (!(await completed)) return response(action, 0, null, failure('navigation_timeout', 'navigation did not complete', { timeout_ms: timeoutMs }));
+      var followup = request.outline
+        ? { action: 'outline', scope: 'viewport', max_nodes: DEFAULT_MAX_NODES, max_text: 10000, depth: 12 }
+        : { action: '_identity' };
+      var observed = await sendMainFrameWhenReady(tab, followup);
+      var result = { tab_id: tab.id, url: finalUrl, frame_id: 0 };
+      if (observed.response.ok) {
+        result.document_id = observed.response.document_id || observed.frame.document_id || null;
+        if (request.outline) result.outline = observed.response.result;
+      } else {
+        result.document_id = null;
+        result[request.outline ? 'outline_error' : 'document_error'] = observed.response.error;
+      }
+      return bounded(response(action, observed.response.revision || 0, result), action);
     }
     function parseInbound(name) {
       if (request[name] == null) return null;
@@ -282,7 +335,7 @@
       port.onMessage.addListener(function (request) { dispatchSerialized(request).then(function (result) { port.postMessage(bounded(result, request && request.action)); }); });
     });
   }
-  var api = { dispatch: dispatchSerialized, parseRef: parseRef, makeRef: makeRef, install: install, constants: { HOST: HOST, MAX_MESSAGE_BYTES: MAX_MESSAGE_BYTES, NAVIGATION_TIMEOUT: NAVIGATION_TIMEOUT } };
+  var api = { dispatch: dispatchSerialized, parseRef: parseRef, makeRef: makeRef, install: install, constants: { HOST: HOST, MAX_MESSAGE_BYTES: MAX_MESSAGE_BYTES, NAVIGATION_TIMEOUT: NAVIGATION_TIMEOUT, MAX_NAVIGATION_TIMEOUT: MAX_NAVIGATION_TIMEOUT } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.FirefoxDOMBackground = api;
   install();

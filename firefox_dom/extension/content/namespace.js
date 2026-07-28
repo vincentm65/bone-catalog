@@ -36,7 +36,7 @@
   /* Requests are JSON objects with one action discriminator; unknown fields are rejected.
      Responses always have {ok, action, revision}; ok adds result, false adds error. */
   var PROTOCOL = freeze({
-    request: freeze(['action', 'tab_id', 'frame_id', 'document_id', 'scope', 'ref', 'within', 'css', 'predicates', 'visible', 'depth', 'include', 'max_nodes', 'max_text', 'limit', 'operation', 'value', 'label', 'index', 'key', 'code', 'x', 'y', 'width', 'height', 'block', 'inline', 'observe_changes', 'settle_ms', 'since_revision', 'url']),
+    request: freeze(['action', 'tab_id', 'frame_id', 'document_id', 'scope', 'ref', 'within', 'css', 'predicates', 'visible', 'depth', 'include', 'max_nodes', 'max_text', 'limit', 'operation', 'value', 'text', 'label', 'index', 'key', 'code', 'x', 'y', 'width', 'height', 'block', 'inline', 'observe_changes', 'settle_ms', 'since_revision', 'url']),
     response: freeze(['ok', 'action', 'revision', 'result', 'error']),
     error: freeze(['code', 'message', 'details']),
     ref: '<tab>:<document>:<frame>:<local-node>; components are non-empty and contain no colons'

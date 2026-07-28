@@ -152,3 +152,43 @@ test('content coordinator rejects stale document requests at its boundary', asyn
   assert.equal(stale.error.code, 'stale_document');
   assert.equal(stale.action, 'outline');
 });
+
+test('content coordinator normalizes Error instances before extension messaging', async () => {
+  const { ns, handle } = install();
+  const missing = `0:${ns.modules.core.documentId}:0:missing`;
+  const result = await handle({ action: 'find', within: missing, document_id: ns.modules.core.documentId });
+  assert.equal(result.error.constructor.name, 'Object');
+  assert.equal(result.error.code, 'invalid_ref');
+  assert.equal(typeof result.error.message, 'string');
+});
+
+test('content coordinator exposes only its document identity to the internal probe', async () => {
+  const { ns, handle } = install();
+  const identity = await handle({ action: '_identity' });
+  assert.equal(identity.ok, true);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(identity.result)),
+    { document_id: ns.modules.core.documentId, frame_id: 0 }
+  );
+  assert.equal((await handle({ action: '_identity', max_nodes: 1 })).error.code, 'invalid_request');
+});
+
+test('live compact records expose safe control identity while redacting URL credentials', async () => {
+  const { document, element, ns, handle } = install();
+  const label = element('label', { textContent: 'Billing email' });
+  const input = element('input', { name: 'email', type: 'email', placeholder: 'name@example.test' });
+  input.setAttribute('id', 'billing-email');
+  input.labels = [label];
+  const link = element('a', { href: 'https://user:pass@example.test/path?token=secret&ok=1', textContent: 'Account' });
+  document.body.append(label, input, link);
+  const outline = await handle({ action: 'outline', scope: 'document', max_nodes: 30 });
+  const inputRecord = outline.result.nodes.find((node) => node.ref === ns.modules.core.refFor(input));
+  const linkRecord = outline.result.nodes.find((node) => node.ref === ns.modules.core.refFor(link));
+  assert.equal(inputRecord.id, 'billing-email');
+  assert.equal(inputRecord.accessible_name, 'Billing email');
+  assert.match(linkRecord.href, /^https:\/\/\[REDACTED\]@example\.test/);
+  assert.match(linkRecord.href, /token=\[REDACTED\]/);
+  assert.match(linkRecord.href, /ok=1/);
+  const found = await handle({ action: 'find', predicates: { tag: 'input', accessible_name: { value: 'Billing email', exact: true } } });
+  assert.equal(found.result.matches[0].ref, inputRecord.ref);
+});

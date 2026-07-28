@@ -63,11 +63,29 @@ test('type and set_value use property mutation and input/change ordering', async
   const { ns, node } = setup('input', { type: 'text' });
   const events = [];
   for (const type of ['input', 'change']) node.addEventListener(type, () => events.push(type));
-  const typed = await ns.modules.actions.act({ operation: 'type', ref: '7:d3:0:n1', value: 'ab' });
+  const typed = await ns.modules.actions.act({ operation: 'type', ref: '7:d3:0:n1', text: 'ab' });
   assert.equal(node.value, 'ab');
   assert.equal(typed.result.typed, 2);
   await ns.modules.actions.act({ operation: 'set_value', ref: '7:d3:0:n1', value: 'done' });
   assert.deepEqual(events, ['input', 'input', 'input', 'change']);
+});
+
+test('type handles contenteditable text and Unicode characters', async () => {
+  const { ns, node } = setup('div', { contenteditable: 'true' });
+  const result = await ns.modules.actions.act({ operation: 'type', ref: '7:d3:0:n1', text: 'A😀' });
+  assert.equal(node.textContent, 'A😀');
+  assert.equal(result.result.typed, 2);
+});
+
+test('typing rejects readonly, disabled, and non-text form controls', async () => {
+  const readonly = setup('input', { type: 'text' }); readonly.node.readOnly = true;
+  assert.equal(await errorCode(readonly.ns.modules.actions.act({ operation: 'type', ref: '7:d3:0:n1', text: 'x' })), 'unsupported_operation');
+  const disabled = setup('textarea'); disabled.node.disabled = true;
+  assert.equal(await errorCode(disabled.ns.modules.actions.act({ operation: 'set_value', ref: '7:d3:0:n1', value: 'x' })), 'unsupported_operation');
+  const checkbox = setup('input'); checkbox.node.type = 'checkbox';
+  assert.equal(await errorCode(checkbox.ns.modules.actions.act({ operation: 'type', ref: '7:d3:0:n1', text: 'x' })), 'unsupported_operation');
+  const select = setup('select');
+  assert.equal(await errorCode(select.ns.modules.actions.act({ operation: 'type', ref: '7:d3:0:n1', text: 'x' })), 'unsupported_operation');
 });
 
 test('native select requires exactly one criterion and rejects ambiguous labels', async () => {
@@ -77,6 +95,11 @@ test('native select requires exactly one criterion and rejects ambiguous labels'
   const c = new FakeElement('option', node.ownerDocument); c.textContent = 'Other'; c.value = 'c';
   node.append(a, b, c); node.options = [a, b, c];
   const events = []; node.addEventListener('input', () => events.push('input')); node.addEventListener('change', () => events.push('change'));
+  node.disabled = true;
+  assert.equal(await errorCode(ns.modules.actions.act({ operation: 'select', ref: '7:d3:0:n1', value: 'c' })), 'unsupported_operation');
+  node.disabled = false; c.disabled = true;
+  assert.equal(await errorCode(ns.modules.actions.act({ operation: 'select', ref: '7:d3:0:n1', value: 'c' })), 'unsupported_operation');
+  c.disabled = false;
   assert.equal(await errorCode(ns.modules.actions.act({ operation: 'select', ref: '7:d3:0:n1', label: 'Same', value: 'a' })), 'invalid_request');
   assert.equal(await errorCode(ns.modules.actions.act({ operation: 'select', ref: '7:d3:0:n1', label: 'Same' })), 'ambiguous_match');
   const result = await ns.modules.actions.act({ operation: 'select', ref: '7:d3:0:n1', value: 'c' });
