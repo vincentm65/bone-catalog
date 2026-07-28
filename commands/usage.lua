@@ -15,9 +15,7 @@ local function comma(n)
   return sign .. out
 end
 
-local function tokens(n)
-  return comma(n)
-end
+local tokens = comma
 
 local function money(n)
   n = tonumber(n) or 0
@@ -30,11 +28,7 @@ local CYAN  = "\x1b[36m"
 local WHITE = "\x1b[37m"
 local RESET = "\x1b[0m"
 
-local function header(title)
-  return string.format("%s%s%s", CYAN, title, RESET)
-end
-
-local function section(title)
+local function heading(title)
   return string.format("%s%s%s", CYAN, title, RESET)
 end
 
@@ -99,7 +93,13 @@ local function memory_overhead(ctx)
   local function read(path)
     if not ctx.fs.is_file(path) then return nil end
     local ok, content = pcall(ctx.read_file, path)
-    content = ok and trim(content) or ""
+    if not ok then
+      if ctx.log and ctx.log.warn then
+        ctx.log.warn("usage: could not read " .. path .. ": " .. tostring(content))
+      end
+      return nil
+    end
+    content = trim(content)
     return content ~= "" and truncate_utf8(content, MEMORY_MAX_CHARS) or nil
   end
 
@@ -135,7 +135,7 @@ bone.command.register("usage", {
 
     local total = (usage.sent or 0) + (usage.received or 0)
     local lines = {
-      header("Conversation usage"),
+      heading("Conversation usage"),
       sep(),
       klabel("Requests") .. kvalue(comma(usage.request_count)),
       klabel("Tokens")   .. kvalue(tokens(total) .. " total"),
@@ -156,7 +156,7 @@ bone.command.register("usage", {
     end
 
     table.insert(lines, "")
-    table.insert(lines, section("Prompt overhead"))
+    table.insert(lines, heading("Known prompt overhead"))
     table.insert(lines, sep())
     table.insert(lines, klabel("Tools")
       .. kvalue(comma(usage.tool_count) .. " tools · ~" .. tokens(usage.tool_schema_tokens) .. " tokens"))
@@ -181,11 +181,11 @@ bone.command.register("usage", {
     local overhead_tokens = (usage.tool_schema_tokens or 0)
       + (usage.system_prompt_tokens or 0)
       + (memory and memory.tokens or 0)
-    table.insert(lines, klabel("Prompt total") .. kvalue("~" .. tokens(overhead_tokens) .. " tokens"))
+    table.insert(lines, klabel("Known total") .. kvalue("~" .. tokens(overhead_tokens) .. " tokens"))
 
     if usage.by_provider and #usage.by_provider > 1 then
       table.insert(lines, "")
-      table.insert(lines, section("By provider/model"))
+      table.insert(lines, heading("By provider/model"))
       table.insert(lines, sep())
       for _, p in ipairs(usage.by_provider) do
         local row = string.format(

@@ -28,6 +28,7 @@ bone.settings.register({
 local CONFIG = {
   timeout_ms = 300000,
   max_result_chars = 50000,
+  max_synthesis_chars = 100000,
   reviewer_guide = table.concat({
     "Answer the prompt below directly and on its merits.",
     "Show your reasoning, not just a verdict: state the key assumptions, the evidence or",
@@ -54,7 +55,15 @@ end
 local function truncate(s, max)
   s = tostring(s or "")
   if #s <= max then return s end
-  return s:sub(1, max) .. "\n... (truncated)"
+  local suffix = "\n... (truncated)"
+  if max <= #suffix then return suffix:sub(1, max) end
+  local limit = max - #suffix
+  for cut = limit, math.max(0, limit - 4), -1 do
+    local prefix = s:sub(1, cut)
+    local ok, length = pcall(utf8.len, prefix)
+    if ok and length then return prefix .. suffix end
+  end
+  return suffix
 end
 
 local function shotgun_targets(ctx)
@@ -108,22 +117,33 @@ end
 
 local function synthesis_prompt(task, analyses, errors)
   local parts = { CONFIG.synthesis_guide, "", "## My prompt", task }
-  -- Label reviewers A/B/C... rather than by model id, so the synthesizer weighs
-  -- arguments on their merits instead of deferring to a "trusted" brand. The job
-  -- pane still shows the real provider/model labels for traceability.
-  for i, item in ipairs(analyses) do
-    parts[#parts + 1] = ""
-    parts[#parts + 1] = "## Reviewer " .. string.char(64 + i)
-    parts[#parts + 1] = item.text
-  end
+  local error_parts = {}
   if #errors > 0 then
-    parts[#parts + 1] = ""
-    parts[#parts + 1] = "## Reviewers that did not respond"
+    error_parts = { "", "## Reviewers that did not respond" }
     for _, err in ipairs(errors) do
-      parts[#parts + 1] = "- " .. err
+      error_parts[#error_parts + 1] = "- " .. err
     end
   end
-  return table.concat(parts, "\n")
+
+  -- Label reviewers numerically rather than by model id, so the synthesizer weighs
+  -- arguments on their merits instead of deferring to a "trusted" brand. The job
+  -- pane still shows the real provider/model labels for traceability.
+  local fixed = #table.concat(parts, "\n") + #table.concat(error_parts, "\n")
+  local headers = {}
+  for i = 1, #analyses do
+    headers[i] = "\n## Reviewer " .. i
+    fixed = fixed + #headers[i] + 1
+  end
+  local per_reviewer = math.max(0,
+    math.floor((CONFIG.max_synthesis_chars - fixed) / math.max(1, #analyses)))
+
+  for i, text in ipairs(analyses) do
+    parts[#parts + 1] = ""
+    parts[#parts + 1] = "## Reviewer " .. i
+    parts[#parts + 1] = truncate(text, math.min(CONFIG.max_result_chars, per_reviewer))
+  end
+  for _, part in ipairs(error_parts) do parts[#parts + 1] = part end
+  return truncate(table.concat(parts, "\n"), CONFIG.max_synthesis_chars)
 end
 
 -- After cancellation/timeout, drain the still-pending jobs so their late
@@ -183,6 +203,7 @@ bone.command.register("shotgun", {
 
     local waited = ctx.agent.wait(ids, { timeout_ms = CONFIG.timeout_ms })
     if waited and waited.cancelled then
+      drain_pending(ctx, waited.pending or ids)
       return { display = "shotgun: cancelled", submit = false }
     end
 
@@ -191,7 +212,7 @@ bone.command.register("shotgun", {
       for _, job in ipairs(waited.jobs) do
         local label = labels[job.id] or job.agent or job.id
         if job.status == "done" then
-          analyses[#analyses + 1] = { label = label, text = truncate(job.result or "", CONFIG.max_result_chars) }
+          analyses[#analyses + 1] = job.result or ""
         else
           errors[#errors + 1] = label .. ": " .. tostring(job.result or "error")
         end

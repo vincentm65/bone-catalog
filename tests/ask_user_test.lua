@@ -96,6 +96,7 @@ assert(result:find('"question":"Pick one"', 1, true))
 assert(result:find('"value":"B"', 1, true))
 assert(calls[1].kind == "select" and calls[1].spec.default == 2)
 assert(calls[1].spec.visible_rows == 18)
+assert(calls[1].spec.options[1] == "A", "string options should pass through to ui.menu")
 assert(calls[1].spec.options[2].value == "B")
 assert(calls[1].spec.options[2].description == "second")
 assert(calls[1].spec.options[2].preview.title == "Bee diagram")
@@ -158,6 +159,20 @@ assert(result:find('"value":"C"', 1, true), result)
 assert(result:find('"values":["D","new custom"]', 1, true), result)
 assert(result:find('"value":"new\\ntext"', 1, true), result)
 assert(not result:find('"value":"A"', 1, true), "revised answer was not replaced")
+
+local long_question = string.rep("é", 30)
+local long_answer = string.rep("界", 20)
+result = run({ questions = {
+    { question = long_question, options = { { label = "Long", value = long_answer } } },
+    { question = "Second?", options = { "ok" } },
+} }, {
+    { value = long_answer, selected = 1 },
+    { value = "ok", selected = 1 },
+    { value = "submit" },
+})
+local review_label = calls[3].spec.options[2].label
+assert(utf8.len(review_label), "review truncation produced invalid UTF-8")
+assert(review_label:find("...", 1, true), "long review labels should be truncated")
 
 expect_error({ question = "Bad", type = "single", options = { "A" } },
     "question 1 field 'type'")

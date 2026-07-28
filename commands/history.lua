@@ -142,7 +142,8 @@ bone.command.register("history", {
       -- from the command action. New clients ignore it and load by id from the daemon.
       local messages_ok, stored = pcall(history.messages, ctx, id, 1000)
       if not messages_ok then
-         ctx.ui.notify("Failed to load conversation: " .. tostring(stored), "error")
+         ctx.ui.notify("Failed to load conversation #" .. tostring(id) .. ": "
+            .. tostring(stored), "error")
          return nil
       end
       local messages = {}

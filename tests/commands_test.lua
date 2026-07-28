@@ -213,6 +213,41 @@ assert(not unavailable_result)
 assert(#unavailable_notices == 0,
    "unavailable context capacity should not emit an inaccurate warning")
 
+-- Falling below the threshold clears a failed-attempt high-water mark.
+local retry_agent_ok = false
+local retry_auto_ctx = {
+   settings = settings(),
+   config = { get_table = function() return {} end },
+   usage = { snapshot = function() return { context_length = 90000 } end },
+   conversation = {
+      current = function() return { id = 45 } end,
+      history = function()
+         return {
+            { role = "user", content = large_message },
+            { role = "assistant", content = large_message },
+         }
+      end,
+      context_tokens = function(messages) return #messages * 100 end,
+   },
+   agent = {
+      run = function()
+         if retry_agent_ok then
+            return { ok = true, content = table.concat(summary, "\n\n") }
+         end
+         return { ok = false, error = "temporary failure" }
+      end,
+   },
+   ui = { notice = function() end },
+}
+assert(before_turn_handlers[1](nil, retry_auto_ctx) == nil)
+retry_auto_ctx.usage.snapshot = function() return { context_length = 10000 } end
+assert(before_turn_handlers[1](nil, retry_auto_ctx) == nil)
+retry_auto_ctx.usage.snapshot = function() return { context_length = 90000 } end
+retry_agent_ok = true
+local retry_auto_result = before_turn_handlers[1](nil, retry_auto_ctx)
+assert(retry_auto_result and retry_auto_result.action == "conversation.replace",
+   "context shrink should clear the automatic compaction retry marker")
+
 local oversized = {}
 for _, heading in ipairs(headings) do
    oversized[#oversized + 1] = heading .. ":\n- " .. string.rep("detail ", 5000)
@@ -315,7 +350,7 @@ assert(usage.display:find("125 total", 1, true))
 assert(not usage.display:find("Memory total:", 1, true))
 assert(plain(usage.display):find("Tools:        2 tools · ~10 tokens", 1, true))
 assert(plain(usage.display):find("System:       ~20 tokens", 1, true))
-assert(plain(usage.display):find("Prompt total: ~30 tokens", 1, true),
+assert(plain(usage.display):find("Known total:  ~30 tokens", 1, true),
    "prompt total should include tool and system overhead")
 assert(not plain(usage.display):find("Global:", 1, true))
 assert(not plain(usage.display):find("Project:", 1, true))
@@ -336,7 +371,7 @@ assert(usage_text:find("  Project:    ~5 tokens · memory/projects/_work_project
    "usage should show indented current-project memory tokens and path")
 assert(usage_text:find("  Framing:    ~31 tokens", 1, true),
    "usage should explain memory wrapper and heading overhead")
-assert(usage_text:find("Prompt total: ~71 tokens", 1, true),
+assert(usage_text:find("Known total:  ~71 tokens", 1, true),
    "prompt total should include reconstructed memory overhead")
 assert(not usage_text:find("chars", 1, true))
 
@@ -368,6 +403,7 @@ assert(plain(usage.display):find("  Global:     ~527 tokens · memory/global.md"
 
 local loaded_themes = {}
 local previewed_themes = {}
+local theme_notices = {}
 local current_theme = "nord"
 bone.theme = {
    list = function() return { "catppuccin", "nord" } end,
@@ -385,8 +421,9 @@ bone.settings.get = function(path)
 end
 bone.settings.reset = function() error("themes should not reset settings directly") end
 local selection = 0
+local menu_stub
 package.preload["ui.menu"] = function()
-   return {
+   menu_stub = {
       select = function(_, spec)
          selection = selection + 1
          assert(spec.default == 2, "selector should start on the active theme")
@@ -396,16 +433,52 @@ package.preload["ui.menu"] = function()
       end,
       clear = function() end,
    }
+   return menu_stub
 end
 assert(loadfile("commands/themes.lua"))()
-commands.themes.handler("", { ui = { notify = function() end } })
+local theme_ctx = {
+   ui = {
+      notify = function(message, level)
+         theme_notices[#theme_notices + 1] = { message = message, level = level }
+      end,
+   },
+}
+commands.themes.handler("", theme_ctx)
 assert(#loaded_themes == 0, "navigation and cancellation must not persist a theme")
 assert(table.concat(previewed_themes, ",") == "catppuccin,<configured>",
    "cancellation should restore the configured theme through preview(nil)")
-commands.themes.handler("", { ui = { notify = function() end } })
+commands.themes.handler("", theme_ctx)
 assert(table.concat(loaded_themes, ",") == "catppuccin",
    "confirmation should persist only the final selection once")
 assert(table.concat(previewed_themes, ",") == "catppuccin,<configured>,catppuccin",
    "confirmed navigation should still preview before the one persistent load")
+
+local loaded_before_bad_args = #loaded_themes
+commands.themes.handler("apply", theme_ctx)
+assert(theme_notices[#theme_notices].level == "error")
+assert(theme_notices[#theme_notices].message == "Usage: /themes [apply <name>|<name>]")
+commands.themes.handler("apply catppuccin extra", theme_ctx)
+assert(theme_notices[#theme_notices].level == "error")
+assert(theme_notices[#theme_notices].message == "Usage: /themes [apply <name>|<name>]")
+assert(#loaded_themes == loaded_before_bad_args,
+   "malformed theme arguments must not be interpreted as theme names")
+
+menu_stub.select = function() error("picker transport failed") end
+commands.themes.handler("", theme_ctx)
+assert(theme_notices[#theme_notices].level == "error")
+assert(theme_notices[#theme_notices].message:find("picker transport failed", 1, true))
+assert(previewed_themes[#previewed_themes] == "<configured>",
+   "picker failures must restore the configured theme")
+
+menu_stub.select = function(_, spec)
+   spec.on_change("catppuccin")
+   return { value = "catppuccin" }
+end
+bone.theme.load = function() error("settings write failed") end
+commands.themes.handler("", theme_ctx)
+assert(theme_notices[#theme_notices].level == "error")
+assert(theme_notices[#theme_notices].message:find("settings write failed", 1, true))
+assert(previewed_themes[#previewed_themes] == "<configured>",
+   "apply failures must restore the configured theme")
 
 print("catalog command tests passed")

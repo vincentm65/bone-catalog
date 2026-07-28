@@ -34,6 +34,50 @@ commands, tools = load_case(0, {
 assert(commands.agents, "enabled agents: /agents should be registered")
 assert(tools.subagent, "enabled agents: subagent tool should be registered")
 
+local subagent_tool = tools.subagent
+local spawned = 0
+local jobs = {}
+local ctx = {
+    agent = {
+        spawn = function()
+            spawned = spawned + 1
+            return { ok = true, id = "job-" .. spawned }
+        end,
+        jobs = function() return jobs end,
+        cancel = function(id) return { ok = id == "job-1" } end,
+    },
+}
+
+local result = subagent_tool.execute({
+    action = "dispatch",
+    tasks = {
+        { agent = "reviewer", title = "First", task = "first task" },
+        { agent = "reviewer", title = "Second", task = "second task" },
+    },
+}, ctx)
+assert(result:find("job-1", 1, true) and result:find("job-2", 1, true),
+    "successful dispatches must return job ids")
+
+result = subagent_tool.execute({ action = "cancel" }, ctx)
+assert(type(result) == "string" and result:find("Provide ids", 1, true),
+    "empty cancel must return a readable string error")
+
+result = subagent_tool.execute({ action = "cancel", ids = { "job-1", "job-404" } }, ctx)
+assert(result:find("job-1: cancelled", 1, true))
+assert(result:find("job-404: not running or not found", 1, true))
+
+jobs = {
+    {
+        id = "job-2",
+        agent = "reviewer",
+        status = "running",
+        started_at = os.time() - 1,
+        task = "second task",
+    },
+}
+result = subagent_tool.execute({ action = "status" }, ctx)
+assert(result:find("job-2", 1, true), "status must expose the controllable job id")
+
 commands, tools = load_case(1, {
     { name = "reviewer", description = "Review changes" },
 })

@@ -376,7 +376,8 @@ local function agent_status(agent, jobs)
             end
         end
     end
-    return job_status(latest)
+    if not latest then return job_status(nil) end
+    return string.format("%s — %s", latest.id, job_status(latest))
 end
 
 -- ---------------------------------------------------------------------------
@@ -543,7 +544,9 @@ local function execute(params, ctx)
         local summary = string.format(
             "Dispatched %d, rejected %d", ok_count, err_count
         )
-        if err_count > 0 then
+        -- Always return job ids. Follow-up wait/cancel calls need them, and
+        -- hiding them on the all-success path made targeted control impossible.
+        if #results > 0 then
             summary = summary .. "\n" .. table.concat(results, "\n")
         end
 
@@ -594,13 +597,13 @@ local function execute(params, ctx)
     if action == "cancel" then
         local ids = params.ids or {}
         if #ids == 0 then
-            return { ok = false, error = "Provide ids for 'cancel'." }
+            return "ERROR: Provide ids for 'cancel'."
         end
         local parts = {}
         for _, id in ipairs(ids) do
             local result = ctx.agent.cancel(id)
             parts[#parts + 1] = string.format(
-                "%s: %s", id, result.ok and "cancelled" or "not found"
+                "%s: %s", id, result.ok and "cancelled" or "not running or not found"
             )
         end
         return table.concat(parts, "\n")

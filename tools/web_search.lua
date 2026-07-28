@@ -1,21 +1,41 @@
+local function hex_encode(value)
+    local bytes = {}
+    for i = 1, #value do
+        bytes[i] = string.format("%02x", value:byte(i))
+    end
+    return table.concat(bytes)
+end
+
 local function execute(params, ctx)
     local query = params.query
-    local num_results = params.num_results or 5
+    if type(query) ~= "string" or query:match("^%s*$") then
+        error("query must be a non-empty string", 0)
+    end
+
+    local num_results = params.num_results
+    if num_results == nil then num_results = 5 end
+    if type(num_results) ~= "number" or num_results % 1 ~= 0 then
+        error("num_results must be an integer", 0)
+    end
     num_results = math.max(1, math.min(10, num_results))
 
-    -- Escape for safe embedding in double-quoted shell env var
-    local safe_query = query:gsub('\\', '\\\\'):gsub('"', '\\"')
-
+    -- Only hexadecimal query bytes enter the shell command. Decode them in
+    -- Python so shell metacharacters remain literal search text.
     local cmd = string.format(
-        "export TOOL_QUERY=\"%s\"; export TOOL_NUM_RESULTS=%d; uv run --with ddgs -- python3 -c 'import json, os, sys; from ddgs import DDGS; query = os.environ[\"TOOL_QUERY\"]; num = max(1, min(10, int(os.environ.get(\"TOOL_NUM_RESULTS\", \"5\")))); [print(json.dumps(r)) for r in DDGS().text(query, max_results=num)]'",
-        safe_query, num_results
+        "uv run --with ddgs -- python3 -c 'import json, sys; from ddgs import DDGS; query = bytes.fromhex(sys.argv[1]).decode(\"utf-8\"); num = int(sys.argv[2]); [print(json.dumps(r)) for r in DDGS().text(query, max_results=num)]' %s %d",
+        hex_encode(query), num_results
     )
 
     local result = ctx.shell(cmd, { timeout_ms = 300000 })
-    if result.stderr and #result.stderr > 0 then
-        return "ERROR: " .. result.stderr
+    local exit_code = result.exit_code or -1
+    if exit_code ~= 0 then
+        local detail = result.stderr
+        if not detail or detail == "" then detail = result.stdout end
+        if not detail or detail == "" then detail = "no error output" end
+        return string.format("ERROR: web search failed (exit %s): %s", tostring(exit_code), detail)
     end
-    return result.stdout or ""
+    if not result.stdout or result.stdout == "" then return "No results." end
+    return result.stdout
 end
 
 bone.tool.register({
@@ -26,6 +46,7 @@ bone.tool.register({
         properties = {
             query = {
                 type = "string",
+                minLength = 1,
                 description = "The search query",
             },
             num_results = {

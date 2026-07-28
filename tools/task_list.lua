@@ -32,20 +32,24 @@ end
 -- Accepts a bare string (→ pending) or a table { text=, status= }.
 local function normalize_task(entry)
     if type(entry) == "string" then
+        if entry:match("^%s*$") then
+            return nil, "text must be a non-empty string"
+        end
         return { text = entry, status = "pending" }
     end
     if type(entry) == "table" then
         local text = entry.text or entry[1]
-        if type(text) ~= "string" or text == "" then
-            return nil
+        if type(text) ~= "string" or text:match("^%s*$") then
+            return nil, "text must be a non-empty string"
         end
         local status = entry.status
+        if status == nil then status = "pending" end
         if not VALID_STATUS[status] then
-            status = "pending"
+            return nil, "status must be pending, in_progress, or done"
         end
         return { text = text, status = status }
     end
-    return nil
+    return nil, "need a non-empty string or {text, status}"
 end
 
 local function empty_pane(name)
@@ -134,9 +138,9 @@ local function execute(params, ctx)
         local tasks = {}
         local in_progress = 0
         for i, entry in ipairs(raw_tasks) do
-            local t = normalize_task(entry)
+            local t, problem = normalize_task(entry)
             if not t then
-                return string.format("ERROR: Task %d is invalid (need a non-empty string or {text, status}).", i)
+                return string.format("ERROR: Task %d is invalid (%s).", i, problem)
             end
             if t.status == "in_progress" then in_progress = in_progress + 1 end
             table.insert(tasks, t)
@@ -158,7 +162,7 @@ local function execute(params, ctx)
         return emit(state)
     end
 
-    return "ERROR: Action must be 'write' or 'clear'."
+    return "ERROR: Action must be 'write', 'complete', or 'clear'."
 end
 
 bone.tool.register({
@@ -185,11 +189,11 @@ bone.tool.register({
                 description = "Full ordered task list for 'write'. Each item is either a string (defaults to pending) or { text, status } where status is pending | in_progress | done.",
                 items = {
                     oneOf = {
-                        { type = "string" },
+                        { type = "string", minLength = 1 },
                         {
                             type = "object",
                             properties = {
-                                text = { type = "string" },
+                                text = { type = "string", minLength = 1 },
                                 status = {
                                     type = "string",
                                     enum = { "pending", "in_progress", "done" },

@@ -296,7 +296,10 @@ bone.on("before_turn", function(_, ctx)
     local threshold = effective_threshold(ctx, config)
     if not threshold then return nil end
     local context_length = snapshot.context_length or 0
-    if context_length < threshold then return nil end
+    if context_length < threshold then
+        last_auto_context[key] = nil
+        return nil
+    end
 
     local previous = last_auto_context[key]
     local retry_growth = math.max(2000, math.floor(threshold / 20))

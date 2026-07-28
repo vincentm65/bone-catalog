@@ -20,8 +20,13 @@ out="catalog.json.tmp"
 # Extract a one-line description from a Lua file.
 extract_desc() {
   local file="$1"
-  # Prefer `description = "..."`.
+  # Prefer an explicit catalog description when a file contains nested schema
+  # descriptions before its registered tool/command description.
   local d
+  d=$(grep -oE 'catalog_description[[:space:]]*=[[:space:]]*"[^"]*"' "$file" | head -1 \
+        | sed -E 's/.*catalog_description[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
+  if [[ -n "$d" ]]; then printf '%s' "$d"; return; fi
+  # Prefer `description = "..."`.
   d=$(grep -oE 'description[[:space:]]*=[[:space:]]*"[^"]*"' "$file" | head -1 \
         | sed -E 's/.*description[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
   if [[ -n "$d" ]]; then printf '%s' "$d"; return; fi

@@ -9,14 +9,13 @@
 --   2. Multi-question:  { questions = { {question, options, allow_custom, type, default}, ... } }
 --      Asks each question sequentially with backtracking navigation.
 --      After answering, user can go back to previous questions or proceed.
+-- catalog_description = "Ask the user one or more questions with selectable options or custom answers. Use the 'questions' array to ask several questions back-to-back in a single call, or use top-level 'question' + 'options' for a single question."
 
 local menu = require("ui.menu")
 
-local VALID_TYPES = {
-    single_select = true,
-    multi_select = true,
-    text_input = true,
-}
+local QUESTION_TYPES = { "single_select", "multi_select", "text_input" }
+local VALID_TYPES = {}
+for _, qtype in ipairs(QUESTION_TYPES) do VALID_TYPES[qtype] = true end
 
 local function fail(index, field, message)
     error(string.format("question %d field '%s': %s", index, field, message), 0)
@@ -38,44 +37,6 @@ end
 local function get_qtype(q)
     if q.type then return q.type end
     return q.options and #q.options > 0 and "single_select" or "text_input"
-end
-
-local function normalize_preview(preview)
-    if not preview then return nil end
-    local out = { title = preview.title, lines = {} }
-    for i, raw in ipairs(preview.lines) do
-        if type(raw) == "string" then
-            out.lines[i] = raw
-        else
-            local spans = {}
-            for j, value_span in ipairs(raw.spans) do
-                spans[j] = {
-                    text = value_span.text,
-                    fg = value_span.fg,
-                    modifiers = value_span.modifiers,
-                }
-            end
-            out.lines[i] = { spans = spans, bg = raw.bg }
-        end
-    end
-    return out
-end
-
-local function normalize_options(options)
-    local out = {}
-    for i, opt in ipairs(options or {}) do
-        if type(opt) == "table" then
-            out[i] = {
-                label = opt.label,
-                value = opt.value,
-                description = opt.description,
-                preview = normalize_preview(opt.preview),
-            }
-        else
-            out[i] = { label = opt, value = opt }
-        end
-    end
-    return out
 end
 
 local function validate_preview(preview, index, field)
@@ -168,7 +129,6 @@ local function validate_question(q, index)
     end
 
     q._type = qtype
-    q._options = normalize_options(q.options)
     return q
 end
 
@@ -211,7 +171,9 @@ local function ask_one(q, ctx, index, total, previous, allow_back, allow_forward
         allow_back = allow_back == true and index > 1,
         allow_forward = allow_forward == true and total ~= nil and index < total,
         question = q.question,
-        options = q._options,
+        -- ui.menu owns option normalization, including string shorthand and
+        -- rich previews. Validation above keeps malformed tool input out.
+        options = q.options or {},
         default = q.default,
         visible_rows = q.visible_rows,
         allow_custom = q.allow_custom == true,
@@ -255,12 +217,22 @@ local function answer_summary(result)
     return result.value
 end
 
+local function truncate_utf8(value, max_bytes)
+    if #value <= max_bytes then return value end
+    local cut = math.max(0, max_bytes - 3)
+    while cut > 0 do
+        local byte = value:byte(cut + 1)
+        if not byte or byte < 0x80 or byte >= 0xC0 then break end
+        cut = cut - 1
+    end
+    return value:sub(1, cut) .. "..."
+end
+
 local function build_review_options(questions, answers)
     local options = { { label = "✓ Submit all answers", value = "submit" } }
     for i, q in ipairs(questions) do
-        local short_q = #q.question > 50 and q.question:sub(1, 47) .. "..." or q.question
-        local summary = answer_summary(answers[i])
-        if #summary > 40 then summary = summary:sub(1, 37) .. "..." end
+        local short_q = truncate_utf8(q.question, 50)
+        local summary = truncate_utf8(answer_summary(answers[i]), 40)
         options[#options + 1] = {
             label = string.format("Q%d: %s → %s", i, short_q, summary),
             value = tostring(i),
@@ -414,83 +386,59 @@ local OPTION_ITEMS = {
     },
 }
 
+local QUESTION_PROPERTIES = {
+    question = {
+        type = "string",
+        description = "The question to ask.",
+    },
+    options = {
+        type = "array",
+        description = "Options to choose from. Object options may include a description and "
+            .. "a rich preview shown beside the selector. A plain string is accepted as "
+            .. "shorthand for { label = <string> }.",
+        items = OPTION_ITEMS,
+    },
+    allow_custom = {
+        type = "boolean",
+        description = "Add a 'type your own answer' row below the options.",
+    },
+    type = {
+        type = "string",
+        enum = QUESTION_TYPES,
+        description = "Question type. If omitted: 'single_select' when options are given "
+            .. "(use multi_select explicitly for checkboxes), otherwise 'text_input'.",
+    },
+    default = {
+        type = "integer",
+        description = "Default selected option index (1-based).",
+    },
+    visible_rows = {
+        type = "integer",
+        minimum = 1,
+        description = "Requested menu height in rows. Defaults to 12.",
+    },
+}
+
+local ROOT_PROPERTIES = {}
+for name, schema in pairs(QUESTION_PROPERTIES) do ROOT_PROPERTIES[name] = schema end
+ROOT_PROPERTIES.questions = {
+    type = "array",
+    description = "Multiple questions to ask sequentially with backtracking. "
+        .. "After answering all, you can revise any question.",
+    items = {
+        type = "object",
+        properties = QUESTION_PROPERTIES,
+        required = { "question" },
+        additionalProperties = false,
+    },
+}
+
 bone.tool.register({
     name = "ask_user",
     description = "Ask the user one or more questions with selectable options or custom answers. Use the 'questions' array to ask several questions back-to-back in a single call, or use top-level 'question' + 'options' for a single question.",
     parameters = {
         type = "object",
-        properties = {
-            question = {
-                type = "string",
-                description = "The question to ask (single-question mode).",
-            },
-            options = {
-                type = "array",
-                description = "Options to choose from (single-question mode). Object options may include "
-                    .. "a description and a rich preview shown beside the selector. A plain string is "
-                    .. "accepted as shorthand for { label = <string> }.",
-                items = OPTION_ITEMS,
-            },
-            allow_custom = {
-                type = "boolean",
-                description = "Add a 'type your own answer' row below the options. Works with "
-                    .. "single_select (pick one option OR type a custom answer).",
-            },
-            type = {
-                type = "string",
-                enum = { "single_select", "multi_select", "text_input" },
-                description = "Question type. If omitted: 'single_select' when options are given "
-                    .. "(use multi_select explicitly for checkboxes), otherwise 'text_input'.",
-            },
-            default = {
-                type = "integer",
-                description = "Default selected option index (1-based).",
-            },
-            visible_rows = {
-                type = "integer",
-                minimum = 1,
-                description = "Requested menu height in rows. Defaults to 12.",
-            },
-            questions = {
-                type = "array",
-                description = "Multiple questions to ask sequentially with backtracking. After answering all, you can revise any question. Each item is an object with {question, options, allow_custom, type, default}.",
-                items = {
-                    type = "object",
-                    properties = {
-                        question = { type = "string", description = "The question to ask." },
-                        options = {
-                            type = "array",
-                            description = "Options to choose from. Object options may include a description "
-                                .. "and a rich preview shown beside the selector. A plain string is accepted "
-                                .. "as shorthand for { label = <string> }.",
-                            items = OPTION_ITEMS,
-                        },
-                        allow_custom = {
-                            type = "boolean",
-                            description = "Add a 'type your own answer' row below the options.",
-                        },
-                        type = {
-                            type = "string",
-                            enum = { "single_select", "multi_select", "text_input" },
-                            description = "Question type. If omitted: 'single_select' when "
-                                .. "options are given (use multi_select explicitly for "
-                                .. "checkboxes), otherwise 'text_input'.",
-                        },
-                        default = {
-                            type = "integer",
-                            description = "Default selected option index (1-based).",
-                        },
-                        visible_rows = {
-                            type = "integer",
-                            minimum = 1,
-                            description = "Requested menu height in rows. Defaults to 12.",
-                        },
-                    },
-                    required = { "question" },
-                    additionalProperties = false,
-                },
-            },
-        },
+        properties = ROOT_PROPERTIES,
         additionalProperties = false,
     },
     safety = "read_only",
