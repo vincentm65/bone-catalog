@@ -14,7 +14,7 @@ const browser = {
       if (options.frameId === 1) throw new Error('cross origin');
       return { ok: true, action: request.action, revision: 3, document_id: 'd3', result: {
         ref: 'n1', parent: null, children: ['n2'], hit_test: { hit: 'n3', covered_by: 'n4' },
-        relations: { labelled_by: ['n5'], described_by: ['n6'], controls: ['n7'], owns: ['n8'], active_descendant: ['n9'], label: 'n10' }
+        relations: { labelled_by: ['n5'], described_by: ['n6'], controls: ['n7'], owns: ['n8'], active_descendant: ['n9'], label: 'n10', form: 'n11' }
       } };
     },
     onUpdated: { addListener: (fn) => listeners.updated.add(fn), removeListener: (fn) => listeners.updated.delete(fn) }
@@ -43,7 +43,7 @@ test('aggregate discovery preserves frame identity and reports inaccessible fram
   assert.equal(result.result.frames[0].result.hit_test.covered_by, '7:d3:0:n4');
   assert.deepEqual(result.result.frames[0].result.relations, {
     labelled_by: ['7:d3:0:n5'], described_by: ['7:d3:0:n6'], controls: ['7:d3:0:n7'],
-    owns: ['7:d3:0:n8'], active_descendant: ['7:d3:0:n9'], label: '7:d3:0:n10'
+    owns: ['7:d3:0:n8'], active_descendant: ['7:d3:0:n9'], label: '7:d3:0:n10', form: '7:d3:0:n11'
   });
   assert.deepEqual(result.result.inaccessible_frames, [{ frame_id: 1, error: { code: 'inaccessible_frame', message: 'frame is not accessible', details: { frame_id: 1 } } }]);
 });

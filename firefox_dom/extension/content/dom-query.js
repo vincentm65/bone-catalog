@@ -103,6 +103,15 @@
     if (node.tabIndex >= 0 || (node.hasAttribute && node.hasAttribute('tabindex') && Number(node.getAttribute('tabindex')) >= 0)) return true;
     return /^(a|area|button|input|select|textarea|summary|iframe)$/.test(node.localName || '') && (node.localName !== 'a' || node.hasAttribute('href'));
   }
+  function editable(node) {
+    if (node.disabled || node.readOnly || node.hasAttribute && (node.hasAttribute('disabled') || node.hasAttribute('readonly'))) return false;
+    if (node.localName === 'textarea') return true;
+    if (node.localName === 'input') {
+      var type = String(node.type || node.getAttribute && node.getAttribute('type') || 'text').toLowerCase();
+      return !/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/.test(type);
+    }
+    return node.isContentEditable === true || node.getAttribute && node.getAttribute('contenteditable') === 'true';
+  }
   function role(node) { return node.getAttribute && (node.getAttribute('role') || ({ button: 'button', a: 'link', input: 'textbox', select: 'combobox' }[node.localName] || '')); }
   function name(node) {
     var view = ns.modules && ns.modules.view;
@@ -145,7 +154,7 @@
     if (p.text !== undefined && !textPredicate(p.text, descendantText(node))) return false;
     if (p.role !== undefined && role(node) !== p.role) return false;
     if (p.accessible_name !== undefined && !textPredicate(p.accessible_name, name(node))) return false;
-    var states = { visible: visible(node), focused: !!(doc && doc.activeElement === node), focusable: focusable(node), enabled: !node.disabled, editable: node.isContentEditable === true || node.getAttribute && node.getAttribute('contenteditable') === 'true' || /^(input|textarea)$/.test(node.localName || '') && !node.readOnly, selected: !!node.selected, checked: !!node.checked };
+    var states = { visible: visible(node), focused: !!(doc && doc.activeElement === node), focusable: focusable(node), enabled: !node.disabled, editable: editable(node), selected: !!node.selected, checked: !!node.checked };
     for (var s in states) if (p[s] !== undefined && bool(p[s]) !== states[s]) return false;
     var rr = p.rect || p.rectangle; if (rr) { var r = rect(node); var box = rr.x !== undefined ? { left: rr.x, top: rr.y, right: rr.x + rr.width, bottom: rr.y + rr.height } : rr; if (!intersects(r, box)) return false; }
     if (p.ancestor && !all.some(function (x) { return x !== node && isAncestor(x, node, all) && matchesPred(x, p.ancestor, doc, all, core); })) return false;

@@ -53,6 +53,18 @@ test('supports state, accessible-name, rectangle, ancestor and descendant predic
   assert.equal(result.count, 1);
 });
 
+test('editable state excludes readonly, disabled, and non-text controls', () => {
+  const { element, document, query } = setup();
+  const text = element('input', { type: 'text' });
+  const readonly = element('input', { type: 'text' }); readonly.readOnly = true;
+  const disabled = element('textarea'); disabled.disabled = true;
+  const checkbox = element('input', { type: 'checkbox' });
+  const select = element('select');
+  document.body.append(text, readonly, disabled, checkbox, select);
+  const result = query.find({ document, predicates: { editable: true } });
+  assert.deepEqual(Array.from(result.matches, (match) => match.ref), [text._ref]);
+});
+
 test('searches native label and placeholder accessible names', () => {
   const { element, document, query } = setup();
   const label = element('label', { textContent: 'Account email' });

@@ -84,7 +84,13 @@
     if (desc && desc.set) desc.set.call(node, value); else node[prop] = value;
   }
   function editable(node) {
-    return /^(input|textarea|select)$/.test(node.localName) || node.isContentEditable || node.getAttribute && node.getAttribute('contenteditable') === 'true';
+    if (node.disabled || node.readOnly || node.getAttribute && (node.getAttribute('disabled') !== null || node.getAttribute('readonly') !== null)) return false;
+    if (node.localName === 'textarea') return true;
+    if (node.localName === 'input') {
+      var type = String(node.type || node.getAttribute && node.getAttribute('type') || 'text').toLowerCase();
+      return !/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/.test(type);
+    }
+    return node.isContentEditable || node.getAttribute && node.getAttribute('contenteditable') === 'true';
   }
   function editableValue(node) { return node.isContentEditable || node.getAttribute && node.getAttribute('contenteditable') === 'true' ? String(node.textContent || '') : String(node.value || ''); }
   function setEditableValue(node, value) {
@@ -108,6 +114,7 @@
   function options(node) { return Array.prototype.slice.call(node.options || node.children || []).filter(function (o) { return o && (o.localName === 'option' || String(o.tagName).toLowerCase() === 'option'); }); }
   function nativeSelect(node, request) {
     if (node.localName !== 'select') fail('unsupported_operation', 'select operation requires a native select');
+    if (node.disabled || node.getAttribute && node.getAttribute('disabled') !== null) fail('unsupported_operation', 'disabled select cannot be changed');
     var keys = ['label', 'value', 'index'].filter(function (k) { return request[k] !== undefined; });
     if (keys.length !== 1) fail('invalid_request', 'select requires exactly one of label, value, or index');
     var os = options(node), matches;
@@ -120,6 +127,7 @@
     if (!matches.length) fail('no_match', 'no option matches ' + keys[0]);
     if (matches.length > 1) fail('ambiguous_match', 'more than one option matches ' + keys[0], { count: matches.length });
     var chosen = matches[0];
+    if (chosen.disabled || chosen.getAttribute && chosen.getAttribute('disabled') !== null) fail('unsupported_operation', 'disabled option cannot be selected');
     setNative(node, 'value', chosen.value);
     if (node.selectedIndex !== undefined) setNative(node, 'selectedIndex', os.indexOf(chosen));
     os.forEach(function (o) { if (o !== chosen) o.selected = false; o.selected = o === chosen; });

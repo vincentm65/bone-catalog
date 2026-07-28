@@ -89,7 +89,13 @@
     if (cache) cache.visible.set(n, result);
     return result;
   }
-  function editable(n) { var t = String(n.localName || '').toLowerCase(); return !n.readOnly && (/^(input|textarea)$/.test(t) || n.isContentEditable || n.contentEditable === true || attr(n, 'contenteditable') === 'true'); }
+  function editable(n) {
+    var t = String(n.localName || '').toLowerCase();
+    if (n.disabled || has(n, 'disabled') || n.readOnly || has(n, 'readonly')) return false;
+    if (t === 'textarea') return true;
+    if (t === 'input') return !/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/.test(String(attr(n, 'type') || n.type || 'text').toLowerCase());
+    return n.isContentEditable || n.contentEditable === true || attr(n, 'contenteditable') === 'true';
+  }
   function focusable(n) {
     if (n.disabled || has(n, 'disabled')) return false;
     var t = String(n.localName || '').toLowerCase(), ti = attr(n, 'tabindex');
@@ -229,7 +235,7 @@
       collect(n, 1); appendRecords(result.descendants, descendants, 'inspect');
     }
     if (include.indexOf('options') >= 0 && String(n.localName).toLowerCase() === 'select') { result.options = children(n).slice(0, B.maxOptions).map(function (o) { return budgetText({ label: bounded(text(o), B.directText), value: redacted(o, o.value != null ? o.value : attr(o,'value'), 'option'), selected: !!o.selected, ref: ref(o) }, input); }); if (children(n).length > B.maxOptions) omitted += children(n).length - B.maxOptions; }
-    if (include.indexOf('relations') >= 0) { ['aria-labelledby','aria-describedby','aria-controls','aria-owns','aria-activedescendant'].forEach(function (a) { var v = attr(n,a); if (v) { var relationName = { 'aria-labelledby': 'labelled_by', 'aria-describedby': 'described_by', 'aria-controls': 'controls', 'aria-owns': 'owns', 'aria-activedescendant': 'active_descendant' }[a]; result.relations[relationName] = v.split(/\s+/).map(function (id) { return getNodeById(id, n, all); }).filter(Boolean).map(ref); } }); var nativeLabels = labelledNodes(n).map(ref).filter(Boolean); if (nativeLabels.length) result.relations.labelled_by = Array.from(new Set((result.relations.labelled_by || []).concat(nativeLabels))); var f = attr(n,'for'); if (f) result.relations.label = getNodeById(f,n,all) && ref(getNodeById(f,n,all)); }
+    if (include.indexOf('relations') >= 0) { ['aria-labelledby','aria-describedby','aria-controls','aria-owns','aria-activedescendant'].forEach(function (a) { var v = attr(n,a); if (v) { var relationName = { 'aria-labelledby': 'labelled_by', 'aria-describedby': 'described_by', 'aria-controls': 'controls', 'aria-owns': 'owns', 'aria-activedescendant': 'active_descendant' }[a]; result.relations[relationName] = v.split(/\s+/).map(function (id) { return getNodeById(id, n, all); }).filter(Boolean).map(ref); } }); var nativeLabels = labelledNodes(n).map(ref).filter(Boolean); if (nativeLabels.length) result.relations.labelled_by = Array.from(new Set((result.relations.labelled_by || []).concat(nativeLabels))); if (n.form) result.relations.form = ref(n.form); var f = attr(n,'for'); if (f) result.relations.label = getNodeById(f,n,all) && ref(getNodeById(f,n,all)); }
     Object.assign(result, metadata(omitted, 'Narrow include/depth or continue by inspecting a returned subtree ref.', input._textBudget.omitted)); return result;
   };
   function getNodeById(id, n, all) { for (var i=0;i<all.length;i++) if (attr(all[i],'id') === id) return all[i]; return null; }

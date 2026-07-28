@@ -49,7 +49,7 @@
     if (Array.isArray(value)) return value.map(function (v) { return rewrite(v, tab, frame); });
     var out = {};
     var refKeys = { ref: true, parent: true, shadow_host: true, hit: true, covered_by: true, active_descendant: true, covering_ref: true };
-    var relationKeys = { labelled_by: true, described_by: true, controls: true, owns: true, active_descendant: true, label: true };
+    var relationKeys = { labelled_by: true, described_by: true, controls: true, owns: true, active_descendant: true, label: true, form: true };
     function rewriteRef(value) {
       if (typeof value !== 'string') return rewrite(value, tab, frame);
       var parsed = parseRef(value);

@@ -84,15 +84,30 @@ test('inspect returns ancestors, siblings, relations, and bounded select options
   const select = element('select', { id: 'country', 'aria-describedby': 'help' }); select.setAttribute('id', 'country'); select.setAttribute('aria-describedby', 'help');
   const option = element('option', { value: 'us', textContent: 'United States' }); option.selected = true;
   select.append(option); const help = element('span', { textContent: 'Required' }); help.setAttribute('id', 'help');
-  select.labels = [label];
+  select.labels = [label]; select.form = form;
   form.append(label, select, help); document.body.append(form);
   const result = ns.modules.view.inspect({ ref: ns.modules.core.refFor(select), include: ['ancestors', 'children', 'siblings', 'relations', 'options'], depth: 3, document });
   assert.equal(result.node.tag, 'select');
   assert.equal(result.options[0].label, 'United States');
   assert.equal(result.relations.described_by[0], ns.modules.core.refFor(help));
   assert.equal(result.relations.labelled_by[0], ns.modules.core.refFor(label));
+  assert.equal(result.relations.form, ns.modules.core.refFor(form));
   assert.equal(result.ancestors[0].tag, 'form');
   assert.equal(result.siblings.length, 2);
+});
+
+test('editable state matches writable text controls', () => {
+  const { element, document, ns } = loadView();
+  const text = element('input', { type: 'text' });
+  const readonly = element('input', { type: 'text' }); readonly.readOnly = true;
+  const disabled = element('textarea'); disabled.disabled = true;
+  const checkbox = element('input', { type: 'checkbox' });
+  const select = element('select');
+  document.body.append(text, readonly, disabled, checkbox, select);
+  for (const [node, expected] of [[text, true], [readonly, false], [disabled, false], [checkbox, false], [select, false]]) {
+    const inspected = ns.modules.view.inspect({ ref: ns.modules.core.refFor(node), include: [], document });
+    assert.equal(inspected.node.editable, expected);
+  }
 });
 
 test('inspect expands descendants to depth under one shared node budget', () => {
