@@ -1,31 +1,60 @@
 local PYTHON_SCRIPT = [=[
-import base64, json, os, re, shlex, subprocess, sys
+import base64, contextlib, fcntl, json, os, re, shlex, subprocess, sys
+from collections import deque
 from pathlib import Path
+
+MAX_PROMPT = 16384
+MAX_PATH = 4096
+MAX_TAIL = 1000
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 def env(name, default=""):
     return os.environ.get(name, default)
 
-def bone_dir():
-    xdg = env("XDG_CONFIG_HOME")
-    if xdg: return Path(xdg) / "bone-rust"
-    home = env("HOME") or env("USERPROFILE")
-    if home: return Path(home) / ".bone-rust"
-    return Path(".bone-rust").resolve()
+def valid_text(value, maximum, allow_empty=False):
+    return (isinstance(value, str) and (allow_empty or bool(value)) and
+            len(value) <= maximum and not CONTROL.search(value))
+
+def require_text(value, label, maximum, allow_empty=False):
+    if not valid_text(value, maximum, allow_empty):
+        fail(f"{label} must be {maximum} characters or fewer and contain no control characters")
+    return value
+
+def config_dir():
+    value = env("TOOL_CONFIG_DIR")
+    if not value:
+        fail("Bone config directory is unavailable")
+    require_text(value, "Bone config directory", MAX_PATH)
+    resolved = str(Path(value).resolve())
+    require_text(resolved, "resolved Bone config directory", MAX_PATH)
+    return Path(resolved)
+
+@contextlib.contextmanager
+def cron_lock():
+    path = config_dir() / "runs" / ".cron.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
 
 def find_bone():
     explicit = env("BONE_BIN")
     if explicit and os.access(explicit, os.X_OK):
-        return str(Path(explicit).resolve())
+        resolved = str(Path(explicit).resolve())
+        require_text(resolved, "bone binary path", MAX_PATH)
+        return resolved
     for part in env("PATH").split(os.pathsep):
         candidate = Path(part) / "bone"
         if os.access(candidate, os.X_OK):
-            return str(candidate.resolve())
+            resolved = str(candidate.resolve())
+            require_text(resolved, "bone binary path", MAX_PATH)
+            return resolved
     print("bone binary not found. Set BONE_BIN=/path/to/bone", file=sys.stderr)
     sys.exit(127)
 
 def validate_name(name):
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", name or ""):
-        fail("job name must contain only letters, numbers, '-' and '_'")
+    if not valid_text(name, 128) or not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+        fail("job name must be 128 characters or fewer and contain only letters, numbers, '-' and '_'")
 
 def parse_time(value):
     m = re.fullmatch(r"(\d{1,2}):(\d{2})", value or "")
@@ -35,9 +64,11 @@ def parse_time(value):
     return hour, minute
 
 def validate_approval(value):
-    if value not in ("read_only", "danger"):
-        fail("approval must be read_only or danger")
-    return value
+    if value in ("safe", "read_only"):
+        return "safe"
+    if value == "danger":
+        return value
+    fail("approval must be safe or danger")
 
 def fail(message, code=2):
     print(message, file=sys.stderr)
@@ -70,9 +101,23 @@ def encode_metadata(job):
 def decode_metadata(value):
     try:
         padded = value + "=" * ((4 - len(value) % 4) % 4)
-        return json.loads(base64.urlsafe_b64decode(padded.encode()))
+        decoded = json.loads(base64.urlsafe_b64decode(padded.encode()))
     except Exception:
         return None
+    if not isinstance(decoded, dict):
+        return None
+    limits = {"name": 128, "approval": 16, "cwd": MAX_PATH, "prompt": MAX_PROMPT,
+              "log_path": MAX_PATH}
+    if any(not valid_text(decoded.get(key), limit, allow_empty=(key != "name"))
+           for key, limit in limits.items()):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", decoded["name"]):
+        return None
+    if decoded["approval"] not in ("", "safe", "read_only", "danger"):
+        return None
+    if "config_dir" in decoded and not valid_text(decoded["config_dir"], MAX_PATH, allow_empty=True):
+        return None
+    return decoded
 
 def parse_cron_line(line):
     marker = "# BONE:"
@@ -83,21 +128,27 @@ def parse_cron_line(line):
     try:
         minute, hour = int(fields[0]), int(fields[1])
     except ValueError: return None
+    if not (0 <= minute <= 59 and 0 <= hour <= 23): return None
     meta = decode_metadata(encoded.strip())
-    if not meta:
+    if meta is None:
         name = encoded.strip()
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", name): return None
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", name): return None
         meta = {"name": name, "approval": "", "cwd": "", "prompt": "", "log_path": ""}
     meta["minute"] = minute
     meta["hour"] = hour
     return meta
 
+RUNNER = "import base64,os,sys; bone=sys.argv[1]; prompt=base64.urlsafe_b64decode(sys.argv[3]).decode(); os.execv(bone,[bone,'run','--approval',sys.argv[2],'--prompt',prompt])"
+
 def build_cron_line(job):
-    args = [job["bone_bin"], "run", "--approval", job["approval"]]
-    args.extend(["--prompt", job["prompt"]])
-    command = "cd " + shlex.quote(job["cwd"]) + " && " + " ".join(shlex.quote(a) for a in args)
+    prompt = base64.urlsafe_b64encode(job["prompt"].encode()).decode()
+    args = [job["python_bin"], "-c", RUNNER, job["bone_bin"], job["approval"], prompt]
+    command = "cd " + shlex.quote(job["cwd"]) + " && BONE_DIR=" + shlex.quote(job["config_dir"])
+    command += " " + " ".join(shlex.quote(a) for a in args)
     command += " >> " + shlex.quote(job["log_path"]) + " 2>&1"
-    meta = {k: job[k] for k in ("name", "approval", "cwd", "prompt", "log_path")}
+    # cron translates unescaped '%' before invoking the shell, even inside quotes.
+    command = command.replace("%", r"\%")
+    meta = {k: job[k] for k in ("name", "approval", "cwd", "prompt", "log_path", "config_dir")}
     return f'{job["minute"]} {job["hour"]} * * * {command} # BONE:{encode_metadata(meta)}'
 
 def list_jobs():
@@ -111,54 +162,77 @@ def list_jobs():
 
 def add_job():
     name, time, prompt = env("TOOL_NAME"), env("TOOL_TIME"), env("TOOL_PROMPT")
-    approval = validate_approval(env("TOOL_APPROVAL", "read_only") or "read_only")
+    approval = validate_approval(env("TOOL_APPROVAL", "safe") or "safe")
     if not name or not time or not prompt:
         fail("Usage: cron add requires name, time, and prompt.")
     validate_name(name)
+    require_text(prompt, "prompt", MAX_PROMPT)
     hour, minute = parse_time(time)
-    cwd = str(Path(env("TOOL_CWD") or os.getcwd()).resolve())
-    log_dir = bone_dir() / "runs"
+    cwd_value = env("TOOL_CWD") or os.getcwd()
+    require_text(cwd_value, "working directory", MAX_PATH)
+    cwd_path = Path(cwd_value).resolve()
+    require_text(str(cwd_path), "resolved working directory", MAX_PATH)
+    if not cwd_path.is_dir():
+        fail(f"working directory does not exist or is not a directory: {cwd_path}")
+    root = config_dir()
+    log_dir = root / "runs"
     log_dir.mkdir(parents=True, exist_ok=True)
+    python_bin = str(Path(sys.executable).resolve())
+    require_text(python_bin, "python binary path", MAX_PATH)
     job = {"name": name, "hour": hour, "minute": minute, "approval": approval,
-           "cwd": cwd, "prompt": prompt, "log_path": str(log_dir / f"{name}.log"),
-           "bone_bin": find_bone()}
-    existing = current_crontab().splitlines()
-    kept = []
-    for line in existing:
-        parsed = parse_cron_line(line)
-        legacy_tag = line.rstrip().endswith(f"# BONE:{name}")
-        if (parsed and parsed.get("name") == name) or legacy_tag: continue
-        kept.append(line)
-    kept.append(build_cron_line(job))
-    write_crontab("\n".join(kept) + "\n")
-    print(f"Added cron job {name}.")
+           "cwd": str(cwd_path), "prompt": prompt, "log_path": str(log_dir / f"{name}.log"),
+           "config_dir": str(root), "bone_bin": find_bone(), "python_bin": python_bin}
+    with cron_lock():
+        existing = current_crontab().splitlines()
+        kept = []
+        replaced = False
+        for line in existing:
+            parsed = parse_cron_line(line)
+            legacy_tag = line.rstrip().endswith(f"# BONE:{name}")
+            if (parsed and parsed.get("name") == name) or legacy_tag:
+                replaced = True
+                continue
+            kept.append(line)
+        kept.append(build_cron_line(job))
+        write_crontab("\n".join(kept) + "\n")
+    verb = "Updated" if replaced else "Added"
+    print(f"{verb} cron job {name}.")
 
 def remove_job():
     name = env("TOOL_NAME")
     if not name: fail("Usage: cron remove requires name.")
     validate_name(name)
     removed = False
-    kept = []
-    for line in current_crontab().splitlines():
-        parsed = parse_cron_line(line)
-        legacy_tag = line.rstrip().endswith(f"# BONE:{name}")
-        if (parsed and parsed.get("name") == name) or legacy_tag: removed = True
-        else: kept.append(line)
-    write_crontab(("\n".join(kept) + "\n") if kept else "")
+    with cron_lock():
+        kept = []
+        for line in current_crontab().splitlines():
+            parsed = parse_cron_line(line)
+            legacy_tag = line.rstrip().endswith(f"# BONE:{name}")
+            if (parsed and parsed.get("name") == name) or legacy_tag: removed = True
+            else: kept.append(line)
+        if removed:
+            write_crontab(("\n".join(kept) + "\n") if kept else "")
     print(f"Removed cron job {name}." if removed else f"No cron job named {name}.")
 
 def show_logs():
     name = env("TOOL_NAME")
     if not name: fail("Usage: cron logs requires name.")
     validate_name(name)
-    path = bone_dir() / "runs" / f"{name}.log"
-    try: lines = path.read_text().splitlines()
-    except OSError as e: fail(f"failed to read {path}: {e}", 1)
-    tail = env("TOOL_TAIL")
-    if tail:
-        try: n = int(tail)
-        except ValueError: fail("tail must be a number")
-        lines = lines[-n:]
+    path = config_dir() / "runs" / f"{name}.log"
+    for job in (parse_cron_line(line) for line in current_crontab().splitlines()):
+        if job and job.get("name") == name and job.get("log_path"):
+            path = Path(job["log_path"])
+            break
+    tail = env("TOOL_TAIL") or "100"
+    try: n = int(tail)
+    except ValueError: fail(f"tail must be an integer between 1 and {MAX_TAIL}")
+    if not 1 <= n <= MAX_TAIL:
+        fail(f"tail must be an integer between 1 and {MAX_TAIL}")
+    try:
+        with path.open(encoding="utf-8") as handle:
+            lines = deque((line.rstrip("\r\n") for line in handle), maxlen=n)
+    except (OSError, UnicodeError) as e:
+        fail(f"failed to read {path}: {e}", 1)
     print("\n".join(lines))
 
 def help_text():
@@ -179,33 +253,36 @@ elif action in ("help", "--help", "-h", ""): help_text()
 else: fail(f"Unknown cron action: {action}")
 ]=]
 
+local function shell_quote(value)
+    return "'" .. tostring(value):gsub("'", "'\"'\"'") .. "'"
+end
+
 local function execute(params, ctx)
-    local action = params.action or ""
-    local name = params.name or ""
-    local time = params.time or ""
-    local approval = params.approval or "read_only"
-    local prompt = params.prompt or ""
-    local cwd = params.cwd or ""
-    local tail = params.tail or ""
-
-    -- Build export commands for TOOL_* variables
-    local exports = {}
-    table.insert(exports, 'export TOOL_ACTION="' .. action:gsub('"', '\\"') .. '"')
-    if name ~= "" then table.insert(exports, 'export TOOL_NAME="' .. name:gsub('"', '\\"') .. '"') end
-    if time ~= "" then table.insert(exports, 'export TOOL_TIME="' .. time:gsub('"', '\\"') .. '"') end
-    if approval ~= "" then table.insert(exports, 'export TOOL_APPROVAL="' .. approval:gsub('"', '\\"') .. '"') end
-    if prompt ~= "" then table.insert(exports, 'export TOOL_PROMPT="' .. prompt:gsub('"', '\\"') .. '"') end
-    if cwd ~= "" then table.insert(exports, 'export TOOL_CWD="' .. cwd:gsub('"', '\\"') .. '"') end
-    if tail ~= "" then table.insert(exports, 'export TOOL_TAIL="' .. tail:gsub('"', '\\"') .. '"') end
-
-    local cmd = table.concat(exports, "; ")
-    cmd = cmd .. "; uv run --no-project --no-sync -- python3 <<'PYEOF'\n"
-    cmd = cmd .. PYTHON_SCRIPT
-    cmd = cmd .. "\nPYEOF"
-
+    local values = {
+        TOOL_ACTION = params.action or "",
+        TOOL_NAME = params.name or "",
+        TOOL_TIME = params.time or "",
+        TOOL_APPROVAL = params.approval or "safe",
+        TOOL_PROMPT = params.prompt or "",
+        TOOL_CWD = params.cwd or "",
+        TOOL_TAIL = params.tail or "",
+        TOOL_CONFIG_DIR = ctx.config_dir or "",
+    }
+    local names = {
+        "TOOL_ACTION", "TOOL_NAME", "TOOL_TIME", "TOOL_APPROVAL",
+        "TOOL_PROMPT", "TOOL_CWD", "TOOL_TAIL", "TOOL_CONFIG_DIR",
+    }
+    local assignments = {}
+    for _, name in ipairs(names) do
+        assignments[#assignments + 1] = name .. "=" .. shell_quote(values[name])
+    end
+    local cmd = table.concat(assignments, " ") .. " python3 -c " .. shell_quote(PYTHON_SCRIPT)
     local result = ctx.shell(cmd, { timeout_ms = 300000 })
-    if result.stderr and #result.stderr > 0 then
-        return "ERROR: " .. result.stderr
+    if result.exit_code ~= 0 then
+        local message = result.stderr
+        if not message or message == "" then message = result.stdout end
+        if not message or message == "" then message = "cron command exited with " .. tostring(result.exit_code) end
+        return "ERROR: " .. message
     end
     return result.stdout or ""
 end
@@ -231,8 +308,8 @@ bone.tool.register({
             },
             approval = {
                 type = "string",
-                enum = { "read_only", "danger" },
-                description = "Approval mode for add. Defaults to read_only.",
+                enum = { "safe", "read_only", "danger" },
+                description = "Approval mode for add. Defaults to safe; read_only is accepted as a legacy alias for safe.",
             },
             prompt = {
                 type = "string",
@@ -243,8 +320,10 @@ bone.tool.register({
                 description = "Working directory for add. Defaults to current directory.",
             },
             tail = {
-                type = "number",
-                description = "Number of log lines for logs.",
+                type = "integer",
+                minimum = 1,
+                maximum = 1000,
+                description = "Number of log lines for logs. Defaults to 100.",
             },
         },
         required = { "action" },
