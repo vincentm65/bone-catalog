@@ -1,5 +1,3 @@
-local cjson = require("cjson")
-
 local catalog_description = "Control the active Hyprland monitor with screenshots and normalized coordinates. Supports observe, mouse, keyboard, scroll, drag, and wait actions."
 local STATE_KEY = "computer"
 local DEFAULT_SETTLE_MS = 300

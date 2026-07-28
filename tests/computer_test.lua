@@ -1,7 +1,7 @@
 -- Run with: lua5.4 tests/computer_test.lua
 local encoded = {}
 local sequence = 0
-local cjson = {
+cjson = {
     encode = function(value)
         sequence = sequence + 1
         local key = "json-" .. sequence
@@ -14,7 +14,6 @@ local cjson = {
         return decoded
     end,
 }
-package.preload.cjson = function() return cjson end
 
 local registered
 bone = { tool = { register = function(spec) registered = spec end } }
