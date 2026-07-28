@@ -44,8 +44,6 @@ for kind in tools commands; do
   for file in "$kind"/*.lua; do
     [[ -e "$file" ]] || continue
     name=$(basename "$file")
-    # firefox_dom is one visible command-owned item with its tool and runtime assets.
-    [[ "$file" == "tools/firefox_dom.lua" ]] && continue
     desc=$(extract_desc "$file" | json_escape)
     sha=$(sha256sum "$file" | cut -d' ' -f1)
     if [[ $first -eq 0 ]]; then echo "," >> "$out"; fi
@@ -55,10 +53,6 @@ for kind in tools commands; do
     bundled_files=()
     if [[ "$file" == "commands/themes.lua" ]]; then
       mapfile -t bundled_files < <(find themes -maxdepth 1 -type f -name '*.lua' | sort)
-    elif [[ "$file" == "commands/firefox_dom.lua" ]]; then
-      bundled_files=(tools/firefox_dom.lua)
-      mapfile -t firefox_dom_files < <(find firefox_dom -type f ! -path 'firefox_dom/bridge/target/*' | sort)
-      bundled_files+=("${firefox_dom_files[@]}")
     fi
     if [[ ${#bundled_files[@]} -gt 0 ]]; then
       printf ', "files": [' >> "$out"
