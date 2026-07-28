@@ -75,6 +75,38 @@ test('inspect returns ancestors, siblings, relations, and bounded select options
   assert.equal(result.siblings.length, 2);
 });
 
+test('inspect expands descendants to depth under one shared node budget', () => {
+  const { element, document, ns } = loadView();
+  const root = element('section');
+  const child = element('div');
+  const grandchild = element('button', { textContent: 'Nested action' });
+  const tooDeep = element('span', { textContent: 'Too deep' });
+  const second = element('aside');
+  grandchild.append(tooDeep); child.append(grandchild); root.append(child, second); document.body.append(root);
+
+  const expanded = ns.modules.view.inspect({
+    ref: ns.modules.core.refFor(root), include: ['children'], depth: 2, max_nodes: 10, document
+  });
+  assert.deepEqual(
+    Array.from(expanded.descendants, (node) => node.ref),
+    [child, grandchild, second].map((node) => ns.modules.core.refFor(node))
+  );
+  assert.equal(expanded.descendants.some((node) => node.ref === ns.modules.core.refFor(tooDeep)), false);
+
+  const bounded = ns.modules.view.inspect({
+    ref: ns.modules.core.refFor(root), include: ['children'], depth: 4, max_nodes: 3, document
+  });
+  assert.equal(bounded.descendants.length, 2);
+  assert.equal(bounded.truncated, true);
+  assert.equal(bounded.omitted_nodes, 2);
+
+  const shallow = ns.modules.view.inspect({
+    ref: ns.modules.core.refFor(root), include: ['children'], depth: 0, max_nodes: 10, document
+  });
+  assert.equal(shallow.descendants.length, 0);
+  assert.equal(shallow.truncated, false);
+});
+
 test('compact records distinguish controls with bounded safe identity fields and names', () => {
   const { element, document, ns } = loadView();
   const label = element('label', {}, 'Email', element('span', {}, 'address'), element('script', { textContent: 'private-token' }));

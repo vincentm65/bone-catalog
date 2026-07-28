@@ -180,7 +180,9 @@
       for (var k = 0; n.attributes && k < n.attributes.length && Object.keys(out.attributes).length < B.maxAttributes; k++) { var a = n.attributes[k]; if (/^aria-/i.test(a.name)) out.attributes[a.name] = bounded(redacted(n, a.value, a.name), B.maxAttributeValue); }
       if ('value' in n) out.value = redacted(n, bounded(n.value, B.maxAttributeValue), 'value');
       ['checked','selected','indeterminate','open','disabled','readOnly','required'].forEach(function (key) { if (key in n && n[key] !== false && n[key] != null) out[key] = !!n[key]; });
-      out.children = children(n).map(ref).filter(Boolean); out.child_count = children(n).length;
+      var childNodes = children(n);
+      out.children = childNodes.slice(0, B.maxNodes).map(ref).filter(Boolean); out.child_count = childNodes.length;
+      if (childNodes.length > out.children.length) { out.children_truncated = true; out.omitted_children = childNodes.length - out.children.length; }
     }
     return out;
   }
@@ -193,10 +195,15 @@
     var result = { scope: input.scope || 'viewport', nodes: records }; Object.assign(result, metadata(omitted, 'Narrow scope, reduce depth, or inspect a subtree; continue with subtree ref.')); return result;
   };
   view.inspect = function (input) {
-    input = input || {}; input._layoutCache = { rect: new WeakMap(), visible: new WeakMap() }; var all = elements(input), n = getNode(input.ref, all); if (!n) return { error: ns.error('invalid_ref', 'Node reference was not found') }; var result = { node: base(n, 'inspect', input), ancestors: [], relations: {}, siblings: [], descendants: [] }, include = input.include || ['ancestors','children'], max = Math.min(Math.max(1, input.max_nodes || 200), B.maxNodes), omitted = 0, p = parent(n);
-    if (include.indexOf('ancestors') >= 0) while (p && result.ancestors.length < Math.min(input.depth == null ? 2 : input.depth, B.maxDepth)) { result.ancestors.push(base(p, 'outline', input)); p = parent(p); }
-    if (include.indexOf('siblings') >= 0 && parent(n)) result.siblings = children(parent(n)).filter(function (x) { return x !== n; }).slice(0, max).map(function (x) { return base(x, 'outline', input); });
-    if (include.indexOf('children') >= 0) { var todo = children(n); result.descendants = todo.slice(0, max).map(function (x) { return base(x, 'inspect', input); }); omitted += Math.max(0, todo.length - result.descendants.length); }
+    input = input || {}; input._layoutCache = { rect: new WeakMap(), visible: new WeakMap() }; var all = elements(input), n = getNode(input.ref, all); if (!n) return { error: ns.error('invalid_ref', 'Node reference was not found') }; var result = { node: base(n, 'inspect', input), ancestors: [], relations: {}, siblings: [], descendants: [] }, include = input.include || ['ancestors','children'], max = Math.min(Math.max(1, Math.floor(input.max_nodes || 200)), B.maxNodes), depth = Math.min(Math.max(0, Math.floor(input.depth == null ? 2 : input.depth)), B.maxDepth), remaining = max - 1, omitted = 0, p = parent(n);
+    function appendRecords(target, candidates, level) { var count = Math.min(remaining, candidates.length); for (var i = 0; i < count; i++) target.push(base(candidates[i], level, input)); remaining -= count; omitted += candidates.length - count; }
+    if (include.indexOf('ancestors') >= 0) { var ancestors = []; while (p && ancestors.length < depth) { ancestors.push(p); p = parent(p); } appendRecords(result.ancestors, ancestors, 'outline'); }
+    if (include.indexOf('siblings') >= 0 && parent(n)) appendRecords(result.siblings, children(parent(n)).filter(function (x) { return x !== n; }), 'outline');
+    if (include.indexOf('children') >= 0) {
+      var descendants = [], seen = new Set([n]);
+      function collect(node, level) { if (level > depth) return; children(node).forEach(function (child) { if (seen.has(child)) return; seen.add(child); descendants.push(child); collect(child, level + 1); }); }
+      collect(n, 1); appendRecords(result.descendants, descendants, 'inspect');
+    }
     if (include.indexOf('options') >= 0 && String(n.localName).toLowerCase() === 'select') { result.options = children(n).slice(0, B.maxOptions).map(function (o) { return { label: bounded(text(o), B.directText), value: redacted(o, o.value != null ? o.value : attr(o,'value'), 'option'), selected: !!o.selected, ref: ref(o) }; }); if (children(n).length > B.maxOptions) omitted += children(n).length - B.maxOptions; }
     if (include.indexOf('relations') >= 0) { ['aria-labelledby','aria-describedby','aria-controls','aria-owns','aria-activedescendant'].forEach(function (a) { var v = attr(n,a); if (v) { var relationName = { 'aria-labelledby': 'labelled_by', 'aria-describedby': 'described_by', 'aria-controls': 'controls', 'aria-owns': 'owns', 'aria-activedescendant': 'active_descendant' }[a]; result.relations[relationName] = v.split(/\s+/).map(function (id) { return getNodeById(id, n, all); }).filter(Boolean).map(ref); } }); var nativeLabels = labelledNodes(n).map(ref).filter(Boolean); if (nativeLabels.length) result.relations.labelled_by = Array.from(new Set((result.relations.labelled_by || []).concat(nativeLabels))); var f = attr(n,'for'); if (f) result.relations.label = getNodeById(f,n,all) && ref(getNodeById(f,n,all)); }
     Object.assign(result, metadata(omitted, 'Narrow include/depth or continue by inspecting a returned subtree ref.')); return result;
