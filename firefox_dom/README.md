@@ -4,7 +4,7 @@ This independent tool uses native host `dev.bone.firefox_dom`, owner-only socket
 
 ## Use
 
-Call the tool with one required `action`: `tabs`, `outline`, `find`, `inspect`, `act`, `changes`, `navigate`, or `select_tab`. Start with a narrow `tabs` or `outline`/`find`, use only returned stable refs, then inspect or perform one action at a time and observe again. `outline` defaults to viewport scope. For `act`, typing accepts `text` or `value`, scrolling accepts `x`/`y`, and scroll-into-view accepts `block`/`inline`. Navigation accepts a 1–30 second `timeout_ms`, returns the new document identity when the page is accessible, and accepts `outline: true` for a bounded main-frame viewport outline. Do not guess refs, selectors, or ambiguous matches.
+Call the tool with one required `action`: `tabs`, `outline`, `find`, `inspect`, `act`, `changes`, `navigate`, or `select_tab`. Start with a narrow `tabs` or `outline`/`find`, use only returned stable refs, then inspect or perform one action at a time and observe again. Compact results include bounded control identity, accessible names, placeholders, and redacted link targets so similar elements can be distinguished without guessing selectors. `outline` defaults to viewport scope. For `act`, typing accepts `text` or `value`, scrolling accepts `x`/`y`, and scroll-into-view accepts `block`/`inline`. Navigation accepts a 1–30 second `timeout_ms`, returns the new document identity when the page is accessible, and accepts `outline: true` for a bounded main-frame viewport outline. Do not guess refs, selectors, or ambiguous matches.
 
 ## Setup
 

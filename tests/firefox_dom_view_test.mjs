@@ -64,13 +64,38 @@ test('inspect returns ancestors, siblings, relations, and bounded select options
   const select = element('select', { id: 'country', 'aria-describedby': 'help' }); select.setAttribute('id', 'country'); select.setAttribute('aria-describedby', 'help');
   const option = element('option', { value: 'us', textContent: 'United States' }); option.selected = true;
   select.append(option); const help = element('span', { textContent: 'Required' }); help.setAttribute('id', 'help');
+  select.labels = [label];
   form.append(label, select, help); document.body.append(form);
   const result = ns.modules.view.inspect({ ref: ns.modules.core.refFor(select), include: ['ancestors', 'children', 'siblings', 'relations', 'options'], depth: 3, document });
   assert.equal(result.node.tag, 'select');
   assert.equal(result.options[0].label, 'United States');
   assert.equal(result.relations.described_by[0], ns.modules.core.refFor(help));
+  assert.equal(result.relations.labelled_by[0], ns.modules.core.refFor(label));
   assert.equal(result.ancestors[0].tag, 'form');
   assert.equal(result.siblings.length, 2);
+});
+
+test('compact records distinguish controls with bounded safe identity fields and names', () => {
+  const { element, document, ns } = loadView();
+  const label = element('label', {}, 'Email', element('span', {}, 'address'), element('script', { textContent: 'private-token' }));
+  const input = element('input', {
+    name: 'email',
+    type: 'email',
+    class: 'field primary extra',
+    placeholder: 'you@example.test'
+  });
+  input.setAttribute('id', 'x'.repeat(700));
+  input.labels = [label];
+  document.body.append(label, input);
+  const result = ns.modules.view.outline({ scope: 'document', document });
+  const record = result.nodes.find((node) => node.ref === ns.modules.core.refFor(input));
+  assert.equal(record.id.length, 500);
+  assert.equal(record.name, 'email');
+  assert.equal(record.type, 'email');
+  assert.deepEqual(Array.from(record.class), ['field', 'primary', 'extra']);
+  assert.equal(record.placeholder, 'you@example.test');
+  assert.equal(record.accessible_name, 'Email address');
+  assert.doesNotMatch(record.accessible_name, /private-token/);
 });
 
 test('geometry and interaction hints describe covered/visible context without leaking values', () => {

@@ -53,6 +53,16 @@ test('supports state, accessible-name, rectangle, ancestor and descendant predic
   assert.equal(result.count, 1);
 });
 
+test('searches native label and placeholder accessible names', () => {
+  const { element, document, query } = setup();
+  const label = element('label', { textContent: 'Account email' });
+  const labelled = element('input', { type: 'email' }); labelled.labels = [label];
+  const placeholder = element('input', { placeholder: 'Search orders' });
+  document.body.append(label, labelled, placeholder);
+  assert.equal(query.find({ document, predicates: { tag: 'input', accessible_name: { value: 'Account email', exact: true } } }).count, 1);
+  assert.equal(query.find({ document, predicates: { tag: 'input', accessible_name: { value: 'Search orders', exact: true } } }).count, 1);
+});
+
 test('honors within scope and reports bounded truncation', () => {
   const { element, document, query } = setup();
   const scope = element('div');

@@ -172,3 +172,23 @@ test('content coordinator exposes only its document identity to the internal pro
   );
   assert.equal((await handle({ action: '_identity', max_nodes: 1 })).error.code, 'invalid_request');
 });
+
+test('live compact records expose safe control identity while redacting URL credentials', async () => {
+  const { document, element, ns, handle } = install();
+  const label = element('label', { textContent: 'Billing email' });
+  const input = element('input', { name: 'email', type: 'email', placeholder: 'name@example.test' });
+  input.setAttribute('id', 'billing-email');
+  input.labels = [label];
+  const link = element('a', { href: 'https://user:pass@example.test/path?token=secret&ok=1', textContent: 'Account' });
+  document.body.append(label, input, link);
+  const outline = await handle({ action: 'outline', scope: 'document', max_nodes: 30 });
+  const inputRecord = outline.result.nodes.find((node) => node.ref === ns.modules.core.refFor(input));
+  const linkRecord = outline.result.nodes.find((node) => node.ref === ns.modules.core.refFor(link));
+  assert.equal(inputRecord.id, 'billing-email');
+  assert.equal(inputRecord.accessible_name, 'Billing email');
+  assert.match(linkRecord.href, /^https:\/\/\[REDACTED\]@example\.test/);
+  assert.match(linkRecord.href, /token=\[REDACTED\]/);
+  assert.match(linkRecord.href, /ok=1/);
+  const found = await handle({ action: 'find', predicates: { tag: 'input', accessible_name: { value: 'Billing email', exact: true } } });
+  assert.equal(found.result.matches[0].ref, inputRecord.ref);
+});

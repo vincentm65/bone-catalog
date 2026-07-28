@@ -37,6 +37,13 @@
     if (value == null) value = n && n.textContent || '';
     return String(value).replace(/\s+/g, ' ').trim();
   }
+  function fullText(n) {
+    if (!n || /^(script|style)$/i.test(n.localName || '')) return '';
+    if (n.nodeType === 3) return String(n.textContent || '');
+    var children = n.childNodes || [];
+    var value = children.length ? Array.prototype.map.call(children, fullText).join(' ') : n.textContent || '';
+    return String(value).replace(/\s+/g, ' ').trim();
+  }
   function bounded(value, limit) { value = String(value == null ? '' : value); return value.length > limit ? value.slice(0, limit) : value; }
   function redacted(n, value, field) {
     var c = core();
@@ -70,6 +77,47 @@
     if (ti !== null) return Number(ti) >= 0;
     if ((t === 'a' || t === 'area') && attr(n, 'href') !== null) return true;
     return /^(button|input|select|textarea|summary|iframe)$/.test(t) || editable(n);
+  }
+  function labelledNodes(n) {
+    var result = [], seen = [];
+    function add(node) { if (node && seen.indexOf(node) < 0) { seen.push(node); result.push(node); } }
+    try { Array.prototype.forEach.call(n.labels || [], add); } catch (_) {}
+    var ids = attr(n, 'aria-labelledby'), rootNode = null, d = n && n.ownerDocument;
+    try { rootNode = n.getRootNode && n.getRootNode(); } catch (_) {}
+    if (ids) ids.split(/\s+/).forEach(function (id) {
+      var node = rootNode && rootNode.getElementById ? rootNode.getElementById(id) : d && d.getElementById ? d.getElementById(id) : null;
+      add(node);
+    });
+    return result;
+  }
+  function accessibleName(n) {
+    var explicit = attr(n, 'aria-label');
+    if (explicit) return explicit.replace(/\s+/g, ' ').trim();
+    var labels = labelledNodes(n).map(fullText).filter(Boolean);
+    if (labels.length) return labels.join(' ');
+    for (var field of ['alt', 'placeholder', 'title']) {
+      var value = attr(n, field);
+      if (value) return value.replace(/\s+/g, ' ').trim();
+    }
+    return text(n);
+  }
+  function compactIdentity(out, n, tag) {
+    ['id', 'name', 'type', 'for', 'tabindex'].forEach(function (name) {
+      var value = attr(n, name);
+      if (value !== null && value !== '') out[name] = bounded(value, B.maxAttributeValue);
+    });
+    var classes = attr(n, 'class');
+    if (classes) out.class = classes.trim().split(/\s+/).filter(Boolean).slice(0, 8).map(function (value) { return bounded(value, 100); });
+    ['placeholder', 'title'].forEach(function (name) {
+      var value = attr(n, name);
+      if (value) out[name] = bounded(value, B.maxAttributeValue);
+    });
+    var href = attr(n, 'href');
+    if (href) out.href = bounded(redacted(n, href, 'href'), B.maxAttributeValue);
+    if (/^(input|option)$/.test(tag) && (n.checked !== undefined || n.selected !== undefined)) {
+      if (tag === 'input' && /^(checkbox|radio)$/i.test(attr(n, 'type') || n.type || '')) out.checked = !!n.checked;
+      if (tag === 'option') out.selected = !!n.selected;
+    }
   }
   function interactive(n) { var t = String(n.localName || '').toLowerCase(); return /^(a|button|input|select|textarea|option|summary)$/.test(t) || focusable(n) || typeof n.onclick === 'function' || attr(n, 'onclick') !== null || (n.style && n.style.cursor === 'pointer'); }
   function children(n) {
@@ -112,10 +160,11 @@
   function base(n, level, input) {
     var r = rect(n, input), d = docOf(input), tag = String(n.localName || n.tagName || '').toLowerCase();
     var out = { ref: ref(n), tag: tag || 'unknown' }, direct = bounded(text(n), B.directText);
+    compactIdentity(out, n, tag);
     var p = parent(n); if (p) out.parent = ref(p);
     if (direct) out.direct_text = direct;
     var role = attr(n, 'role'); if (role) out.role = role;
-    var label = attr(n, 'aria-label'); if (label) out.accessible_name = bounded(label, B.directText);
+    var label = accessibleName(n); if (label && label !== direct) out.accessible_name = bounded(label, B.directText);
     if (r) {
       out.rect = r; out.visible = visible(n, r, input); out.in_viewport = !!(d && d.defaultView && r.right >= 0 && r.bottom >= 0 && r.left <= d.defaultView.innerWidth && r.top <= d.defaultView.innerHeight);
       var hit = null, hitRoot = d, treeRoot = null;
@@ -149,9 +198,10 @@
     if (include.indexOf('siblings') >= 0 && parent(n)) result.siblings = children(parent(n)).filter(function (x) { return x !== n; }).slice(0, max).map(function (x) { return base(x, 'outline', input); });
     if (include.indexOf('children') >= 0) { var todo = children(n); result.descendants = todo.slice(0, max).map(function (x) { return base(x, 'inspect', input); }); omitted += Math.max(0, todo.length - result.descendants.length); }
     if (include.indexOf('options') >= 0 && String(n.localName).toLowerCase() === 'select') { result.options = children(n).slice(0, B.maxOptions).map(function (o) { return { label: bounded(text(o), B.directText), value: redacted(o, o.value != null ? o.value : attr(o,'value'), 'option'), selected: !!o.selected, ref: ref(o) }; }); if (children(n).length > B.maxOptions) omitted += children(n).length - B.maxOptions; }
-    if (include.indexOf('relations') >= 0) { ['aria-labelledby','aria-describedby','aria-controls','aria-owns','aria-activedescendant'].forEach(function (a) { var v = attr(n,a); if (v) { var relationName = { 'aria-labelledby': 'labelled_by', 'aria-describedby': 'described_by', 'aria-controls': 'controls', 'aria-owns': 'owns', 'aria-activedescendant': 'active_descendant' }[a]; result.relations[relationName] = v.split(/\s+/).map(function (id) { return getNodeById(id, n, all); }).filter(Boolean).map(ref); } }); var f = attr(n,'for'); if (f) result.relations.label = getNodeById(f,n,all) && ref(getNodeById(f,n,all)); }
+    if (include.indexOf('relations') >= 0) { ['aria-labelledby','aria-describedby','aria-controls','aria-owns','aria-activedescendant'].forEach(function (a) { var v = attr(n,a); if (v) { var relationName = { 'aria-labelledby': 'labelled_by', 'aria-describedby': 'described_by', 'aria-controls': 'controls', 'aria-owns': 'owns', 'aria-activedescendant': 'active_descendant' }[a]; result.relations[relationName] = v.split(/\s+/).map(function (id) { return getNodeById(id, n, all); }).filter(Boolean).map(ref); } }); var nativeLabels = labelledNodes(n).map(ref).filter(Boolean); if (nativeLabels.length) result.relations.labelled_by = Array.from(new Set((result.relations.labelled_by || []).concat(nativeLabels))); var f = attr(n,'for'); if (f) result.relations.label = getNodeById(f,n,all) && ref(getNodeById(f,n,all)); }
     Object.assign(result, metadata(omitted, 'Narrow include/depth or continue by inspecting a returned subtree ref.')); return result;
   };
   function getNodeById(id, n, all) { for (var i=0;i<all.length;i++) if (attr(all[i],'id') === id) return all[i]; return null; }
+  view.accessibleName = accessibleName;
   ns.register('view', view);
 })(typeof globalThis !== 'undefined' ? globalThis : this);

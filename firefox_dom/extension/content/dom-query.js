@@ -85,7 +85,9 @@
       var assigned = node.assignedNodes({ flatten: true }) || node.assignedNodes();
       if (assigned.length) return Array.prototype.map.call(assigned, descendantText).join(' ');
     }
-    return Array.prototype.map.call(node.childNodes || [], descendantText).join(' ').replace(/\s+/g, ' ').trim();
+    var children = node.childNodes || [];
+    var value = children.length ? Array.prototype.map.call(children, descendantText).join(' ') : node.textContent || '';
+    return String(value).replace(/\s+/g, ' ').trim();
   }
   function bool(v) { return v === true || v === false ? v : !!v; }
   function style(node, name) { return node && node.ownerDocument && node.ownerDocument.defaultView && node.ownerDocument.defaultView.getComputedStyle ? node.ownerDocument.defaultView.getComputedStyle(node)[name] : (node.style && node.style[name]); }
@@ -103,10 +105,17 @@
   }
   function role(node) { return node.getAttribute && (node.getAttribute('role') || ({ button: 'button', a: 'link', input: 'textbox', select: 'combobox' }[node.localName] || '')); }
   function name(node) {
+    var view = ns.modules && ns.modules.view;
+    if (view && typeof view.accessibleName === 'function') return view.accessibleName(node);
     var n = node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('alt'));
     if (n) return n.trim();
     var ids = node.getAttribute && node.getAttribute('aria-labelledby');
     if (ids && node.ownerDocument) return ids.split(/\s+/).map(function (id) { var x = node.ownerDocument.getElementById(id); return x ? descendantText(x) : ''; }).join(' ').trim();
+    var labels = [];
+    try { labels = Array.prototype.map.call(node.labels || [], descendantText).filter(Boolean); } catch (_) {}
+    if (labels.length) return labels.join(' ');
+    var placeholder = node.getAttribute && node.getAttribute('placeholder');
+    if (placeholder) return placeholder.trim();
     return descendantText(node);
   }
   function textPredicate(value, actual) {
