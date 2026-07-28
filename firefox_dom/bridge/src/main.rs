@@ -11,6 +11,9 @@ use std::time::{Duration, Instant};
 
 const MAX: usize = 4 * 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(15);
+const ACTION_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_ACTION_TIMEOUT: Duration = Duration::from_secs(30);
+const RESPONSE_GRACE: Duration = Duration::from_secs(5);
 
 fn read_frame<R: Read>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
     let mut header = [0u8; 4];
@@ -62,6 +65,12 @@ fn socket_server(path: &Path) -> io::Result<UnixListener> {
                 "socket path is not a socket",
             ));
         }
+        if UnixStream::connect(path).is_ok() {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                "another Firefox DOM bridge is already listening",
+            ));
+        }
         fs::remove_file(path)?;
     }
     let listener = UnixListener::bind(path)?;
@@ -77,6 +86,7 @@ fn set_owner_only(path: &Path) -> io::Result<()> {
 
 enum Event {
     Native(Vec<u8>),
+    NativeClosed,
     Socket(Vec<u8>, UnixStream),
 }
 
@@ -90,7 +100,10 @@ fn spawn_stdin_reader(tx: Sender<Event>) {
                         break;
                     }
                 }
-                Ok(None) | Err(_) => break,
+                Ok(None) | Err(_) => {
+                    let _ = tx.send(Event::NativeClosed);
+                    break;
+                }
             }
         }
     });
@@ -144,6 +157,18 @@ fn write_socket_frame(stream: &mut UnixStream, body: &[u8]) -> io::Result<()> {
     stream.flush()
 }
 
+fn response_timeout(body: &[u8]) -> Duration {
+    let requested = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .filter(|value| value.get("action").and_then(|v| v.as_str()) == Some("navigate"))
+        .and_then(|value| value.get("timeout_ms").and_then(|v| v.as_f64()))
+        .filter(|value| value.is_finite())
+        .map(|value| Duration::from_millis(value.max(1000.0) as u64))
+        .unwrap_or(ACTION_TIMEOUT)
+        .min(MAX_ACTION_TIMEOUT);
+    requested + RESPONSE_GRACE
+}
+
 fn run() -> io::Result<()> {
     let path = socket_path();
     let listener = socket_server(&path)?;
@@ -159,7 +184,7 @@ fn run() -> io::Result<()> {
     // by their connection and are never given another client's response.
     let mut discard_late_native = false;
 
-    loop {
+    let result = loop {
         let wait = pending
             .as_ref()
             .map(|(_, deadline)| deadline.saturating_duration_since(Instant::now()))
@@ -179,10 +204,11 @@ fn run() -> io::Result<()> {
                 }
                 continue;
             }
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => break Ok(()),
         };
         match event {
             Event::Socket(body, stream) => queue.push_back((body, stream)),
+            Event::NativeClosed => break Ok(()),
             Event::Native(body) => {
                 if discard_late_native {
                     discard_late_native = false;
@@ -193,13 +219,15 @@ fn run() -> io::Result<()> {
         }
         if pending.is_none() && !discard_late_native {
             if let Some((body, stream)) = queue.pop_front() {
-                write_frame(&mut output, &body)?;
-                pending = Some((stream, Instant::now() + IO_TIMEOUT));
+                if let Err(error) = write_frame(&mut output, &body) {
+                    break Err(error);
+                }
+                pending = Some((stream, Instant::now() + response_timeout(&body)));
             }
         }
-    }
+    };
     let _ = fs::remove_file(path);
-    Ok(())
+    result
 }
 
 fn main() {
@@ -213,6 +241,7 @@ fn main() {
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn native_framing_remains_little_endian() {
@@ -240,5 +269,39 @@ mod tests {
         let mut bytes = [0; 6];
         reader.read_exact(&mut bytes).unwrap();
         assert_eq!(&bytes, &[0, 0, 0, 2, b'o', b'k']);
+    }
+
+    #[test]
+    fn socket_server_does_not_replace_a_live_bridge() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!(
+            "bone-firefox-dom-test-{}-{unique}.sock",
+            std::process::id()
+        ));
+        let listener = socket_server(&path).unwrap();
+        let error = socket_server(&path).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        assert!(path.exists());
+        drop(listener);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn response_timeout_tracks_bounded_navigation_timeout() {
+        assert_eq!(
+            response_timeout(br#"{"action":"tabs"}"#),
+            Duration::from_secs(20)
+        );
+        assert_eq!(
+            response_timeout(br#"{"action":"navigate","timeout_ms":1000}"#),
+            Duration::from_secs(6)
+        );
+        assert_eq!(
+            response_timeout(br#"{"action":"navigate","timeout_ms":90000}"#),
+            Duration::from_secs(35)
+        );
     }
 }

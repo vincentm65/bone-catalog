@@ -38,7 +38,24 @@ if [[ "$ACTION" == doctor ]]; then
   [[ -f "$BRIDGE" && ! -L "$BRIDGE" && -x "$BRIDGE" ]] && echo 'bridge binary: installed' || echo 'bridge binary: missing'
   [[ -d "$EXT_STATE" && ! -L "$EXT_STATE" && -f "$EXT_STATE/manifest.json" ]] && echo 'extension state: present' || echo 'extension state: missing'
   [[ -f "$PACKAGE_PATH" && ! -L "$PACKAGE_PATH" ]] && echo 'extension package: present' || echo 'extension package: missing'
-  [[ -S "$SOCKET" ]] && echo 'canonical socket: listening' || echo 'canonical socket: not listening'
+  if [[ -S "$SOCKET" ]] && python3 - "$SOCKET" <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(1)
+try:
+    s.connect(sys.argv[1])
+except OSError:
+    raise SystemExit(1)
+finally:
+    s.close()
+PY
+  then
+    echo 'canonical socket: listening'
+  elif [[ -S "$SOCKET" ]]; then
+    echo 'canonical socket: stale'
+  else
+    echo 'canonical socket: not listening'
+  fi
   exit 0
 fi
 
@@ -102,4 +119,3 @@ PY
 mv -- "$package_tmp" "$PACKAGE_PATH"; package_tmp=''; chmod 600 -- "$PACKAGE_PATH"
 printf '%s\n' "$HOST_ID" > "$STATE/identity"; printf '%s\n' "$SOCKET_NAME" > "$STATE/socket"; printf '%s\n' "$EXT_ID" > "$STATE/extension-id"; printf '%s\n' "$PACKAGE" > "$STATE/package"; chmod 600 "$STATE"/identity "$STATE"/socket "$STATE"/extension-id "$STATE"/package
 echo "Installed firefox_dom in $STATE. In Firefox, use about:addons > gear > Install Add-on From File to select $PACKAGE_PATH, or about:debugging > This Firefox > Load Temporary Add-on and select $EXT_STATE/manifest.json. Firefox profiles are not modified."
-

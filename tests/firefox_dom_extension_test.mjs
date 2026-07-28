@@ -152,3 +152,12 @@ test('content coordinator rejects stale document requests at its boundary', asyn
   assert.equal(stale.error.code, 'stale_document');
   assert.equal(stale.action, 'outline');
 });
+
+test('content coordinator normalizes Error instances before extension messaging', async () => {
+  const { ns, handle } = install();
+  const missing = `0:${ns.modules.core.documentId}:0:missing`;
+  const result = await handle({ action: 'find', within: missing, document_id: ns.modules.core.documentId });
+  assert.equal(result.error.constructor.name, 'Object');
+  assert.equal(result.error.code, 'invalid_ref');
+  assert.equal(typeof result.error.message, 'string');
+});

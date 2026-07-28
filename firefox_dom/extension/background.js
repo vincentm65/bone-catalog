@@ -6,6 +6,7 @@
   var DEFAULT_MAX_NODES = 150;
   var DEFAULT_MAX_TEXT = 12000;
   var NAVIGATION_TIMEOUT = 15000;
+  var MAX_NAVIGATION_TIMEOUT = 30000;
   var HOST = 'dev.bone.firefox_dom';
   var browserApi = root.browser || root.chrome;
   var mutationTail = Promise.resolve();
@@ -102,6 +103,11 @@
     value = Number(value);
     return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
   }
+  function navigationTimeout(value) {
+    value = Number(value);
+    if (!Number.isFinite(value)) value = NAVIGATION_TIMEOUT;
+    return Math.max(1000, Math.min(MAX_NAVIGATION_TIMEOUT, Math.floor(value)));
+  }
   function budgetResult(action, frames, request) {
     var maxNodes = budgetNumber(request.max_nodes, DEFAULT_MAX_NODES);
     var maxText = budgetNumber(request.max_text, DEFAULT_MAX_TEXT);
@@ -185,23 +191,32 @@
     if (!tab) return response(action, 0, null, failure('invalid_request', 'tab does not exist'));
     if (action === 'navigate') {
       if (typeof request.url !== 'string' || !request.url) return response(action, 0, null, failure('invalid_request', 'url is required'));
+      var timeoutMs = navigationTimeout(request.timeout_ms);
+      var finishNavigation = null;
       var completed = new Promise(function (resolve) {
-        var settled = false;
+        var settled = false, timer = null;
         var finish = function (value) {
           if (settled) return;
           settled = true;
           if (browserApi.tabs.onUpdated && browserApi.tabs.onUpdated.removeListener) browserApi.tabs.onUpdated.removeListener(listener);
+          if (timer !== null) clearTimeout(timer);
           resolve(value);
         };
-        var listener = function (details) {
-          if (details.tabId === tab.id && details.frameId === 0 && (!details.status || details.status === 'complete')) finish(true);
+        finishNavigation = finish;
+        /* tabs.onUpdated supplies (tabId, changeInfo, tab), not a webNavigation
+           details object. It only reports top-level tab navigation here. */
+        var listener = function (tabId, changeInfo) {
+          if (tabId === tab.id && changeInfo && changeInfo.status === 'complete') finish(true);
         };
         if (browserApi.tabs.onUpdated && browserApi.tabs.onUpdated.addListener) browserApi.tabs.onUpdated.addListener(listener);
-        setTimeout(function () { finish(false); }, NAVIGATION_TIMEOUT);
+        timer = setTimeout(function () { finish(false); }, timeoutMs);
       });
       try { await browserApi.tabs.update(tab.id, { url: request.url }); }
-      catch (_) { return response(action, 0, null, failure('invalid_request', 'navigation failed')); }
-      if (!(await completed)) return response(action, 0, null, failure('navigation_timeout', 'navigation did not complete', { timeout_ms: NAVIGATION_TIMEOUT }));
+      catch (_) {
+        finishNavigation(false);
+        return response(action, 0, null, failure('invalid_request', 'navigation failed'));
+      }
+      if (!(await completed)) return response(action, 0, null, failure('navigation_timeout', 'navigation did not complete', { timeout_ms: timeoutMs }));
       return response(action, 0, { tab_id: tab.id, url: request.url });
     }
     function parseInbound(name) {
@@ -282,7 +297,7 @@
       port.onMessage.addListener(function (request) { dispatchSerialized(request).then(function (result) { port.postMessage(bounded(result, request && request.action)); }); });
     });
   }
-  var api = { dispatch: dispatchSerialized, parseRef: parseRef, makeRef: makeRef, install: install, constants: { HOST: HOST, MAX_MESSAGE_BYTES: MAX_MESSAGE_BYTES, NAVIGATION_TIMEOUT: NAVIGATION_TIMEOUT } };
+  var api = { dispatch: dispatchSerialized, parseRef: parseRef, makeRef: makeRef, install: install, constants: { HOST: HOST, MAX_MESSAGE_BYTES: MAX_MESSAGE_BYTES, NAVIGATION_TIMEOUT: NAVIGATION_TIMEOUT, MAX_NAVIGATION_TIMEOUT: MAX_NAVIGATION_TIMEOUT } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.FirefoxDOMBackground = api;
   install();

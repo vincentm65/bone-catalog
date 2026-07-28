@@ -185,7 +185,9 @@
       try { doc.querySelectorAll(css); } catch (e) { throw failure('invalid_selector', 'Invalid CSS selector', { selector: css }); }
     }
     var elements = allElements(doc, core), scope = request.within || p.within, withinNode = scope && typeof scope !== 'object' ? (core.nodeFor ? core.nodeFor(scope) : null) : scope;
-    if (withinNode) elements = elements.filter(function (n) { return n === withinNode || isAncestor(withinNode, n); });
+    if (scope && !withinNode) throw failure('invalid_ref', 'within ref is not known');
+    if (withinNode && core.isConnected && !core.isConnected(withinNode)) throw failure('detached_node', 'within ref is detached');
+    if (withinNode) elements = elements.filter(function (n) { return n === withinNode || isAncestor(withinNode, n, elements); });
     var matches = [], truncated = false;
     for (var i = 0; i < elements.length; i++) {
       var n = elements[i];

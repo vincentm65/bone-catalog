@@ -70,6 +70,31 @@ test('frame_id filters non-ref requests and changes stays on one frame', async (
   assert.deepEqual(calls.filter((x) => x[0] === 'send').map((x) => x[3].frameId), [0]);
 });
 
+test('navigate recognizes the Firefox tabs.onUpdated callback and removes its listener', async () => {
+  calls.length = 0;
+  const navigating = api.dispatch({ action: 'navigate', tab_id: 7, url: 'https://example.test/next', timeout_ms: 1000 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(listeners.updated.size, 1);
+  for (const listener of listeners.updated) listener(7, { status: 'complete', url: 'https://example.test/next' }, tabs[0]);
+  const result = await navigating;
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.result, { tab_id: 7, url: 'https://example.test/next' });
+  assert.equal(listeners.updated.size, 0);
+});
+
+test('navigate removes its listener when Firefox rejects the URL', async () => {
+  const update = browser.tabs.update;
+  browser.tabs.update = async () => { throw new Error('rejected'); };
+  try {
+    const result = await api.dispatch({ action: 'navigate', tab_id: 7, url: 'bad:URL', timeout_ms: 1000 });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.message, 'navigation failed');
+    assert.equal(listeners.updated.size, 0);
+  } finally {
+    browser.tabs.update = update;
+  }
+});
+
 test('global node and text budgets are not multiplied across frames', async () => {
   browser.webNavigation.getAllFrames = async () => [{ frameId: 0 }, { frameId: 1 }, { frameId: 2 }];
   browser.tabs.sendMessage = async (id, request, options) => {

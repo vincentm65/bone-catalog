@@ -59,7 +59,11 @@
       if (result && result.error && result.error.code) throw result.error;
       return response(request, result);
     } catch (error) {
-      var failureValue = error && error.code ? error : failure('invalid_request', error && error.message || String(error));
+      /* Firefox serializes Error instances without their custom code/details
+         across extension messaging. Always return the protocol's plain shape. */
+      var failureValue = error && error.code
+        ? failure(error.code, error.message, error.details)
+        : failure('invalid_request', error && error.message || String(error));
       return response(request || {}, null, failureValue);
     }
   }

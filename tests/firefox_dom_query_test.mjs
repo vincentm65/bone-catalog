@@ -64,6 +64,15 @@ test('honors within scope and reports bounded truncation', () => {
   assert.match(result.hint, /Narrow/);
 });
 
+test('rejects an unknown within ref instead of widening to the whole document', () => {
+  const { element, document, query } = setup();
+  document.body.append(element('button', { textContent: 'Outside' }));
+  assert.throws(
+    () => query.find({ document, within: '7:d3:0:missing' }),
+    (error) => error.code === 'invalid_ref'
+  );
+});
+
 test('returns invalid_selector for browser-rejected CSS', () => {
   const { document, query } = setup();
   const bad = new FakeElement('div', document);

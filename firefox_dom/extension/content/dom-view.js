@@ -63,7 +63,14 @@
     if (cache) cache.visible.set(n, result);
     return result;
   }
-  function focusable(n) { var t = String(n.localName || '').toLowerCase(), ti = attr(n, 'tabindex'); return ti !== null || /^(a|button|input|select|textarea|summary|option)$/.test(t) || n.contentEditable === true || attr(n, 'contenteditable') === 'true'; }
+  function editable(n) { var t = String(n.localName || '').toLowerCase(); return !n.readOnly && (/^(input|textarea)$/.test(t) || n.isContentEditable || n.contentEditable === true || attr(n, 'contenteditable') === 'true'); }
+  function focusable(n) {
+    if (n.disabled || has(n, 'disabled')) return false;
+    var t = String(n.localName || '').toLowerCase(), ti = attr(n, 'tabindex');
+    if (ti !== null) return Number(ti) >= 0;
+    if ((t === 'a' || t === 'area') && attr(n, 'href') !== null) return true;
+    return /^(button|input|select|textarea|summary|iframe)$/.test(t) || editable(n);
+  }
   function interactive(n) { var t = String(n.localName || '').toLowerCase(); return /^(a|button|input|select|textarea|option|summary)$/.test(t) || focusable(n) || typeof n.onclick === 'function' || attr(n, 'onclick') !== null || (n.style && n.style.cursor === 'pointer'); }
   function children(n) {
     var out = [], seen = [];
@@ -83,12 +90,22 @@
   }
   function scopeNodes(input, all) {
     var scope = input && input.scope || 'viewport', d = docOf(input), r = input && input.region;
-    if (scope === 'document') return all;
     var rootNode = null;
-    if (scope === 'subtree') rootNode = getNode(input.ref, all);
+    if (scope === 'subtree') {
+      rootNode = getNode(input.ref, all);
+      if (!rootNode) throw ns.error('invalid_ref', 'Subtree ref was not found');
+    }
     else if (scope === 'focused') rootNode = d && d.activeElement;
+    input._scopeRoot = rootNode;
+    if (scope === 'document') return all;
     var box = scope === 'region' ? { x: +input.x || 0, y: +input.y || 0, right: (+input.x || 0) + (+input.width || 0), bottom: (+input.y || 0) + (+input.height || 0) } : null;
-    return all.filter(function (n) { if (rootNode && n !== rootNode && !contains(rootNode, n)) return false; var rr = rect(n, input); if (box && rr && !(rr.right < box.x || rr.x > box.right || rr.bottom < box.y || rr.y > box.bottom)) return true; if (scope === 'viewport') return !!(rr && visible(n, rr, input) && rr.right >= 0 && rr.x <= ((d && d.defaultView && d.defaultView.innerWidth) || 1024) && rr.bottom >= 0 && rr.y <= ((d && d.defaultView && d.defaultView.innerHeight) || 768)); return scope === 'focused' ? n === rootNode || contains(rootNode, n) : true; });
+    return all.filter(function (n) {
+      if (rootNode) return n === rootNode || contains(rootNode, n);
+      var rr = rect(n, input);
+      if (box) return !!(rr && !(rr.right < box.x || rr.x > box.right || rr.bottom < box.y || rr.y > box.bottom));
+      if (scope === 'viewport') return !!(rr && visible(n, rr, input) && rr.right >= 0 && rr.x <= ((d && d.defaultView && d.defaultView.innerWidth) || 1024) && rr.bottom >= 0 && rr.y <= ((d && d.defaultView && d.defaultView.innerHeight) || 768));
+      return false;
+    });
   }
   function contains(a, b) { var n = b; while (n) { if (n === a) return true; n = parent(n); } return false; }
   function getNode(r, all) { for (var i = 0; i < all.length; i++) if (ref(all[i]) === r || all[i].ref === r) return all[i]; return null; }
@@ -101,11 +118,13 @@
     var label = attr(n, 'aria-label'); if (label) out.accessible_name = bounded(label, B.directText);
     if (r) {
       out.rect = r; out.visible = visible(n, r, input); out.in_viewport = !!(d && d.defaultView && r.right >= 0 && r.bottom >= 0 && r.left <= d.defaultView.innerWidth && r.top <= d.defaultView.innerHeight);
-      var win = d && d.defaultView, hit = null;
-      try { hit = win && win.elementFromPoint ? win.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null; } catch (_) {}
+      var hit = null, hitRoot = d, treeRoot = null;
+      try { treeRoot = n.getRootNode && n.getRootNode(); } catch (_) {}
+      if (treeRoot && typeof treeRoot.elementFromPoint === 'function') hitRoot = treeRoot;
+      try { hit = hitRoot && hitRoot.elementFromPoint ? hitRoot.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null; } catch (_) {}
       out.hit_test = { point: { x: r.left + r.width / 2, y: r.top + r.height / 2 }, hit: hit ? ref(hit) : null, covered: !!(hit && hit !== n && !contains(n, hit)), covered_by: hit && hit !== n && !contains(n, hit) ? ref(hit) : undefined };
     }
-    out.focusable = focusable(n); out.focused = !!(d && d.activeElement === n); out.editable = !!(n.isContentEditable || n.contentEditable === true || attr(n, 'contenteditable') === 'true'); out.disabled = !!(n.disabled || has(n, 'disabled')); out.interaction = { native_control: /^(a|button|input|select|textarea|option)$/.test(tag), link: tag === 'a', inline_handler: typeof n.onclick === 'function' || attr(n, 'onclick') !== null, pointer_cursor: !!(n.style && n.style.cursor === 'pointer') };
+    out.focusable = focusable(n); out.focused = !!(d && d.activeElement === n); out.editable = editable(n); out.disabled = !!(n.disabled || has(n, 'disabled')); out.interaction = { native_control: /^(a|button|input|select|textarea|option)$/.test(tag), link: tag === 'a' && attr(n, 'href') !== null, inline_handler: typeof n.onclick === 'function' || attr(n, 'onclick') !== null, pointer_cursor: !!(n.style && n.style.cursor === 'pointer') };
     if (level === 'inspect') {
       var names = ['id','class','name','type','href','for','tabindex','placeholder','title','contenteditable','disabled','readonly','required']; out.attributes = {};
       for (var i = 0; i < names.length && Object.keys(out.attributes).length < B.maxAttributes; i++) { var v = attr(n, names[i]); if (v !== null) out.attributes[names[i]] = bounded(redacted(n, v, names[i]), B.maxAttributeValue); }
@@ -121,7 +140,7 @@
   view.outline = function (input) {
     input = input || {}; input._layoutCache = { rect: new WeakMap(), visible: new WeakMap() }; var all = elements(input), selected = scopeNodes(input, all), max = Math.min(Math.max(1, input.max_nodes || B.outlineNodes), B.maxNodes || 500), depth = Math.min(Math.max(0, input.depth == null ? 12 : input.depth), B.maxDepth), keep = new Set();
     selected.forEach(function (n) { var desc = children(n).some(function (c) { return important(c, false); }); if (important(n, desc)) { keep.add(n); var p = parent(n); while (p && selected.indexOf(p) >= 0) { keep.add(p); p = parent(p); } } });
-    var records = [], usedText = 0, omitted = 0; selected.forEach(function (n) { if (!keep.has(n)) return; var level = 0, p = n; while ((p = parent(p))) level++; if (level > depth) { omitted++; return; } if (records.length >= max) { omitted++; return; } var rec = base(n, 'outline', input); var kids = children(n).filter(function (c) { return keep.has(c); }); if (kids.length) rec.children = kids.map(ref).filter(Boolean); usedText += (rec.direct_text || '').length; if (usedText > Math.min(input.max_text || B.outlineText, B.totalText)) { delete rec.direct_text; omitted++; return; } records.push(rec); });
+    var records = [], usedText = 0, omitted = 0; selected.forEach(function (n) { if (!keep.has(n)) return; var level = 0, p = n; while (p && p !== input._scopeRoot && (p = parent(p))) level++; if (level > depth) { omitted++; return; } if (records.length >= max) { omitted++; return; } var rec = base(n, 'outline', input); var kids = children(n).filter(function (c) { return keep.has(c); }); if (kids.length) rec.children = kids.map(ref).filter(Boolean); usedText += (rec.direct_text || '').length; if (usedText > Math.min(input.max_text || B.outlineText, B.totalText)) { delete rec.direct_text; omitted++; return; } records.push(rec); });
     var result = { scope: input.scope || 'viewport', nodes: records }; Object.assign(result, metadata(omitted, 'Narrow scope, reduce depth, or inspect a subtree; continue with subtree ref.')); return result;
   };
   view.inspect = function (input) {

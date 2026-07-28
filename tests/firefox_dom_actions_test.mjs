@@ -63,11 +63,18 @@ test('type and set_value use property mutation and input/change ordering', async
   const { ns, node } = setup('input', { type: 'text' });
   const events = [];
   for (const type of ['input', 'change']) node.addEventListener(type, () => events.push(type));
-  const typed = await ns.modules.actions.act({ operation: 'type', ref: '7:d3:0:n1', value: 'ab' });
+  const typed = await ns.modules.actions.act({ operation: 'type', ref: '7:d3:0:n1', text: 'ab' });
   assert.equal(node.value, 'ab');
   assert.equal(typed.result.typed, 2);
   await ns.modules.actions.act({ operation: 'set_value', ref: '7:d3:0:n1', value: 'done' });
   assert.deepEqual(events, ['input', 'input', 'input', 'change']);
+});
+
+test('type handles contenteditable text and Unicode characters', async () => {
+  const { ns, node } = setup('div', { contenteditable: 'true' });
+  const result = await ns.modules.actions.act({ operation: 'type', ref: '7:d3:0:n1', text: 'A😀' });
+  assert.equal(node.textContent, 'A😀');
+  assert.equal(result.result.typed, 2);
 });
 
 test('native select requires exactly one criterion and rejects ambiguous labels', async () => {

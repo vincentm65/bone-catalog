@@ -76,12 +76,34 @@ test('inspect returns ancestors, siblings, relations, and bounded select options
 test('geometry and interaction hints describe covered/visible context without leaking values', () => {
   const { element, document, ns } = loadView();
   const input = element('input', { type: 'password', name: 'password', value: 'do-not-return', rect: { x: 10, y: 10, width: 100, height: 20, top: 10, left: 10, right: 110, bottom: 30 } });
+  const cover = element('div');
   document.body.append(input);
+  document.elementFromPoint = () => cover;
   const result = ns.modules.view.inspect({ ref: ns.modules.core.refFor(input), include: [], document });
   assert.equal(result.node.rect.x, 10);
   assert.equal(result.node.rect.width, 100);
   assert.equal(result.node.interaction.native_control, true);
+  assert.equal(result.node.editable, true);
+  assert.equal(result.node.hit_test.covered, true);
+  assert.equal(result.node.hit_test.covered_by, ns.modules.core.refFor(cover));
   assert.equal(result.node.value, '[REDACTED]');
+});
+
+test('region and subtree scopes stay narrow and use scope-relative depth', () => {
+  const { element, document, ns } = loadView();
+  const wrapper = element('div');
+  const inside = element('button', { textContent: 'Inside', rect: { x: 10, y: 10, width: 30, height: 20, top: 10, left: 10, right: 40, bottom: 30 } });
+  const outside = element('button', { textContent: 'Outside', rect: { x: 500, y: 500, width: 30, height: 20, top: 500, left: 500, right: 530, bottom: 520 } });
+  wrapper.append(inside); document.body.append(wrapper, outside);
+  const region = ns.modules.view.outline({ scope: 'region', x: 0, y: 0, width: 100, height: 100, document });
+  assert.ok(region.nodes.some((node) => node.ref === ns.modules.core.refFor(inside)));
+  assert.equal(region.nodes.some((node) => node.ref === ns.modules.core.refFor(outside)), false);
+  const subtree = ns.modules.view.outline({ scope: 'subtree', ref: ns.modules.core.refFor(wrapper), depth: 1, document });
+  assert.ok(subtree.nodes.some((node) => node.ref === ns.modules.core.refFor(inside)));
+  assert.throws(
+    () => ns.modules.view.outline({ scope: 'subtree', ref: '7:d3:0:missing', document }),
+    (error) => error.code === 'invalid_ref'
+  );
 });
 
 test('uses a fresh layout cache for each request', () => {
