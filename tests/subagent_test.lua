@@ -36,11 +36,13 @@ assert(tools.subagent, "enabled agents: subagent tool should be registered")
 
 local subagent_tool = tools.subagent
 local spawned = 0
+local spawn_opts = {}
 local jobs = {}
 local ctx = {
     agent = {
-        spawn = function()
+        spawn = function(_, opts)
             spawned = spawned + 1
+            spawn_opts[#spawn_opts + 1] = opts
             return { ok = true, id = "job-" .. spawned }
         end,
         jobs = function() return jobs end,
@@ -57,6 +59,18 @@ local result = subagent_tool.execute({
 }, ctx)
 assert(result:find("job-1", 1, true) and result:find("job-2", 1, true),
     "successful dispatches must return job ids")
+assert(spawn_opts[1].max_concurrency == nil and spawn_opts[2].max_concurrency == nil,
+    "dispatch must rely on provider-level concurrency")
+assert(subagent_tool.description:find("resolved provider", 1, true),
+    "tool description must explain provider-level concurrency")
+assert(not subagent_tool.description:find("max_concurrency", 1, true),
+    "tool description must not advertise agent-level concurrency")
+
+local file = assert(io.open("tools/subagent.lua", "r"))
+local source = file:read("*a")
+file:close()
+assert(not source:find("max_concurrency", 1, true),
+    "/agents must not display or edit agent-level concurrency")
 
 result = subagent_tool.execute({ action = "cancel" }, ctx)
 assert(type(result) == "string" and result:find("Provide ids", 1, true),

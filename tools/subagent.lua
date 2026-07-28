@@ -75,7 +75,6 @@ local function copy_agent(agent)
         model = agent and agent.model or nil,
         approval = agent and agent.approval or "safe",
         timeout_ms = agent and agent.timeout_ms or nil,
-        max_concurrency = agent and agent.max_concurrency or 1,
         enabled = agent == nil or agent.enabled ~= false,
         source = "config",
     }
@@ -95,11 +94,6 @@ local function validate(draft)
         end
         draft.timeout_ms = timeout
     end
-    local max_concurrency = tonumber(draft.max_concurrency)
-    if not max_concurrency or max_concurrency % 1 ~= 0 or max_concurrency < 1 then
-        return "Max concurrency must be a positive integer."
-    end
-    draft.max_concurrency = max_concurrency
     return nil
 end
 
@@ -112,7 +106,6 @@ local function editor_options(draft, is_new)
         { label = "Model", description = draft.model or "inherit", value = "model" },
         { label = "Approval", description = draft.approval, value = "approval" },
         { label = "Timeout", description = draft.timeout_ms and tostring(draft.timeout_ms) .. " ms" or "default", value = "timeout" },
-        { label = "Max concurrency", description = tostring(draft.max_concurrency), value = "max_concurrency" },
         { label = "Enabled", description = draft.enabled and "yes" or "no", value = "enabled" },
         { label = "Save", description = "Persist to subagents.yaml", value = "save" },
     }
@@ -157,9 +150,6 @@ local function edit_agent(ctx, agent)
         elseif field == "timeout" then
             local value = edit_text(ctx, "timeout in milliseconds (blank for default)", draft.timeout_ms)
             if value ~= nil then draft.timeout_ms = optional(value) end
-        elseif field == "max_concurrency" then
-            local value = edit_text(ctx, "max concurrent jobs", draft.max_concurrency)
-            if value ~= nil then draft.max_concurrency = trim(value) end
         elseif field == "enabled" then
             draft.enabled = not draft.enabled
         elseif field == "save" then
@@ -195,7 +185,6 @@ local function agent_option(agent)
                 "Model: " .. (agent.model or "inherit"),
                 "Approval: " .. (agent.approval or "safe"),
                 "Timeout: " .. (agent.timeout_ms and tostring(agent.timeout_ms) .. " ms" or "default"),
-                "Max concurrency: " .. tostring(agent.max_concurrency or 1),
                 "System prompt:",
                 prompt,
             },
@@ -360,7 +349,6 @@ local function opts_for(agent, title)
         model = agent.model,
         approval = agent.approval,
         timeout_ms = agent.timeout_ms,
-        max_concurrency = agent.max_concurrency or 1,
     }
     if agent.tools and #agent.tools > 0 then opts.tools = agent.tools end
     return opts
@@ -395,9 +383,6 @@ local function build_description()
         if agent.approval then
             extras[#extras + 1] = "approval: " .. agent.approval
         end
-        if agent.max_concurrency and agent.max_concurrency > 1 then
-            extras[#extras + 1] = "concurrency: " .. agent.max_concurrency
-        end
         local suffix = #extras > 0 and (" [" .. table.concat(extras, ", ") .. "]") or ""
         parts[#parts + 1] = string.format("  - %s: %s%s", agent.name, agent.description, suffix)
     end
@@ -413,7 +398,7 @@ local function build_description()
             "",
             "Rules:",
             "- Batch independent tasks into a single dispatch call to maximize parallelism.",
-            "- Each agent runs up to its `max_concurrency` jobs at a time (default 1); dispatching beyond the cap queues tasks.",
+            "- Delegated runs share the concurrency limit configured for their resolved provider.",
         }, "\n")
     else
         parts[#parts + 1] = table.concat({
@@ -428,7 +413,7 @@ local function build_description()
             "",
             "Rules:",
             "- Batch independent tasks into a single dispatch call to maximize parallelism.",
-            "- Each agent runs up to its `max_concurrency` jobs at a time (default 1); dispatching beyond the cap queues tasks.",
+            "- Delegated runs share the concurrency limit configured for their resolved provider.",
             "- NEVER duplicate the work you delegated. Once a task is dispatched, do not read the same files, run the same searches, or research the same questions yourself — that wastes context and defeats the purpose of delegating. Let the sub-agent do it.",
         }, "\n")
     end
