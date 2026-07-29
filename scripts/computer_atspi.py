@@ -57,7 +57,8 @@ def bounded_text(value):
 
 def enum_key(value):
     name = getattr(value, "value_name", None) or str(value)
-    return name.rsplit("_", 1)[-1] if name.startswith("ATSPI_ROLE_") else name.rsplit(".", 1)[-1]
+    prefix = "ATSPI_ROLE_"
+    return name[len(prefix):] if name.startswith(prefix) else name.rsplit(".", 1)[-1]
 
 
 def states_for(node, Atspi):
@@ -171,7 +172,7 @@ def actionable(role_key, states):
     return (
         role_key in ROLE_NAMES
         and states["visible"] and states["showing"] and states["sensitive"]
-        and (states["enabled"] or states["focusable"] or states["editable"])
+        and states["enabled"]
     )
 
 

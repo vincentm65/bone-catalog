@@ -435,7 +435,7 @@ local function semantic_target(overrides)
         states = {
             checked = false,
             editable = false,
-            enabled = false,
+            enabled = true,
             expanded = false,
             focusable = true,
             focused = false,
@@ -485,7 +485,7 @@ local function semantic_fixture(resolve_target)
     })
     assert(found.semantic.available == true)
     assert(found.semantic.targets[1].id == target.id)
-    assert(found.semantic.targets[1].states.enabled == false)
+    assert(found.semantic.targets[1].states.enabled == true)
     assert(found.semantic.targets[1].states.focusable == true)
     return semantic, found, target
 end
@@ -535,6 +535,41 @@ for _, targets in ipairs({
     }, #targets > 64 and "invalid semantic helper result" or "duplicate semantic target id")
     assert(#calls_for(bounded, "ydotool") == 0)
 end
+
+-- Defense in depth rejects non-actionable targets even if a helper returns one.
+for _, state_name in ipairs({ "enabled", "sensitive", "showing", "visible" }) do
+    local unsafe_semantic = new_fixture()
+    unsafe_semantic.hook = function(call)
+        if call.program == "python3" then
+            local target = semantic_target()
+            target.states[state_name] = false
+            return success(cjson.encode({ ok = true, available = true, targets = { target } }))
+        end
+    end
+    local unsafe_baseline = content(unsafe_semantic, { action = "observe" })
+    failure(unsafe_semantic, {
+        action = "semantic_find", screenshot_id = unsafe_baseline.screenshot_id,
+    }, "not safely actionable")
+    assert(#calls_for(unsafe_semantic, "ydotool") == 0)
+end
+
+-- Password names are redacted again at the Lua trust boundary.
+local password_semantic = new_fixture()
+password_semantic.hook = function(call)
+    if call.program == "python3" then
+        return success(cjson.encode({
+            ok = true,
+            available = true,
+            targets = { semantic_target({ role = "password_text", name = "SECRET password name" }) },
+        }))
+    end
+end
+local password_baseline = content(password_semantic, { action = "observe" })
+local protected = content(password_semantic, {
+    action = "semantic_find", screenshot_id = password_baseline.screenshot_id,
+})
+assert(protected.semantic.targets[1].name == "[protected]")
+assert(protected.semantic.targets[1].role == "password_text")
 
 -- Unknown IDs, changed identity/state/bounds, and uncalibrated centers reject before input.
 local semantic_unknown, unknown_found = semantic_fixture()

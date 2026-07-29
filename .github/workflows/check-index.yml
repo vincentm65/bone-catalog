@@ -13,8 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Lua
-        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Install test dependencies
+        run: sudo apt-get update && sudo apt-get install -y lua5.4 python3-gi gir1.2-atspi-2.0
 
       - name: Check Lua syntax
         run: find commands tools themes -type f -name '*.lua' -print0 | xargs -0 -n1 luac5.4 -p
@@ -24,6 +24,12 @@ jobs:
           for test_file in tests/*_test.lua; do
             lua5.4 "$test_file"
           done
+
+      - name: Check Python syntax
+        run: /usr/bin/python3 -m py_compile scripts/*.py tests/*.py
+
+      - name: Run Python tests
+        run: BONE_TEST_REQUIRE_ATSPI_GI=1 /usr/bin/python3 -m unittest discover -s tests -p 'test_*.py'
 
       - name: Regenerate catalog.json
         run: ./gen-index.sh

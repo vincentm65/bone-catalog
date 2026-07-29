@@ -763,6 +763,9 @@ local function validate_semantic_target(target, snapshot, action)
     then
         fail(action .. ": invalid semantic helper result")
     end
+    if target.role == "password_text" then
+        target.name = "[protected]"
+    end
     for _, key in ipairs(semantic_state_keys) do
         if type(target.states[key]) ~= "boolean" then
             fail(action .. ": invalid semantic helper result")
@@ -783,9 +786,13 @@ local function validate_semantic_target(target, snapshot, action)
         or center.x ~= bounds.x + math.floor(bounds.width / 2)
         or center.y ~= bounds.y + math.floor(bounds.height / 2)
         or not semantic_point_on_monitor(snapshot.monitor, center.x, center.y)
-        or not target.states.visible or not target.states.showing or not target.states.sensitive
     then
         fail(action .. ": semantic target bounds are not safely clickable")
+    end
+    if not target.states.visible or not target.states.showing
+        or not target.states.sensitive or not target.states.enabled
+    then
+        fail(action .. ": semantic target is not safely actionable")
     end
     return target
 end
