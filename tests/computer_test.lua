@@ -19,15 +19,43 @@ cjson = {
 }
 
 local registered
+local registrations = {}
 bone = {
     tool = {
         register = function(spec)
+            registrations[spec.name] = spec
             registered = spec
         end,
     },
 }
 assert(loadfile("tools/computer.lua"))()
+local observe = assert(registrations.computer_observe)
+assert(observe.display.template == "observing screen")
+assert(observe.display.show_result == false)
+assert(observe.display.args == nil)
+assert(observe.display.value_labels == nil)
 assert(registered.name == "computer")
+assert(registered.display.template == "{action} {target_label}")
+assert(registered.display.show_result == false)
+assert(registered.display.args == nil)
+local expected_labels = {
+    inspect = "inspecting target",
+    semantic_find = "finding accessible controls",
+    semantic_click = "clicking accessible control",
+    move = "moving pointer",
+    click = "clicking",
+    click_locked = "clicking locked target",
+    double_click = "double-clicking",
+    right_click = "right-clicking",
+    drag = "dragging",
+    scroll = "scrolling",
+    type = "typing",
+    key = "pressing keys",
+    wait = "waiting",
+}
+for action, label in pairs(expected_labels) do
+    assert(registered.display.value_labels.action[action] == label)
+end
 assert(registered.safety == "danger")
 assert(registered.stateful == true)
 assert(registered.parameters.additionalProperties == false)
@@ -35,6 +63,10 @@ assert(registered.parameters.properties.start_x)
 assert(registered.parameters.properties.duration_ms)
 assert(registered.parameters.properties.semantic_id)
 assert(registered.parameters.properties.semantic_id.pattern == "^atspi:[0-9]+([.][0-9]+)*$")
+local target_label_schema = assert(registered.parameters.properties.target_label)
+assert(target_label_schema.type == "string")
+assert(target_label_schema.minLength == 1)
+assert(target_label_schema.maxLength == 80)
 local actions = {}
 for _, action in ipairs(registered.parameters.properties.action.enum) do
     actions[action] = true
@@ -253,10 +285,21 @@ local validation_cases = {
     { { action = "semantic_click", screenshot_id = first_id, semantic_id = "atspi:0.bad" }, "semantic_id is required" },
     { { action = "semantic_find", screenshot_id = first_id, semantic_id = "atspi:0.1" }, "irrelevant field" },
     { { action = "observe", grid = "yes" }, "grid must" },
+    { { action = "click", screenshot_id = first_id, x = 0, y = 0, target_label = "" }, "target_label must" },
+    { { action = "click", screenshot_id = first_id, x = 0, y = 0, target_label = 1 }, "target_label must" },
+    { { action = "click", screenshot_id = first_id, x = 0, y = 0, target_label = string.rep("x", 81) }, "target_label must" },
+    { { action = "click", screenshot_id = first_id, x = 0, y = 0, target_label = "Submit\nbutton" }, "target_label must" },
 }
 for _, case in ipairs(validation_cases) do
     reset_calls(fixture)
     failure(fixture, case[1], case[2])
+    assert(#fixture.calls == 0)
+end
+for _, action in ipairs({
+    "observe", "inspect", "semantic_find", "move", "drag", "scroll", "type", "key", "wait",
+}) do
+    reset_calls(fixture)
+    failure(fixture, { action = action, target_label = "visible target" }, "irrelevant field")
     assert(#fixture.calls == 0)
 end
 
@@ -298,20 +341,20 @@ fixture.hook = nil
 -- All non-verifiable input actions report ambiguous delivery after one attempt.
 local input_cases = {
     {
-        action = "click", params = { x = 0, y = 0 },
+        action = "click", params = { x = 0, y = 0, target_label = "Submit button" },
         check = function(calls)
             assert(calls[#calls].args[1] == "click" and calls[#calls].args[#calls[#calls].args] == "0xC0")
         end,
     },
     {
-        action = "double_click", params = { x = 0, y = 0 },
+        action = "double_click", params = { x = 0, y = 0, target_label = "Document row" },
         check = function(calls)
             local args = calls[#calls].args
             assert(args[1] == "click" and args[2] == "--repeat" and args[3] == "2")
         end,
     },
     {
-        action = "right_click", params = { x = 0, y = 0 },
+        action = "right_click", params = { x = 0, y = 0, target_label = "Document row" },
         check = function(calls)
             assert(calls[#calls].args[#calls[#calls].args] == "0xC1")
         end,
@@ -359,6 +402,16 @@ for _, case in ipairs(input_cases) do
     current_id = result.screenshot_id
     case.check(calls_for(fixture, "ydotool"))
 end
+
+-- Locked clicks accept target descriptions before independently verifying the lock.
+reset_calls(fixture)
+failure(fixture, {
+    action = "click_locked",
+    screenshot_id = current_id,
+    target_token = "missing-token",
+    target_label = "Submit button",
+}, "target token is stale")
+assert(#calls_for(fixture, "ydotool") == 0)
 
 -- Invalid input is rejected before ydotool runs.
 local invalid_inputs = {
@@ -521,6 +574,7 @@ local clicked = content(semantic_click, {
     action = "semantic_click",
     screenshot_id = semantic_found.screenshot_id,
     semantic_id = "atspi:0.2.1",
+    target_label = "Apply button",
     settle_ms = 0,
 })
 assert(clicked.semantic_target == "verified")

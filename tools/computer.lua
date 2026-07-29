@@ -477,12 +477,27 @@ local allowed_fields = {
     observe = { action = true, screenshot_id = true, monitor = true, grid = true },
     inspect = { action = true, screenshot_id = true, x = true, y = true, radius = true, grid = true },
     semantic_find = { action = true, screenshot_id = true, grid = true },
-    semantic_click = { action = true, screenshot_id = true, semantic_id = true, settle_ms = true, grid = true },
+    semantic_click = {
+        action = true, screenshot_id = true, semantic_id = true,
+        target_label = true, settle_ms = true, grid = true,
+    },
     move = { action = true, screenshot_id = true, x = true, y = true, settle_ms = true, grid = true },
-    click = { action = true, screenshot_id = true, x = true, y = true, settle_ms = true, grid = true },
-    click_locked = { action = true, screenshot_id = true, target_token = true, settle_ms = true, grid = true },
-    double_click = { action = true, screenshot_id = true, x = true, y = true, settle_ms = true, grid = true },
-    right_click = { action = true, screenshot_id = true, x = true, y = true, settle_ms = true, grid = true },
+    click = {
+        action = true, screenshot_id = true, x = true, y = true,
+        target_label = true, settle_ms = true, grid = true,
+    },
+    click_locked = {
+        action = true, screenshot_id = true, target_token = true,
+        target_label = true, settle_ms = true, grid = true,
+    },
+    double_click = {
+        action = true, screenshot_id = true, x = true, y = true,
+        target_label = true, settle_ms = true, grid = true,
+    },
+    right_click = {
+        action = true, screenshot_id = true, x = true, y = true,
+        target_label = true, settle_ms = true, grid = true,
+    },
     drag = {
         action = true, screenshot_id = true,
         start_x = true, start_y = true, end_x = true, end_y = true,
@@ -512,6 +527,14 @@ local function validate_common(params)
     end
     if params.grid ~= nil and type(params.grid) ~= "boolean" then
         fail("grid must be a boolean")
+    end
+    if params.target_label ~= nil
+        and (type(params.target_label) ~= "string"
+            or #params.target_label == 0
+            or #params.target_label > 80
+            or params.target_label:find("[\r\n]"))
+    then
+        fail("target_label must be a non-empty single-line description of at most 80 bytes")
     end
     if params.action == "observe"
         and params.monitor ~= nil
@@ -1962,7 +1985,8 @@ bone.tool.register({
     stateful = true,
     state_key = STATE_KEY,
     display = {
-        show_result = true,
+        template = "observing screen",
+        show_result = false,
     },
     parameters = {
         type = "object",
@@ -1984,12 +2008,30 @@ bone.tool.register({
 bone.tool.register({
     name = "computer",
     catalog_description = catalog_description,
-    description = "Act on the screenshot returned by computer_observe or the immediately preceding successful computer call. Use semantic_find to list verified AT-SPI controls in the focused window and semantic_click to click one after fresh re-resolution. Screenshot coordinates remain available for inaccessible applications. screenshot_id is always required: copy it exactly from the prior result. Input is sent once and never retried automatically.",
+    description = "Act on the screenshot returned by computer_observe or the immediately preceding successful computer call. Use semantic_find to list verified AT-SPI controls in the focused window and semantic_click to click one after fresh re-resolution. Screenshot coordinates remain available for inaccessible applications. screenshot_id is always required: copy it exactly from the prior result. For click actions, supply a concise non-sensitive target_label for the transcript. Input is sent once and never retried automatically.",
     safety = "danger",
     stateful = true,
     state_key = STATE_KEY,
     display = {
-        show_result = true,
+        template = "{action} {target_label}",
+        value_labels = {
+            action = {
+                inspect = "inspecting target",
+                semantic_find = "finding accessible controls",
+                semantic_click = "clicking accessible control",
+                move = "moving pointer",
+                click = "clicking",
+                click_locked = "clicking locked target",
+                double_click = "double-clicking",
+                right_click = "right-clicking",
+                drag = "dragging",
+                scroll = "scrolling",
+                type = "typing",
+                key = "pressing keys",
+                wait = "waiting",
+            },
+        },
+        show_result = false,
     },
     parameters = {
         type = "object",
@@ -2010,6 +2052,12 @@ bone.tool.register({
                 maxLength = 160,
                 pattern = "^atspi:[0-9]+([.][0-9]+)*$",
                 description = "semantic_click only: exact target id returned by the preceding semantic_find.",
+            },
+            target_label = {
+                type = "string",
+                minLength = 1,
+                maxLength = 80,
+                description = "Click actions only: concise non-sensitive description of the visible target for the transcript label; does not affect target selection.",
             },
             target_token = {
                 type = "string",
