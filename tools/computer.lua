@@ -1,4 +1,4 @@
-local catalog_description = "Control the active Hyprland monitor with hardened screenshots, freshness checks, and direct input execution."
+local catalog_description = "Control Hyprland with hardened screenshots, AT-SPI semantic targets, freshness checks, and direct input execution."
 
 local STATE_KEY = "computer"
 local EXEC_TIMEOUT_MS = 4000
@@ -19,6 +19,9 @@ local TARGET_LOCK_TTL_SECONDS = 60
 local SCREENSHOT_TTL_SECONDS = 120
 local MAX_TEXT_BYTES = 10000
 local MAX_DIAGNOSTIC_BYTES = 1024
+local MAX_SEMANTIC_BYTES = 256 * 1024
+local MAX_SEMANTIC_TARGETS = 64
+local SEMANTIC_TIMEOUT_MS = 2500
 
 local function fail(message)
     error(message, 0)
@@ -281,6 +284,8 @@ local function validate_window(window, action)
     if next(window) == nil then
         return { address = "", workspace = 0, monitor = -1 }
     end
+    local position = window.at
+    local size = window.size
     if type(window.address) ~= "string"
         or not window.address:match("^0x[%da-fA-F]+$")
         or type(window.workspace) ~= "table"
@@ -288,6 +293,22 @@ local function validate_window(window, action)
         or window.workspace.id % 1 ~= 0
         or not finite(window.monitor)
         or window.monitor % 1 ~= 0
+        or not finite(window.pid)
+        or window.pid % 1 ~= 0
+        or window.pid <= 0
+        or type(window.title) ~= "string"
+        or #window.title > 4096
+        or type(window.class) ~= "string"
+        or #window.class > 1024
+        or type(window.stableId) ~= "string"
+        or window.stableId == ""
+        or #window.stableId > 256
+        or type(position) ~= "table"
+        or not finite(position[1]) or position[1] % 1 ~= 0
+        or not finite(position[2]) or position[2] % 1 ~= 0
+        or type(size) ~= "table"
+        or not finite(size[1]) or size[1] % 1 ~= 0 or size[1] <= 0
+        or not finite(size[2]) or size[2] % 1 ~= 0 or size[2] <= 0
     then
         fail(action .. ": invalid active-window fingerprint")
     end
@@ -295,6 +316,14 @@ local function validate_window(window, action)
         address = window.address,
         workspace = window.workspace.id,
         monitor = window.monitor,
+        pid = window.pid,
+        title = window.title,
+        class = window.class,
+        stable_id = window.stableId,
+        x = position[1],
+        y = position[2],
+        width = size[1],
+        height = size[2],
     }
 end
 
@@ -417,6 +446,11 @@ local function same_snapshot(left, right)
             return false
         end
     end
+    for _, key in ipairs({ "address", "workspace", "monitor", "pid", "title", "class", "stable_id", "x", "y", "width", "height" }) do
+        if left.window[key] ~= right.window[key] then
+            return false
+        end
+    end
     return true
 end
 
@@ -442,6 +476,8 @@ end
 local allowed_fields = {
     observe = { action = true, screenshot_id = true, monitor = true, grid = true },
     inspect = { action = true, screenshot_id = true, x = true, y = true, radius = true, grid = true },
+    semantic_find = { action = true, screenshot_id = true, grid = true },
+    semantic_click = { action = true, screenshot_id = true, semantic_id = true, settle_ms = true, grid = true },
     move = { action = true, screenshot_id = true, x = true, y = true, settle_ms = true, grid = true },
     click = { action = true, screenshot_id = true, x = true, y = true, settle_ms = true, grid = true },
     click_locked = { action = true, screenshot_id = true, target_token = true, settle_ms = true, grid = true },
@@ -467,7 +503,7 @@ local function validate_common(params)
     end
     local fields = allowed_fields[params.action]
     if not fields then
-        fail("action must be observe, inspect, move, click, click_locked, double_click, right_click, drag, scroll, type, key, or wait")
+        fail("action must be observe, inspect, semantic_find, semantic_click, move, click, click_locked, double_click, right_click, drag, scroll, type, key, or wait")
     end
     for key in pairs(params) do
         if type(key) ~= "string" or not fields[key] then
@@ -488,6 +524,14 @@ local function validate_common(params)
         and (type(params.screenshot_id) ~= "string" or params.screenshot_id == "")
     then
         fail("screenshot_id is required for every non-observe action; call computer_observe first and copy its exact screenshot_id")
+    end
+    if params.action == "semantic_click"
+        and (type(params.semantic_id) ~= "string"
+            or #params.semantic_id == 0
+            or #params.semantic_id > 160
+            or not params.semantic_id:match("^atspi:%d+[%d%.]*$"))
+    then
+        fail("semantic_id is required for semantic_click; call semantic_find first")
     end
     if params.action == "click_locked"
         and (type(params.target_token) ~= "string" or params.target_token == "")
@@ -657,7 +701,7 @@ local function settle(ctx, action, duration)
 end
 
 local function settle_duration(params, action)
-    local default = (action == "click" or action == "click_locked" or action == "double_click" or action == "right_click")
+    local default = (action == "click" or action == "click_locked" or action == "semantic_click" or action == "double_click" or action == "right_click")
         and CLICK_SETTLE_MS
         or DEFAULT_SETTLE_MS
     return integer(params.settle_ms or default, "settle_ms", 0, 5000)
@@ -670,7 +714,181 @@ local function log_target(ctx, action, normalized_x, normalized_y, x, y)
     ))
 end
 
-local function perform_action(params, ctx, signature, snapshot, target_lock)
+local semantic_state_keys = {
+    "checked", "editable", "enabled", "expanded", "focusable", "focused",
+    "pressed", "selected", "sensitive", "showing", "visible",
+}
+
+local function semantic_point_on_monitor(monitor, x, y)
+    local _, _, width, height = monitor_dimensions(monitor)
+    return x >= monitor.x and x < monitor.x + width
+        and y >= monitor.y and y < monitor.y + height
+end
+
+local function validate_semantic_target(target, snapshot, action)
+    if type(target) ~= "table"
+        or type(target.id) ~= "string"
+        or #target.id > 160
+        or not target.id:match("^atspi:%d+[%d%.]*$")
+        or type(target.role) ~= "string"
+        or #target.role == 0 or #target.role > 64
+        or type(target.name) ~= "string"
+        or #target.name > 256
+        or type(target.states) ~= "table"
+        or type(target.bounds) ~= "table"
+        or type(target.center) ~= "table"
+    then
+        fail(action .. ": invalid semantic helper result")
+    end
+    for _, key in ipairs(semantic_state_keys) do
+        if type(target.states[key]) ~= "boolean" then
+            fail(action .. ": invalid semantic helper result")
+        end
+    end
+    local bounds = target.bounds
+    local center = target.center
+    for _, value in ipairs({ bounds.x, bounds.y, bounds.width, bounds.height, center.x, center.y }) do
+        if not finite(value) or value % 1 ~= 0 then
+            fail(action .. ": invalid semantic helper result")
+        end
+    end
+    local window = snapshot.window
+    if bounds.width <= 0 or bounds.height <= 0
+        or bounds.x < window.x or bounds.y < window.y
+        or bounds.x + bounds.width > window.x + window.width
+        or bounds.y + bounds.height > window.y + window.height
+        or center.x ~= bounds.x + math.floor(bounds.width / 2)
+        or center.y ~= bounds.y + math.floor(bounds.height / 2)
+        or not semantic_point_on_monitor(snapshot.monitor, center.x, center.y)
+        or not target.states.visible or not target.states.showing or not target.states.sensitive
+    then
+        fail(action .. ": semantic target bounds are not safely clickable")
+    end
+    return target
+end
+
+local function semantic_helper_path(ctx)
+    if type(ctx.config_dir) ~= "string"
+        or ctx.config_dir == ""
+        or ctx.config_dir:find("\0", 1, true)
+    then
+        return nil
+    end
+    return ctx.config_dir .. "/lua/scripts/computer_atspi.py"
+end
+
+local function semantic_call(ctx, operation, snapshot, expected)
+    local helper = semantic_helper_path(ctx)
+    if not helper then
+        return nil, "semantic helper location is unavailable"
+    end
+    local request = { window = snapshot.window }
+    if expected then
+        request.target_id = expected.id
+        request.expected = expected
+    end
+    local raw, kind, detail = exec_result(ctx, "python3", { helper, operation }, {
+        stdin = json.encode(request),
+        timeout_ms = SEMANTIC_TIMEOUT_MS,
+        max_output_bytes = MAX_SEMANTIC_BYTES,
+        env = instance_environment(),
+    })
+    if not raw then
+        if kind == "spawn" then
+            return nil, "Python 3 is unavailable"
+        end
+        return nil, "AT-SPI helper failed (" .. bounded_diagnostic(detail or kind) .. ")"
+    end
+    local ok, result = pcall(decode_json, raw, "invalid semantic helper output")
+    if not ok or type(result) ~= "table" then
+        return nil, "invalid semantic helper output"
+    end
+    if result.ok ~= true then
+        return nil, bounded_diagnostic(result.reason) or "semantic target verification failed"
+    end
+    return result
+end
+
+local function semantic_discover(ctx, snapshot)
+    local result, reason = semantic_call(ctx, "discover", snapshot)
+    if not result then
+        return { available = false, reason = reason, targets = {} }
+    end
+    if result.available ~= true then
+        return {
+            available = false,
+            reason = bounded_diagnostic(result.reason) or "focused application is not accessible",
+            targets = {},
+        }
+    end
+    if type(result.targets) ~= "table" or #result.targets > MAX_SEMANTIC_TARGETS then
+        fail("semantic_find: invalid semantic helper result")
+    end
+    local seen = {}
+    for _, target in ipairs(result.targets) do
+        validate_semantic_target(target, snapshot, "semantic_find")
+        if seen[target.id] then
+            fail("semantic_find: duplicate semantic target id")
+        end
+        seen[target.id] = true
+    end
+    return {
+        available = true,
+        targets = result.targets,
+        truncated = result.truncated == true,
+        visited = finite(result.visited) and result.visited or nil,
+        limits = result.limits,
+        window = result.window,
+    }
+end
+
+local function stored_semantic_target(prior, semantic_id)
+    local semantic = prior.semantic
+    if type(semantic) ~= "table" or type(semantic.targets) ~= "table" then
+        fail("semantic_click: semantic targets are unavailable; call semantic_find again")
+    end
+    local found
+    for _, target in ipairs(semantic.targets) do
+        if type(target) == "table" and target.id == semantic_id then
+            if found then
+                fail("semantic_click: semantic target id is ambiguous; call semantic_find again")
+            end
+            found = target
+        end
+    end
+    if not found then
+        fail("semantic_click: semantic target is stale or unknown; call semantic_find again")
+    end
+    return found
+end
+
+local function semantic_resolve(ctx, snapshot, expected)
+    validate_semantic_target(expected, snapshot, "semantic_click")
+    local result, reason = semantic_call(ctx, "resolve", snapshot, expected)
+    if not result then
+        fail("semantic_click: " .. reason .. "; action was not sent")
+    end
+    local current = validate_semantic_target(result.target, snapshot, "semantic_click")
+    if current.id ~= expected.id
+        or current.role ~= expected.role
+        or current.name ~= expected.name
+    then
+        fail("semantic_click: semantic target identity changed; action was not sent")
+    end
+    for _, key in ipairs(semantic_state_keys) do
+        if current.states[key] ~= expected.states[key] then
+            fail("semantic_click: semantic target states changed; action was not sent")
+        end
+    end
+    for _, key in ipairs({ "x", "y", "width", "height" }) do
+        if current.bounds[key] ~= expected.bounds[key] then
+            fail("semantic_click: semantic target bounds changed; action was not sent")
+        end
+    end
+    return current
+end
+
+local function perform_action(params, ctx, signature, snapshot, target_lock, semantic_target)
     local action = params.action
     local monitor = snapshot.monitor
     if (action == "type" or action == "key") and not monitor.focused then
@@ -683,10 +901,20 @@ local function perform_action(params, ctx, signature, snapshot, target_lock)
         settle(ctx, action, settle_duration(params, action))
         return
     end
-    if action == "click" or action == "click_locked" or action == "double_click" or action == "right_click" then
+    if action == "click" or action == "click_locked" or action == "semantic_click" or action == "double_click" or action == "right_click" then
         local x
         local y
-        if action == "click_locked" then
+        if action == "semantic_click" then
+            if type(semantic_target) ~= "table" then
+                fail("semantic_click: verified semantic target is unavailable; action was not sent")
+            end
+            x = semantic_target.center.x
+            y = semantic_target.center.y
+            accuracy_log(ctx, string.format(
+                "semantic_click target id=%s role=%s mapped=(%d,%d)",
+                semantic_target.id, semantic_target.role, x, y
+            ))
+        elseif action == "click_locked" then
             if type(target_lock) ~= "table" then
                 fail("click_locked: target lock is unavailable; call inspect again")
             end
@@ -1070,7 +1298,8 @@ local function image_debug(ctx, image, encoded, hash)
 end
 
 local input_actions = {
-    move = true, click = true, click_locked = true, double_click = true, right_click = true,
+    move = true, click = true, click_locked = true, semantic_click = true,
+    double_click = true, right_click = true,
     drag = true, scroll = true, type = true, key = true,
 }
 
@@ -1260,7 +1489,8 @@ end
 local function save_response(
     ctx, prior, signature, snapshot, params, grid, operation_id,
     image, image_hash, width, height, cursor_visible,
-    inspection_image, inspection_geometry, before_image, before_hash, locked_target
+    inspection_image, inspection_geometry, before_image, before_hash, locked_target,
+    semantic, semantic_target
 )
     local action = params.action
     local exact_unchanged = prior and prior.image_sha256 == image_hash
@@ -1295,6 +1525,7 @@ local function save_response(
         cursor_visible = cursor_visible,
         grid = grid,
         target_lock = target_lock,
+        semantic = semantic,
     }))
 
     local pixel_width, pixel_height, logical_width, logical_height = monitor_dimensions(snapshot.monitor)
@@ -1314,6 +1545,16 @@ local function save_response(
             attachment_x = math.floor(locked_target.normalized_x * (attachment_width - 1) + 0.5),
             attachment_y = math.floor(locked_target.normalized_y * (attachment_height - 1) + 0.5),
             target_token = locked_target.token,
+        }
+    end
+    if semantic_target then
+        target = {
+            semantic_id = semantic_target.id,
+            role = semantic_target.role,
+            name = semantic_target.name,
+            logical_x = semantic_target.center.x,
+            logical_y = semantic_target.center.y,
+            bounds = semantic_target.bounds,
         }
     end
     local evidence
@@ -1364,9 +1605,25 @@ local function save_response(
         visual_change = evidence,
         change_bounds = change_bounds,
         input_delivery = input_actions[action] and "sent_unverified" or "not_applicable",
-        semantic_target = input_actions[action] and "unknown" or "not_applicable",
+        semantic_target = semantic_target and "verified" or (input_actions[action] and "unknown" or "not_applicable"),
         grid = grid,
     }
+    if semantic then
+        content.semantic = semantic
+        content.semantic_instruction = semantic.available
+            and "Use an exact semantic target id with semantic_click. Targets are scoped to the focused window and will be re-resolved before input."
+            or "AT-SPI targeting is unavailable for this focused window. Continue with screenshot coordinates."
+    end
+    if semantic_target then
+        content.semantic_verification = {
+            id = semantic_target.id,
+            role = semantic_target.role,
+            name = semantic_target.name,
+            states = semantic_target.states,
+            bounds = semantic_target.bounds,
+            center = semantic_target.center,
+        }
+    end
     content.target = target
     if action == "drag" then
         content.start_target = point_metadata(
@@ -1452,6 +1709,8 @@ end
 
 local action_status = {
     inspect = "inspecting target",
+    semantic_find = "discovering accessible controls",
+    semantic_click = "verifying and clicking accessible control",
     move = "moving pointer",
     click = "clicking",
     click_locked = "validating and clicking locked target",
@@ -1524,6 +1783,8 @@ local function execute_inner(params, ctx)
     local before_image
     local before_hash
     local locked_target
+    local semantic
+    local semantic_target
     if action ~= "observe" then
         if signature ~= prior.signature or not same_snapshot(before, prior.snapshot) then
             fail("screen context changed; action was not sent")
@@ -1531,6 +1792,8 @@ local function execute_inner(params, ctx)
         status(ctx, action_status[action])
         if action == "inspect" then
             normalized_point(params, before.monitor)
+        elseif action == "semantic_find" then
+            semantic = semantic_discover(ctx, before)
         else
             if input_actions[action] then
                 if action == "click_locked" and (params.grid == true) ~= (prior.grid == true) then
@@ -1554,10 +1817,18 @@ local function execute_inner(params, ctx)
                     if not consumed then
                         fail("click_locked: could not consume target lock; action was not sent (" .. bounded_diagnostic(consume_error) .. ")")
                     end
+                elseif action == "semantic_click" then
+                    local expected = stored_semantic_target(prior, params.semantic_id)
+                    semantic_target = semantic_resolve(ctx, before, expected)
+                    prior.semantic = nil
+                    local consumed, consume_error = pcall(ctx.state.set, STATE_KEY, json.encode(prior))
+                    if not consumed then
+                        fail("semantic_click: could not consume semantic target; action was not sent (" .. bounded_diagnostic(consume_error) .. ")")
+                    end
                 end
             end
             local performed, perform_error = pcall(
-                perform_action, params, ctx, signature, before, locked_target
+                perform_action, params, ctx, signature, before, locked_target, semantic_target
             )
             if not performed then
                 if type(perform_error) == "table" and perform_error.marker == POST_INPUT_FAILURE then
@@ -1574,7 +1845,7 @@ local function execute_inner(params, ctx)
     end
 
     local after = before
-    if action ~= "observe" and action ~= "inspect" then
+    if action ~= "observe" and action ~= "inspect" and action ~= "semantic_find" then
         status(ctx, "refreshing screen context")
         local ok, next_signature, next_snapshot = pcall(
             snapshot_with_race,
@@ -1606,7 +1877,7 @@ local function execute_inner(params, ctx)
         action
     )
     if not ok then
-        if action == "observe" or action == "inspect" or action == "wait" then
+        if action == "observe" or action == "inspect" or action == "semantic_find" or action == "wait" then
             fail(image)
         end
         return input_observation_failure(
@@ -1651,7 +1922,9 @@ local function execute_inner(params, ctx)
         inspection_geometry,
         before_image,
         before_hash,
-        locked_target
+        locked_target,
+        semantic,
+        semantic_target
     )
     if saved then
         return response
@@ -1711,7 +1984,7 @@ bone.tool.register({
 bone.tool.register({
     name = "computer",
     catalog_description = catalog_description,
-    description = "Act on the screenshot returned by computer_observe or the immediately preceding successful computer call. screenshot_id is always required: copy it exactly from that result. Each success returns the ID required by the next call. After any failure or cancellation, do not retry input; call computer_observe. Inspect or move before clicking small targets. Input is sent once and never retried automatically.",
+    description = "Act on the screenshot returned by computer_observe or the immediately preceding successful computer call. Use semantic_find to list verified AT-SPI controls in the focused window and semantic_click to click one after fresh re-resolution. Screenshot coordinates remain available for inaccessible applications. screenshot_id is always required: copy it exactly from the prior result. Input is sent once and never retried automatically.",
     safety = "danger",
     stateful = true,
     state_key = STATE_KEY,
@@ -1724,12 +1997,19 @@ bone.tool.register({
             action = {
                 type = "string",
                 description = "Action to perform on the referenced screenshot.",
-                enum = { "inspect", "move", "click", "click_locked", "double_click", "right_click", "drag", "scroll", "type", "key", "wait" },
+                enum = { "inspect", "semantic_find", "semantic_click", "move", "click", "click_locked", "double_click", "right_click", "drag", "scroll", "type", "key", "wait" },
             },
             screenshot_id = {
                 type = "string",
                 minLength = 1,
                 description = "Required. Copy the exact screenshot_id from computer_observe or the immediately preceding successful computer call.",
+            },
+            semantic_id = {
+                type = "string",
+                minLength = 7,
+                maxLength = 160,
+                pattern = "^atspi:[0-9]+([.][0-9]+)*$",
+                description = "semantic_click only: exact target id returned by the preceding semantic_find.",
             },
             target_token = {
                 type = "string",

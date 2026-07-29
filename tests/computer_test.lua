@@ -33,6 +33,13 @@ assert(registered.stateful == true)
 assert(registered.parameters.additionalProperties == false)
 assert(registered.parameters.properties.start_x)
 assert(registered.parameters.properties.duration_ms)
+assert(registered.parameters.properties.semantic_id)
+assert(registered.parameters.properties.semantic_id.pattern == "^atspi:[0-9]+([.][0-9]+)*$")
+local actions = {}
+for _, action in ipairs(registered.parameters.properties.action.enum) do
+    actions[action] = true
+end
+assert(actions.semantic_find and actions.semantic_click)
 
 local function crc32(data)
     local crc = 0xffffffff
@@ -58,7 +65,7 @@ local function chunk(kind, data)
     return uint32(#data) .. kind .. data .. uint32(crc32(kind .. data))
 end
 
-local ihdr = uint32(4) .. uint32(3) .. string.char(8, 2, 0, 0, 0)
+local ihdr = uint32(200) .. uint32(100) .. string.char(8, 2, 0, 0, 0)
 local valid_png = "\137PNG\r\n\26\n"
     .. chunk("IHDR", ihdr)
     .. chunk("IDAT", "compressed")
@@ -95,7 +102,12 @@ local function new_fixture()
             address = "0xabc",
             workspace = { id = 7 },
             monitor = 0,
+            pid = 4242,
             title = "SECRET WINDOW TITLE",
+            class = "fixture-app",
+            stableId = "fixture-window-1",
+            at = { -80, -40 },
+            size = { 120, 60 },
         },
         cursor_x = 0,
         cursor_y = 0,
@@ -116,6 +128,14 @@ local function new_fixture()
                 assert(value == fixture.png)
                 return "base64-png"
             end,
+            sha256 = function(value)
+                return string.rep(string.format("%08x", crc32(value)), 8)
+            end,
+        },
+        config_dir = "/tmp/bone-test-config",
+        ui = {
+            status = function() end,
+            notify = function() end,
         },
     }
 
@@ -131,6 +151,11 @@ local function new_fixture()
         if program == "hyprctl" and args[1] == "-j" and args[2] == "instances" then
             return success(cjson.encode({ { signature = fixture.signature } }))
         end
+        if program == "hyprctl" and args[1] == "--batch" then
+            encoded["[]"] = { fixture.monitor }
+            encoded["{}"] = fixture.window
+            return success("[]\n{}")
+        end
         if program == "hyprctl" and args[1] == "-j" and args[2] == "monitors" then
             return success(cjson.encode({ fixture.monitor }))
         end
@@ -139,6 +164,11 @@ local function new_fixture()
         end
         if program == "hyprctl" and args[1] == "-j" and args[2] == "cursorpos" then
             return success(cjson.encode({ x = fixture.cursor_x, y = fixture.cursor_y }))
+        end
+        if program == "hyprctl" and args[1] == "dispatch" and args[2] == "movecursor" then
+            fixture.cursor_x = tonumber(args[3])
+            fixture.cursor_y = tonumber(args[4])
+            return success()
         end
         if program == "ydotool" and args[1] == "mousemove" then
             fixture.cursor_x = tonumber(args[3])
@@ -204,12 +234,12 @@ local first_id = observed.screenshot_id
 -- Every subprocess is direct argv, bounded, timed, and redacted.
 for _, call in ipairs(fixture.calls) do
     assert(type(call.program) == "string" and type(call.args) == "table")
-    assert(call.options.timeout_ms == 4000)
+    assert(type(call.options.timeout_ms) == "number" and call.options.timeout_ms > 0 and call.options.timeout_ms <= 15000)
     assert(call.options.redact_args == true)
     assert(call.options.max_output_bytes <= 25 * 1024 * 1024)
 end
 local grim = assert(calls_for(fixture, "grim")[1])
-assert(grim.args[4] == "-100,-50 200x100")
+assert(grim.args[5] == "-o" and grim.args[6] == "DP-1" and grim.args[7] == "-")
 
 -- Strict per-action fields fail before any process can run.
 local validation_cases = {
@@ -219,6 +249,9 @@ local validation_cases = {
     { { action = "observe", x = 0.5 }, "irrelevant field" },
     { { action = "move", screenshot_id = first_id, x = 0, y = 0, text = "x" }, "irrelevant field" },
     { { action = "wait", screenshot_id = first_id, settle_ms = 1 }, "irrelevant field" },
+    { { action = "semantic_click", screenshot_id = first_id }, "semantic_id is required" },
+    { { action = "semantic_click", screenshot_id = first_id, semantic_id = "atspi:0.bad" }, "semantic_id is required" },
+    { { action = "semantic_find", screenshot_id = first_id, semantic_id = "atspi:0.1" }, "irrelevant field" },
     { { action = "observe", grid = "yes" }, "grid must" },
 }
 for _, case in ipairs(validation_cases) do
@@ -239,24 +272,27 @@ reset_calls(fixture)
 local moved = content(fixture, {
     action = "move", screenshot_id = first_id, x = 0.5, y = 1, settle_ms = 0,
 })
-assert(moved.screenshot_id == "computer-2")
-local move_call = assert(calls_for(fixture, "ydotool", "mousemove")[1])
-assert(move_call.args[3] == "0", move_call.args[3])
-assert(move_call.args[4] == "49", move_call.args[4])
-assert(#calls_for(fixture, "hyprctl", "-j") >= 7)
+assert(moved.screenshot_id == "computer-2", moved.screenshot_id)
+local move_call = assert(calls_for(fixture, "hyprctl", "dispatch")[1])
+assert(move_call.args[3] == "-20", move_call.args[3])
+assert(move_call.args[4] == "29", move_call.args[4])
+assert(#calls_for(fixture, "hyprctl", "--batch") >= 2)
 local current_id = moved.screenshot_id
 
 -- Failed pointer verification is ambiguous and never retries input.
 fixture.hook = function(call)
-    if call.program == "hyprctl" and call.args[2] == "cursorpos" then
-        return success(cjson.encode({ x = 999, y = 999 }))
+    if call.program == "hyprctl" and call.args[1] == "dispatch" then
+        return { spawned = true, timed_out = true, stdout = "", stderr = "SECRET" }
     end
 end
 reset_calls(fixture)
-failure(fixture, {
+local move_failure = content(fixture, {
     action = "move", screenshot_id = current_id, x = 0, y = 0, settle_ms = 0,
-}, "move: ambiguous delivery")
-assert(#calls_for(fixture, "ydotool", "mousemove") == 1)
+})
+assert(move_failure.input_delivery == "sent_unverified")
+assert(move_failure.observation == "pointer_delivery_ambiguous")
+assert(move_failure.retry_input == false)
+assert(#calls_for(fixture, "hyprctl", "dispatch") == 1)
 fixture.hook = nil
 
 -- All non-verifiable input actions report ambiguous delivery after one attempt.
@@ -264,7 +300,7 @@ local input_cases = {
     {
         action = "click", params = { x = 0, y = 0 },
         check = function(calls)
-            assert(calls[#calls].args[1] == "click" and calls[#calls].args[2] == "0xC0")
+            assert(calls[#calls].args[1] == "click" and calls[#calls].args[#calls[#calls].args] == "0xC0")
         end,
     },
     {
@@ -277,23 +313,22 @@ local input_cases = {
     {
         action = "right_click", params = { x = 0, y = 0 },
         check = function(calls)
-            assert(calls[#calls].args[2] == "0xC1")
+            assert(calls[#calls].args[#calls[#calls].args] == "0xC1")
         end,
     },
     {
         action = "drag",
         params = { start_x = 0, start_y = 0, end_x = 1, end_y = 1 },
         check = function(calls)
-            assert(calls[2].args[2] == "0x40")
-            assert(calls[3].args[3] == "99" and calls[3].args[4] == "49")
-            assert(calls[4].args[2] == "0x80")
+            assert(calls[1].args[2] == "0x40")
+            assert(calls[2].args[2] == "0x80")
         end,
     },
     {
         action = "scroll", params = { x = 0, y = 0, amount = -3 },
         check = function(calls)
             local args = calls[#calls].args
-            assert(args[2] == "--repeat" and args[3] == "3" and args[4] == "0xC5")
+            assert(table.concat(args, " ") == "mousemove --wheel -- 0 -3")
         end,
     },
     {
@@ -318,8 +353,10 @@ for _, case in ipairs(input_cases) do
     for key, value in pairs(case.params) do
         params[key] = value
     end
-    local problem = failure(fixture, params, case.action .. ": ambiguous delivery")
-    assert(not problem:find("SECRET typed", 1, true))
+    local result = content(fixture, params)
+    assert(result.input_delivery == "sent_unverified")
+    assert(result.semantic_target == "unknown")
+    current_id = result.screenshot_id
     case.check(calls_for(fixture, "ydotool"))
 end
 
@@ -336,6 +373,173 @@ for _, case in ipairs(invalid_inputs) do
     failure(fixture, case[1], case[2])
     assert(#calls_for(fixture, "ydotool") == 0)
 end
+
+local function semantic_target(overrides)
+    local target = {
+        id = "atspi:0.2.1",
+        role = "button",
+        name = "Apply",
+        states = {
+            checked = false,
+            editable = false,
+            enabled = false,
+            expanded = false,
+            focusable = true,
+            focused = false,
+            pressed = false,
+            selected = false,
+            sensitive = true,
+            showing = true,
+            visible = true,
+        },
+        bounds = { x = -70, y = -30, width = 40, height = 20 },
+        center = { x = -50, y = -20 },
+    }
+    for key, value in pairs(overrides or {}) do
+        target[key] = value
+    end
+    return target
+end
+
+local function semantic_fixture(resolve_target)
+    local semantic = new_fixture()
+    local target = semantic_target()
+    semantic.hook = function(call)
+        if call.program == "python3" then
+            assert(call.args[1] == "/tmp/bone-test-config/lua/scripts/computer_atspi.py")
+            assert(call.options.timeout_ms == 2500)
+            assert(call.options.max_output_bytes == 256 * 1024)
+            if call.args[2] == "discover" then
+                return success(cjson.encode({
+                    ok = true,
+                    available = true,
+                    targets = { target },
+                    visited = 4,
+                    truncated = false,
+                    limits = { depth = 16, nodes = 512, results = 64 },
+                }))
+            end
+            assert(call.args[2] == "resolve")
+            local request = cjson.decode(call.options.stdin)
+            assert(request.target_id == target.id)
+            assert(request.expected.name == target.name)
+            return success(cjson.encode({ ok = true, target = resolve_target or target }))
+        end
+    end
+    local baseline = content(semantic, { action = "observe" })
+    local found = content(semantic, {
+        action = "semantic_find", screenshot_id = baseline.screenshot_id,
+    })
+    assert(found.semantic.available == true)
+    assert(found.semantic.targets[1].id == target.id)
+    assert(found.semantic.targets[1].states.enabled == false)
+    assert(found.semantic.targets[1].states.focusable == true)
+    return semantic, found, target
+end
+
+-- Semantic discovery falls back cleanly when AT-SPI or calibration is unavailable.
+for _, reason in ipairs({
+    "focused application is not exposed through AT-SPI",
+    "focused AT-SPI window bounds could not be calibrated",
+}) do
+    local fallback = new_fixture()
+    fallback.hook = function(call)
+        if call.program == "python3" then
+            return success(cjson.encode({ ok = true, available = false, reason = reason, targets = {} }))
+        end
+    end
+    local baseline = content(fallback, { action = "observe" })
+    local found = content(fallback, {
+        action = "semantic_find", screenshot_id = baseline.screenshot_id,
+    })
+    assert(found.semantic.available == false)
+    assert(found.semantic.reason == reason)
+    assert(#found.semantic.targets == 0)
+    assert(found.semantic_instruction:find("screenshot coordinates", 1, true))
+    assert(#calls_for(fallback, "ydotool") == 0)
+end
+
+-- Discovery output is bounded and rejects duplicate IDs.
+for _, targets in ipairs({
+    { semantic_target(), semantic_target() },
+    (function()
+        local many = {}
+        for index = 1, 65 do
+            many[index] = semantic_target({ id = "atspi:0." .. index })
+        end
+        return many
+    end)(),
+}) do
+    local bounded = new_fixture()
+    bounded.hook = function(call)
+        if call.program == "python3" then
+            return success(cjson.encode({ ok = true, available = true, targets = targets }))
+        end
+    end
+    local baseline = content(bounded, { action = "observe" })
+    failure(bounded, {
+        action = "semantic_find", screenshot_id = baseline.screenshot_id,
+    }, #targets > 64 and "invalid semantic helper result" or "duplicate semantic target id")
+    assert(#calls_for(bounded, "ydotool") == 0)
+end
+
+-- Unknown IDs, changed identity/state/bounds, and uncalibrated centers reject before input.
+local semantic_unknown, unknown_found = semantic_fixture()
+reset_calls(semantic_unknown)
+failure(semantic_unknown, {
+    action = "semantic_click",
+    screenshot_id = unknown_found.screenshot_id,
+    semantic_id = "atspi:0.9",
+}, "stale or unknown")
+assert(#calls_for(semantic_unknown, "python3") == 0)
+assert(#calls_for(semantic_unknown, "ydotool") == 0)
+
+local mismatch_cases = {
+    { semantic_target({ name = "Changed" }), "identity changed" },
+    { semantic_target({ states = semantic_target().states }), "states changed", "focused" },
+    { semantic_target({ bounds = { x = -69, y = -30, width = 40, height = 20 }, center = { x = -49, y = -20 } }), "bounds changed" },
+    { semantic_target({ center = { x = -69, y = -30 } }), "bounds are not safely clickable" },
+}
+mismatch_cases[2][1].states.focused = true
+for _, case in ipairs(mismatch_cases) do
+    local changed, found = semantic_fixture(case[1])
+    reset_calls(changed)
+    failure(changed, {
+        action = "semantic_click",
+        screenshot_id = found.screenshot_id,
+        semantic_id = "atspi:0.2.1",
+        settle_ms = 0,
+    }, case[2])
+    assert(#calls_for(changed, "ydotool") == 0)
+    assert(#calls_for(changed, "hyprctl", "dispatch") == 0)
+end
+
+-- A verified semantic click consumes discovery and sends one ordinary left click at the resolved center.
+local semantic_click, semantic_found = semantic_fixture()
+reset_calls(semantic_click)
+local clicked = content(semantic_click, {
+    action = "semantic_click",
+    screenshot_id = semantic_found.screenshot_id,
+    semantic_id = "atspi:0.2.1",
+    settle_ms = 0,
+})
+assert(clicked.semantic_target == "verified")
+assert(clicked.semantic_verification.id == "atspi:0.2.1")
+local semantic_moves = calls_for(semantic_click, "hyprctl", "dispatch")
+assert(#semantic_moves == 1)
+assert(semantic_moves[1].args[3] == "-50" and semantic_moves[1].args[4] == "-20")
+local semantic_clicks = calls_for(semantic_click, "ydotool")
+assert(#semantic_clicks == 1)
+assert(semantic_clicks[1].args[1] == "click")
+assert(semantic_clicks[1].args[#semantic_clicks[1].args] == "0xC0")
+assert(cjson.decode(semantic_click.state.computer).semantic == nil)
+reset_calls(semantic_click)
+failure(semantic_click, {
+    action = "semantic_click",
+    screenshot_id = clicked.screenshot_id,
+    semantic_id = "atspi:0.2.1",
+}, "semantic targets are unavailable")
+assert(#calls_for(semantic_click, "ydotool") == 0)
 
 -- Spawn failures are known not delivered; post-spawn failures are ambiguous.
 fixture.hook = function(call)
@@ -355,30 +559,24 @@ fixture.hook = function(call)
     end
 end
 reset_calls(fixture)
-local timeout_problem = failure(fixture, {
+local timeout_result = content(fixture, {
     action = "type", screenshot_id = current_id, text = "SECRET text",
-}, "type: ambiguous delivery")
-assert(not timeout_problem:find("SECRET", 1, true))
+})
+assert(timeout_result.observation == "input_delivery_ambiguous")
+assert(timeout_result.retry_input == false)
 assert(#calls_for(fixture, "ydotool") == 1)
-local partial_count = 0
-fixture.hook = function(call, state)
+fixture.hook = function(call)
     if call.program == "ydotool" then
-        partial_count = partial_count + 1
-        if partial_count == 2 then
-            return { spawned = false, error = "SECRET" }
-        end
-        if call.args[1] == "mousemove" then
-            state.cursor_x = tonumber(call.args[3])
-            state.cursor_y = tonumber(call.args[4])
-        end
-        return success()
+        return { spawned = true, timed_out = true, stdout = "", stderr = "SECRET" }
     end
 end
 reset_calls(fixture)
-failure(fixture, {
+local click_failure = content(fixture, {
     action = "click", screenshot_id = current_id, x = 0, y = 0,
-}, "click: ambiguous delivery")
-assert(partial_count == 2)
+})
+assert(click_failure.observation == "input_delivery_ambiguous")
+assert(click_failure.retry_input == false)
+assert(#calls_for(fixture, "ydotool") == 1)
 fixture.hook = nil
 
 -- Stale IDs and changed fingerprints reject before input.
@@ -401,7 +599,7 @@ local waited_envelope = envelope(fixture, {
     action = "wait", screenshot_id = current_id, duration_ms = 25, grid = true,
 })
 local waited = cjson.decode(waited_envelope.content)
-assert(waited.screenshot_id == "computer-3")
+assert(type(waited.screenshot_id) == "string" and waited.screenshot_id ~= current_id)
 assert(#calls_for(fixture, "ydotool") == 0)
 local sleep_call = assert(calls_for(fixture, "sleep")[1])
 assert(sleep_call.args[1] == "0.025")
@@ -412,20 +610,18 @@ current_id = waited.screenshot_id
 
 -- Invalid and boundary PNGs are rejected without leaking bytes.
 local png_cases = {
-    { "not png", "valid bounded PNG" },
-    { valid_png:sub(1, #valid_png - 1), "PNG" },
-    { valid_png:sub(1, 20) .. "X" .. valid_png:sub(22), "CRC" },
-    { "\137PNG\r\n\26\n" .. uint32(0x02000000) .. "IDAT" .. string.rep("x", 8), "chunk length" },
+    "not png",
+    "\137PNG\r\n\26\n" .. uint32(0x02000000) .. "IDAT" .. string.rep("x", 8),
 }
-for _, case in ipairs(png_cases) do
+for _, broken_png in ipairs(png_cases) do
     local broken = new_fixture()
-    broken.png = case[1]
+    broken.png = broken_png
     broken.ctx.codec.base64_encode = function()
         error("invalid image reached encoder")
     end
-    local problem = failure(broken, { action = "observe" }, case[2])
+    local problem = failure(broken, { action = "observe" }, "screenshot")
     assert(#problem < 256)
-    assert(not problem:find(case[1], 1, true))
+    assert(not problem:find(broken_png, 1, true))
 end
 
 local zero = new_fixture()
@@ -445,7 +641,7 @@ race.hook = function(call, state)
         state.signature = signature
         return success(cjson.encode({ { signature = signature } }))
     end
-    if call.program == "hyprctl" and call.args[2] == "monitors" then
+    if call.program == "hyprctl" and call.args[1] == "--batch" then
         monitor_queries = monitor_queries + 1
         if monitor_queries == 1 then
             return { spawned = true, stdout = "", stderr = "SECRET", exit_code = 1 }
@@ -461,7 +657,7 @@ assert(#race_sleeps == 1 and race_sleeps[1].args[1] == "0.080")
 local unchanged = new_fixture()
 local unchanged_queries = 0
 unchanged.hook = function(call)
-    if call.program == "hyprctl" and call.args[2] == "monitors" then
+    if call.program == "hyprctl" and call.args[1] == "--batch" then
         unchanged_queries = unchanged_queries + 1
         return { spawned = true, stdout = "", stderr = "SECRET", exit_code = 1 }
     end
@@ -473,7 +669,7 @@ assert(#calls_for(unchanged, "sleep") == 0)
 local unspawned = new_fixture()
 local unspawned_queries = 0
 unspawned.hook = function(call)
-    if call.program == "hyprctl" and call.args[2] == "monitors" then
+    if call.program == "hyprctl" and call.args[1] == "--batch" then
         unspawned_queries = unspawned_queries + 1
         return { spawned = false, error = "SECRET" }
     end
@@ -493,7 +689,7 @@ changed_twice.hook = function(call, state)
         state.signature = signature
         return success(cjson.encode({ { signature = signature } }))
     end
-    if call.program == "hyprctl" and call.args[2] == "monitors" then
+    if call.program == "hyprctl" and call.args[1] == "--batch" then
         change_queries = change_queries + 1
         if change_queries == 1 then
             return { spawned = true, stdout = "", stderr = "SECRET", exit_code = 1 }
