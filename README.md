@@ -22,7 +22,9 @@ PNG, even when the pixels are unchanged. Coordinates are finite normalized
 values from `0` through `1` relative to the full selected-monitor screenshot.
 They are not percentages or `0`–`1000` values. Select coordinates from the
 latest returned PNG, including any monitor transform or scale represented by
-that image.
+that image. With `grid=true`, the displayed `0`–`1000` ruler values are only
+presentation labels: convert each one with
+`normalized = ruler_value / 1000` before passing `x` or `y`.
 
 The tool does not launch applications, install packages, start daemons, or
 alter device permissions. Use Bone's `shell` tool for application launch and
@@ -43,10 +45,10 @@ Install these dependencies through the operating system:
 - ImageMagick with the `magick` command
 - `ydotool`, with `ydotoold` already running and authorized
 
-ImageMagick renders optional grids and provides bounded compatibility fallbacks
-when native Bone PNG helpers are unavailable. A current Bone build provides
-native monotonic timers, secure randomness, PNG resizing, tile hashing, and
-in-memory PNG differences.
+ImageMagick renders optional ruler overlays and provides bounded compatibility
+fallbacks when native Bone PNG helpers are unavailable. A current Bone build
+provides native monotonic timers, secure randomness, PNG resizing, tile hashing,
+and in-memory PNG differences.
 
 If `ydotoold` uses a non-default socket, export `YDOTOOL_SOCKET` in Bone's
 environment.
@@ -129,9 +131,11 @@ reports whether pixels were unchanged, changed near the click, changed
 elsewhere, changed substantially, or changed without localized bounds. This is
 visual evidence, not proof that the intended UI effect occurred.
 
-A grid changes only the attached presentation image. Internal capture identity,
-tile fingerprints, freshness checks, and change classification remain based on
-the clean capture.
+With `grid=true`, the attached image has short top and left edge ticks every 50
+ruler units, labels from `0` through `1000` at 250-unit intervals, and subtle
+quarter guides. It changes only the attached presentation image. Internal
+capture identity, tile fingerprints, freshness checks, and change
+classification remain based on the clean capture.
 
 Persisted tool state contains salted context digests and image fingerprints,
 not window titles, window classes, typed text, screenshots, or presentation
@@ -191,9 +195,10 @@ returned screenshot.
 6. If the page is still changing, observe again before choosing another action.
 7. If a response reports failed or uncertain delivery, do not repeat it;
    recover with `computer(action="observe")`.
-8. Optionally use `computer(action="observe", grid=true)`. The overlay is
-   presentation-only; captured state and freshness hashes remain based on the
-   clean screenshot.
+8. Optionally use `computer(action="observe", grid=true)`. Read the displayed
+   ruler values as visual aids, then divide each by `1000` before passing it to
+   the normalized `x` or `y` click field. The overlay is presentation-only;
+   captured state and freshness hashes remain based on the clean screenshot.
 
 If `ydotoold` is unavailable, observation still works, but click and type are
 blocked. The failed input call reports the dependency without retrying or

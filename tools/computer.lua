@@ -1040,27 +1040,60 @@ local function validate_png(data, action)
     return data, width, height
 end
 
-local function grid_lines(width, height, divisions, odd_only)
+local function ruler_position(index, divisions, extent)
+    return math.floor(index * (extent - 1) / divisions + 0.5)
+end
+
+local function ruler_guides(width, height)
     local lines = {}
-    for index = 1, divisions - 1 do
-        if not odd_only or index % 2 == 1 then
-            local x = math.floor(index * (width - 1) / divisions + 0.5)
-            local y = math.floor(index * (height - 1) / divisions + 0.5)
-            lines[#lines + 1] = string.format("line %d,0 %d,%d", x, x, height - 1)
-            lines[#lines + 1] = string.format("line 0,%d %d,%d", y, width - 1, y)
-        end
+    for index = 1, 3 do
+        local x = ruler_position(index, 4, width)
+        local y = ruler_position(index, 4, height)
+        lines[#lines + 1] = string.format("line %d,0 %d,%d", x, x, height - 1)
+        lines[#lines + 1] = string.format("line 0,%d %d,%d", y, width - 1, y)
     end
     return table.concat(lines, " ")
 end
 
-local function grid_labels(width, height, point_size)
+local function ruler_ticks(width, height, point_size)
+    local lines = {}
+    local minor_length = math.max(4, math.floor(point_size * 0.4))
+    local major_length = math.max(minor_length + 2, math.floor(point_size * 0.75))
+    for index = 0, 20 do
+        local length = index % 5 == 0 and major_length or minor_length
+        local x = ruler_position(index, 20, width)
+        local y = ruler_position(index, 20, height)
+        lines[#lines + 1] = string.format(
+            "line %d,0 %d,%d", x, x, math.min(length, height - 1)
+        )
+        lines[#lines + 1] = string.format(
+            "line 0,%d %d,%d", y, math.min(length, width - 1), y
+        )
+    end
+    return table.concat(lines, " "), major_length
+end
+
+local function ruler_labels(width, height, point_size, tick_length)
     local labels = {}
-    for index = 1, 9 do
-        local x = math.floor(index * (width - 1) / 10 + 0.5)
-        local y = math.floor(index * (height - 1) / 10 + 0.5)
-        local value = string.format("%.1f", index / 10)
-        labels[#labels + 1] = string.format("text %d,%d '%s'", x + 3, point_size + 2, value)
-        labels[#labels + 1] = string.format("text 3,%d '%s'", math.max(point_size, y - 3), value)
+    local top_y = math.min(height - 1, point_size + 2)
+    local left_x = math.min(width - 1, tick_length + 3)
+    for index = 0, 4 do
+        local value = tostring(index * 250)
+        local x = ruler_position(index, 4, width)
+        local y = ruler_position(index, 4, height)
+        local label_width = math.ceil(#value * point_size * 0.62)
+        local label_x = math.max(0, math.min(
+            x - math.floor(label_width / 2),
+            math.max(0, width - label_width - 2)
+        ))
+        local label_y = math.min(
+            math.max(0, height - 3),
+            math.max(point_size, y + math.floor(point_size * 0.35))
+        )
+        labels[#labels + 1] = string.format("text %d,%d '%s'", label_x, top_y, value)
+        if index > 0 then
+            labels[#labels + 1] = string.format("text %d,%d '%s'", left_x, label_y, value)
+        end
     end
     return table.concat(labels, " ")
 end
@@ -1130,14 +1163,17 @@ end
 
 local function render_grid(ctx, image, width, height, action)
     local point_size = math.min(24, math.max(12, math.floor(math.min(width, height) / 80)))
+    local ticks, major_tick_length = ruler_ticks(width, height, point_size)
     local rendered, render_kind, render_detail = exec_result(ctx, "magick", {
         "png:-",
-        "-stroke", "rgba(255,255,255,0.14)", "-strokewidth", "1", "-fill", "none",
-        "-draw", grid_lines(width, height, 20, true),
-        "-stroke", "rgba(255,255,255,0.35)", "-draw", grid_lines(width, height, 10, false),
+        "-stroke", "rgba(255,255,255,0.16)", "-strokewidth", "1", "-fill", "none",
+        "-draw", ruler_guides(width, height),
+        "-stroke", "rgba(0,0,0,0.72)", "-strokewidth", "3", "-draw", ticks,
+        "-stroke", "rgba(255,255,255,0.88)", "-strokewidth", "1", "-draw", ticks,
         "-font", "DejaVu-Sans", "-pointsize", tostring(point_size),
-        "-stroke", "rgba(0,0,0,0.85)", "-strokewidth", "2",
-        "-fill", "rgba(255,255,255,0.92)", "-draw", grid_labels(width, height, point_size),
+        "-stroke", "rgba(0,0,0,0.85)", "-strokewidth", "1",
+        "-fill", "rgba(255,255,255,0.92)",
+        "-draw", ruler_labels(width, height, point_size, major_tick_length),
         "png:-",
     }, {
         stdin = image,
@@ -1734,7 +1770,9 @@ local function save_response(
         cursor_visible = cursor_visible,
         available_monitors = snapshot.available_monitors,
         monitor_selection = "To observe another monitor, call computer with action='observe' and monitor set to its name or 'other'.",
-        coordinates = "Use finite normalized coordinates from 0 through 1 with the attached screenshot.",
+        coordinates = grid
+            and "Use finite normalized coordinates from 0 through 1 with the attached screenshot. Displayed ruler values are presentation labels; convert them with normalized = ruler_value / 1000."
+            or "Use finite normalized coordinates from 0 through 1 with the attached screenshot.",
         screenshot_captured = true,
         screenshot_attached = true,
         visual_change = evidence,
@@ -2143,7 +2181,7 @@ bone.tool.register({
             },
             grid = {
                 type = "boolean",
-                description = "Presentation only: overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot.",
+                description = "Presentation only: overlay sparse edge rulers labeled 0–1000 with subtle quarter guides. Convert a displayed ruler value with normalized = ruler_value / 1000.",
             },
             trace = {
                 type = "boolean",

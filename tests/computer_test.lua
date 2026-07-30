@@ -74,7 +74,7 @@ for property in pairs(registered.parameters.properties) do
     expected_properties[property] = nil
 end
 assert(next(expected_properties) == nil)
-local grid_description = "Presentation only: overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot."
+local grid_description = "Presentation only: overlay sparse edge rulers labeled 0–1000 with subtle quarter guides. Convert a displayed ruler value with normalized = ruler_value / 1000."
 assert(registered.parameters.properties.grid.description == grid_description)
 local target_label_schema = assert(registered.parameters.properties.target_label)
 assert(target_label_schema.type == "string")
@@ -1042,6 +1042,7 @@ local grid_envelope = envelope(fixture, { action = "observe", grid = true })
 local gridded = cjson.decode(grid_envelope.content)
 local after_grid_state = cjson.decode(fixture.state.computer)
 assert(gridded.screenshot_captured == true)
+assert(gridded.coordinates:find("normalized = ruler_value / 1000", 1, true))
 assert(after_grid_state.screenshot_id == before_grid_state.screenshot_id)
 assert(after_grid_state.operation_generation == before_grid_state.operation_generation + 1)
 assert(after_grid_state.authorization.consumed == false)
@@ -1051,6 +1052,38 @@ assert(fixture.monotonic_ms == before_grid_ms)
 local magick = assert(calls_for(fixture, "magick")[1])
 assert(magick.options.stdin == fixture.png)
 assert(magick.options.timeout_ms == 4000)
+local draw_commands = {}
+for index, argument in ipairs(magick.args) do
+    if argument == "-draw" then
+        draw_commands[#draw_commands + 1] = magick.args[index + 1]
+    end
+end
+assert(#draw_commands == 4)
+assert(draw_commands[1] == table.concat({
+    "line 50,0 50,99", "line 0,25 199,25",
+    "line 100,0 100,99", "line 0,50 199,50",
+    "line 149,0 149,99", "line 0,74 199,74",
+}, " "))
+assert(draw_commands[2] == draw_commands[3])
+assert(draw_commands[2]:find("line 10,0 10,4", 1, true))
+assert(draw_commands[2]:find("line 0,5 4,5", 1, true))
+assert(draw_commands[2]:find("line 50,0 50,9", 1, true))
+assert(draw_commands[2]:find("line 0,25 9,25", 1, true))
+local all_draw_commands = table.concat(draw_commands, " ")
+assert(not all_draw_commands:find("line 10,0 10,99", 1, true))
+assert(not all_draw_commands:find("line 0,5 199,5", 1, true))
+for _, label in ipairs({ "0", "250", "500", "750", "1000" }) do
+    assert(draw_commands[4]:find("'" .. label .. "'", 1, true))
+end
+assert(draw_commands[4]:find("text 0,14 '0'", 1, true))
+assert(draw_commands[4]:find("text 39,14 '250'", 1, true))
+assert(draw_commands[4]:find("text 12,29 '250'", 1, true))
+assert(draw_commands[4]:find("text 168,14 '1000'", 1, true))
+assert(draw_commands[4]:find("text 12,97 '1000'", 1, true))
+local magick_args = table.concat(magick.args, " ")
+assert(magick_args:find("rgba(255,255,255,0.16)", 1, true))
+assert(not magick_args:find("rgba(255,255,255,0.14)", 1, true))
+assert(not magick_args:find("rgba(255,255,255,0.35)", 1, true))
 
 -- Invalid and boundary PNGs are rejected without leaking bytes.
 local png_cases = {
