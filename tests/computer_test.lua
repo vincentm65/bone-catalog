@@ -30,12 +30,12 @@ bone = {
 }
 assert(loadfile("tools/computer.lua"))()
 local observe = assert(registrations.computer_observe)
-local doctor = assert(registrations.computer_doctor)
 assert(observe.display.template == "observing screen")
 assert(observe.display.show_result == false)
 assert(observe.display.args == nil)
 assert(observe.display.value_labels == nil)
 assert(registered.name == "computer")
+assert(registrations.computer_doctor == nil)
 assert(registered.display.template == "{action} {target_label}")
 assert(registered.display.show_result == false)
 assert(registered.display.args == nil)
@@ -135,6 +135,7 @@ local function new_fixture()
             height = 100,
             scale = 1.25,
             transform = 0,
+            dpmsStatus = true,
         },
         window = {
             address = "0xabc",
@@ -294,25 +295,6 @@ local function new_fixture()
         if program == "python3" and args[1] == "-c" then
             return success()
         end
-        if program == "python3" and args[2] == "doctor" then
-            return success(cjson.encode({
-                ok = true,
-                available = true,
-                checks = {
-                    python = { ok = true, version = "3.13.0" },
-                    gi = { ok = true, version = "3.50.0" },
-                    atspi_bindings = {
-                        ok = true,
-                        api = "2.0",
-                        version = "2.60.0",
-                    },
-                    session_bus = { ok = true },
-                    desktop = { ok = true, applications = 3 },
-                    focused_application = { ok = true },
-                    window_calibration = { ok = true },
-                },
-            }))
-        end
         if program == "python3" and args[2] == "focused" then
             return success(cjson.encode({
                 ok = true,
@@ -438,65 +420,24 @@ end
 
 local fixture = new_fixture()
 
--- Doctor diagnostics are read-only, structured, and do not return screen data.
-local doctor_fixture = new_fixture()
-local doctor_envelope = cjson.decode(doctor.execute({ trace = true }, doctor_fixture.ctx))
-local doctor_result = cjson.decode(doctor_envelope.content)
-assert(doctor_result.ok == true)
-assert(doctor_result.coordinate_ready == true)
-assert(doctor_result.semantic_ready == true)
-assert(doctor_result.reason_code == "ready")
-assert(doctor_result.checks.runtime.native_timer == true)
-assert(doctor_result.checks.runtime.native_png_resize == true)
-assert(doctor_result.checks.runtime.native_png_region == true)
-assert(doctor_result.checks.screenshot.width == 200)
-assert(doctor_result.checks.screenshot.height == 100)
-assert(doctor_result.checks.ydotool_socket.ok == true)
-assert(type(doctor_result.trace) == "table")
-assert(doctor_envelope.images == nil)
-assert(doctor_fixture.state.computer == nil)
-for _, call in ipairs(calls_for(doctor_fixture, "ydotool")) do
-    assert(call.args[1] == "--help")
-end
-assert(#calls_for(doctor_fixture, "hyprctl", "dispatch") == 0)
+-- Sleeping outputs reject immediately instead of spawning a screenshot process
+-- that Hyprland will leave blocked until timeout.
+local sleeping = new_fixture()
+sleeping.monitor.dpmsStatus = false
+local sleeping_ok, sleeping_problem = pcall(observe.execute, {}, sleeping.ctx)
+assert(not sleeping_ok)
+assert(tostring(sleeping_problem):find("is asleep (DPMS off)", 1, true))
+assert(#calls_for(sleeping, "grim") == 0)
+assert(#calls_for(sleeping, "ydotool") == 0)
+assert(sleeping.state.computer == nil)
 
-local doctor_permission = new_fixture()
-doctor_permission.hook = function(call)
-    if call.program == "python3" and call.args[1] == "-c" then
-        local result = success()
-        result.exit_code = 3
-        return result
-    end
-end
-local permission_report = cjson.decode(cjson.decode(
-    doctor.execute({}, doctor_permission.ctx)
+reset_calls(sleeping)
+local sleeping_trace = cjson.decode(cjson.decode(
+    observe.execute({ trace = true }, sleeping.ctx)
 ).content)
-assert(permission_report.ok == false)
-assert(permission_report.coordinate_ready == false)
-assert(
-    permission_report.checks.ydotool_socket.reason_code
-        == "ydotool_socket_permission_denied"
-)
-assert(#calls_for(doctor_permission, "hyprctl", "dispatch") == 0)
-
-local doctor_ambiguous = new_fixture()
-doctor_ambiguous.hook = function(call)
-    if call.program == "hyprctl" and call.args[2] == "instances" then
-        return success(cjson.encode({
-            { signature = "doctor-a" },
-            { signature = "doctor-b" },
-        }))
-    end
-end
-local ambiguous_report = cjson.decode(cjson.decode(
-    doctor.execute({}, doctor_ambiguous.ctx)
-).content)
-assert(ambiguous_report.coordinate_ready == false)
-assert(
-    ambiguous_report.checks.hyprland_discovery.reason_code
-        == "hyprland_instance_ambiguous"
-)
-assert(#calls_for(doctor_ambiguous, "grim") == 0)
+assert(sleeping_trace.ok == false)
+assert(sleeping_trace.reason_code == "output_dpms_off")
+assert(#calls_for(sleeping, "grim") == 0)
 
 -- Large monitor overviews use the native bounded resize and retain a
 -- feature-detected ImageMagick fallback for older Bone builds.

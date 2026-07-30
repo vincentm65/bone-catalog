@@ -385,6 +385,17 @@ local function validate_monitor(monitors, action, requested)
         fail(action .. ": monitor was not found; available monitors: " .. available_text)
     end
 
+    if selected.dpmsStatus ~= nil and type(selected.dpmsStatus) ~= "boolean" then
+        fail(action .. ": invalid monitor power state")
+    end
+    if selected.dpmsStatus == false then
+        fail(
+            action .. ": selected monitor " .. selected.name
+                .. " is asleep (DPMS off); wake the display before calling "
+                .. "computer_observe again. Do not retry while the display is asleep"
+        )
+    end
+
     for _, key in ipairs({ "x", "y", "width", "height", "transform" }) do
         if not finite(selected[key]) or selected[key] % 1 ~= 0 then
             fail(action .. ": invalid monitor geometry")
@@ -414,6 +425,7 @@ local function validate_monitor(monitors, action, requested)
         transform = selected.transform,
         workspace = workspace,
         focused = selected.focused == true,
+        dpms = selected.dpmsStatus ~= false,
     }, available
 end
 
@@ -590,7 +602,7 @@ local function same_snapshot(left, right)
     end
     for _, key in ipairs({
         "name", "x", "y", "width", "height", "scale", "transform",
-        "workspace", "focused",
+        "workspace", "focused", "dpms",
     }) do
         if left.monitor[key] ~= right.monitor[key] then
             return false
@@ -3136,6 +3148,7 @@ local function failure_reason_code(message)
         { "target token is stale", "target_lock_stale" },
         { "semantic_", "semantic_rejected" },
         { "AT-SPI", "semantic_unavailable" },
+        { "DPMS off", "output_dpms_off" },
         { "Hyprland", "hyprland_unavailable" },
         { "hyprctl", "hyprctl_unavailable" },
         { "grim", "screenshot_unavailable" },
@@ -3182,379 +3195,6 @@ local function execute_observe(params, ctx)
     return execute(params, ctx)
 end
 
-local function doctor_check(ok, reason_code, details)
-    local check = {
-        ok = ok == true,
-        reason_code = reason_code,
-    }
-    if type(details) == "table" then
-        for key, value in pairs(details) do
-            check[key] = value
-        end
-    end
-    return check
-end
-
-local function doctor_atspi_details(result)
-    local details = {
-        available = result.available == true,
-        reason_code = bounded_diagnostic(result.reason_code),
-        checks = {},
-    }
-    local allowed = {
-        python = { "ok", "version" },
-        gi = { "ok", "version" },
-        atspi_bindings = { "ok", "api", "version" },
-        session_bus = { "ok" },
-        desktop = { "ok", "applications" },
-        focused_application = { "ok" },
-        window_calibration = { "ok" },
-    }
-    for name, fields in pairs(allowed) do
-        local source = type(result.checks) == "table" and result.checks[name] or nil
-        if type(source) == "table" then
-            local target = {}
-            for _, field in ipairs(fields) do
-                local value = source[field]
-                if field == "ok" and type(value) == "boolean" then
-                    target.ok = value
-                elseif field == "applications"
-                    and finite(value) and value >= 0 and value <= 100000
-                then
-                    target.applications = math.floor(value)
-                elseif type(value) == "string" then
-                    target[field] = bounded_diagnostic(value)
-                end
-            end
-            details.checks[name] = target
-        end
-    end
-    return details
-end
-
-local function doctor_atspi(ctx, snapshot)
-    local helper = semantic_helper_path(ctx)
-    if not helper then
-        return doctor_check(false, "semantic_helper_unavailable")
-    end
-    local request = {}
-    if type(snapshot) == "table" then
-        request.window = snapshot.window
-    end
-    local raw, kind = exec_result(ctx, "python3", { helper, "doctor" }, {
-        stdin = json.encode(request),
-        timeout_ms = SEMANTIC_TIMEOUT_MS,
-        max_output_bytes = MAX_SEMANTIC_BYTES,
-        env = instance_environment(),
-    })
-    if not raw then
-        return doctor_check(
-            false,
-            kind == "spawn" and "python_unavailable" or "atspi_doctor_failed"
-        )
-    end
-    local decoded, result = pcall(decode_json, raw, "invalid AT-SPI doctor output")
-    if not decoded or type(result) ~= "table" or result.ok ~= true then
-        return doctor_check(false, "atspi_doctor_output_invalid")
-    end
-    local details = doctor_atspi_details(result)
-    return doctor_check(
-        result.available == true,
-        details.reason_code or (result.available == true and "ready" or "atspi_unavailable"),
-        details
-    )
-end
-
-local YDOTOOL_SOCKET_PROBE = [[
-import errno
-import socket
-import sys
-
-probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-probe.settimeout(0.5)
-try:
-    probe.connect(sys.argv[1])
-except OSError as error:
-    if error.errno in (errno.EACCES, errno.EPERM):
-        raise SystemExit(3)
-    if error.errno == errno.ENOENT:
-        raise SystemExit(4)
-    if error.errno == errno.ECONNREFUSED:
-        raise SystemExit(5)
-    if error.errno == errno.ETIMEDOUT:
-        raise SystemExit(6)
-    raise SystemExit(7)
-finally:
-    probe.close()
-]]
-
-local function doctor_hyprland_reason(problem)
-    local message = tostring(problem)
-    if message:find("multiple Hyprland instances", 1, true) then
-        return "hyprland_instance_ambiguous"
-    elseif message:find("no Hyprland instance", 1, true) then
-        return "hyprland_instance_unavailable"
-    elseif message:find("hyprctl is unavailable", 1, true) then
-        return "hyprctl_missing_or_not_executable"
-    end
-    return "hyprland_discovery_failed"
-end
-
-local function doctor_capture_reason(problem)
-    local message = tostring(problem)
-    if message:find("grim is unavailable", 1, true) then
-        return "grim_missing_or_not_executable"
-    elseif message:find("geometry mismatch", 1, true)
-        or message:find("invalid monitor geometry", 1, true)
-    then
-        return "screenshot_geometry_invalid"
-    elseif message:find("screen context changed", 1, true) then
-        return "screen_context_unstable"
-    elseif message:find("hyprctl is unavailable", 1, true) then
-        return "hyprctl_missing_or_not_executable"
-    end
-    return "stable_capture_failed"
-end
-
-local function doctor_socket_reason(kind, detail)
-    if kind == nil then
-        return "ready"
-    elseif kind == "spawn" then
-        return "python_unavailable"
-    end
-    local diagnostic = tostring(detail)
-    if diagnostic:find("exit_code=3", 1, true) then
-        return "ydotool_socket_permission_denied"
-    elseif diagnostic:find("exit_code=4", 1, true) then
-        return "ydotool_socket_missing"
-    elseif diagnostic:find("exit_code=5", 1, true) then
-        return "ydotool_daemon_unavailable"
-    elseif diagnostic:find("exit_code=6", 1, true) then
-        return "ydotool_socket_timeout"
-    end
-    return "ydotool_socket_unreachable"
-end
-
-local function doctor_socket_path()
-    local configured = os.getenv("YDOTOOL_SOCKET")
-    if type(configured) == "string" and configured ~= "" then
-        return configured
-    end
-    local runtime = os.getenv("XDG_RUNTIME_DIR")
-    if type(runtime) == "string" and runtime ~= "" then
-        return runtime .. "/.ydotool_socket"
-    end
-    return nil
-end
-
-local function execute_doctor(params, ctx)
-    if type(params) ~= "table" then
-        fail("computer_doctor parameters must be an object")
-    end
-    for key in pairs(params) do
-        if key ~= "monitor" and key ~= "trace" then
-            fail("computer_doctor received an unsupported field")
-        end
-    end
-    if params.monitor ~= nil
-        and (type(params.monitor) ~= "string"
-            or params.monitor == ""
-            or #params.monitor > 256
-            or params.monitor:find("\0", 1, true))
-    then
-        fail("monitor must be a bounded non-empty output name, 'focused', or 'other'")
-    end
-    if params.trace ~= nil and type(params.trace) ~= "boolean" then
-        fail("trace must be boolean")
-    end
-    if type(ctx.exec) ~= "function"
-        or type(ctx.codec) ~= "table"
-        or type(ctx.codec.sha256) ~= "function"
-    then
-        fail("computer_doctor requires a newer Bone build with ctx.exec and ctx.codec support")
-    end
-
-    local operation_id = "computer-doctor-" .. random_hex(
-        ctx, 12, tostring(monotonic_ms(ctx))
-    )
-    trace_begin(ctx, params.trace, operation_id, ctx.call_id, "doctor")
-    local checks = {}
-    checks.runtime = doctor_check(
-        type(ctx.time) == "table"
-            and type(ctx.time.monotonic_ms) == "function"
-            and type(ctx.time.sleep_ms) == "function"
-            and type(ctx.codec.random_hex) == "function"
-            and type(ctx.codec.png_tiles) == "function"
-            and type(ctx.codec.png_resize) == "function"
-            and type(ctx.codec.png_region_sha256) == "function"
-            and type(ctx.codec.png_diff) == "function",
-        "native_runtime_primitives",
-        {
-            native_timer = type(ctx.time) == "table"
-                and type(ctx.time.sleep_ms) == "function",
-            secure_random = type(ctx.codec.random_hex) == "function",
-            native_png_tiles = type(ctx.codec.png_tiles) == "function",
-            native_png_resize = type(ctx.codec.png_resize) == "function",
-            native_png_region = type(ctx.codec.png_region_sha256) == "function",
-            native_png_diff = type(ctx.codec.png_diff) == "function",
-        }
-    )
-
-    trace_stage(ctx, "hyprland_discovery")
-    local discovered, signature = pcall(
-        discover_signature, ctx, "computer_doctor", true
-    )
-    checks.hyprland_discovery = doctor_check(
-        discovered,
-        discovered and "ready" or doctor_hyprland_reason(signature)
-    )
-
-    local snapshot
-    if discovered then
-        trace_stage(ctx, "stable_capture")
-        local captured
-        local image
-        local image_hash
-        local width
-        local height
-        captured, signature, snapshot, image, image_hash, width, height = pcall(
-            stable_observation,
-            ctx,
-            "computer_doctor",
-            params.monitor,
-            signature,
-            "computer_doctor"
-        )
-        local capture_reason = captured and "ready"
-            or doctor_capture_reason(signature)
-        checks.hyprland_queries = doctor_check(
-            captured,
-            capture_reason
-        )
-        checks.screenshot = doctor_check(
-            captured,
-            capture_reason,
-            captured and {
-                width = width,
-                height = height,
-                bytes = #image,
-                sha256 = image_hash,
-            } or nil
-        )
-        if captured then
-            trace_stage(ctx, "cursor_calibration")
-            local cursor_ok, cursor = pcall(
-                query_json,
-                ctx,
-                signature,
-                { "-j", "cursorpos" },
-                "computer_doctor",
-                "invalid cursor position"
-            )
-            cursor_ok = cursor_ok and type(cursor) == "table"
-                and finite(cursor.x) and finite(cursor.y)
-            local monitor = snapshot.monitor
-            local _, _, logical_width, logical_height =
-                monitor_dimensions(monitor)
-            checks.cursor_calibration = doctor_check(
-                cursor_ok,
-                cursor_ok and "ready" or "cursor_query_failed",
-                cursor_ok and {
-                    on_selected_monitor = cursor.x >= monitor.x
-                        and cursor.x < monitor.x + logical_width
-                        and cursor.y >= monitor.y
-                        and cursor.y < monitor.y + logical_height,
-                    transform = monitor.transform,
-                    scale = monitor.scale,
-                } or nil
-            )
-        else
-            snapshot = nil
-            checks.cursor_calibration = doctor_check(false, "stable_capture_unavailable")
-        end
-    else
-        checks.hyprland_queries = doctor_check(false, "hyprland_discovery_unavailable")
-        checks.screenshot = doctor_check(false, "hyprland_discovery_unavailable")
-        checks.cursor_calibration = doctor_check(false, "hyprland_discovery_unavailable")
-    end
-
-    trace_stage(ctx, "dependency_checks")
-    local _, magick_kind = exec_result(ctx, "magick", { "-version" }, {
-        timeout_ms = EXEC_TIMEOUT_MS,
-        max_output_bytes = 16 * 1024,
-    })
-    checks.image_magick = doctor_check(
-        magick_kind == nil,
-        magick_kind == nil and "ready"
-            or (magick_kind == "spawn" and "imagemagick_missing" or "imagemagick_failed")
-    )
-
-    local _, ydotool_kind = exec_result(ctx, "ydotool", { "--help" }, {
-        timeout_ms = EXEC_TIMEOUT_MS,
-        max_output_bytes = 64 * 1024,
-    })
-    checks.ydotool_binary = doctor_check(
-        ydotool_kind ~= "spawn",
-        ydotool_kind == "spawn" and "ydotool_missing"
-            or (ydotool_kind == nil and "ready" or "ydotool_help_failed")
-    )
-
-    local socket_path = doctor_socket_path()
-    if type(socket_path) ~= "string"
-        or socket_path == ""
-        or #socket_path > 4096
-        or socket_path:find("\0", 1, true)
-    then
-        checks.ydotool_socket = doctor_check(false, "ydotool_socket_path_unavailable")
-    else
-        local _, socket_kind, socket_detail = exec_result(
-            ctx,
-            "python3",
-            { "-c", YDOTOOL_SOCKET_PROBE, socket_path },
-            {
-                timeout_ms = EXEC_TIMEOUT_MS,
-                max_output_bytes = 4096,
-            }
-        )
-        checks.ydotool_socket = doctor_check(
-            socket_kind == nil,
-            doctor_socket_reason(socket_kind, socket_detail)
-        )
-    end
-
-    trace_stage(ctx, "atspi")
-    checks.atspi = doctor_atspi(ctx, snapshot)
-
-    local coordinate_ready = checks.hyprland_discovery.ok
-        and checks.hyprland_queries.ok
-        and checks.screenshot.ok
-        and checks.cursor_calibration.ok
-        and checks.ydotool_binary.ok
-        and checks.ydotool_socket.ok
-    local presentation_ready = checks.image_magick.ok
-        or checks.runtime.native_png_resize == true
-    local target_lock_ready = checks.image_magick.ok
-        or checks.runtime.native_png_region == true
-    local grid_ready = checks.image_magick.ok
-    local full_ready = coordinate_ready and presentation_ready
-    local reason_code = full_ready and "ready" or "computer_dependencies_unavailable"
-    return json.encode({
-        content = json.encode({
-            operation_id = operation_id,
-            ok = full_ready,
-            coordinate_ready = coordinate_ready,
-            presentation_ready = presentation_ready,
-            target_lock_ready = target_lock_ready,
-            grid_ready = grid_ready,
-            semantic_ready = checks.atspi.ok,
-            reason_code = reason_code,
-            checks = checks,
-            privacy = "No screenshot pixels, window titles, typed text, command arguments, or accessibility names are included.",
-            trace = trace_finish(ctx, reason_code),
-        }),
-    })
-end
-
 bone.tool.register({
     name = "computer_observe",
     description = "Start or recover computer control. Capture a stable selected Hyprland monitor observation, always attach its PNG, and return separate screenshot_id and single-use action_token values. Call this before computer and again after any failed or cancelled computer operation.",
@@ -3584,31 +3224,6 @@ bone.tool.register({
         additionalProperties = false,
     },
     execute = execute_observe,
-})
-
-bone.tool.register({
-    name = "computer_doctor",
-    description = "Run read-only, privacy-safe diagnostics for the Hyprland computer tool. Checks compositor selection, stable PNG capture and geometry, cursor calibration, ImageMagick, ydotool and its socket, Python/GI/AT-SPI, and Bone native timer/image primitives without emitting input.",
-    safety = "read_only",
-    display = {
-        template = "checking computer control",
-        show_result = true,
-    },
-    parameters = {
-        type = "object",
-        properties = {
-            monitor = {
-                type = "string",
-                description = "Hyprland output name, 'focused' (default), or 'other' when exactly two monitors are enabled.",
-            },
-            trace = {
-                type = "boolean",
-                description = "Include a bounded privacy-safe stage/process timing trace.",
-            },
-        },
-        additionalProperties = false,
-    },
-    execute = execute_doctor,
 })
 
 bone.tool.register({

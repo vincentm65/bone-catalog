@@ -162,7 +162,7 @@ Exit criteria:
   unavailable, and AT-SPI-capable controls explicitly report whether semantic
   activation or freshly resolved coordinate fallback was used.
 
-## 4. Structured debugging and `computer_doctor`
+## 4. Structured debugging and inline failures
 
 - [x] Add opt-in structured tracing keyed by `operation_id` and `call_id`.
 - [ ] Finish the complete trace field set.
@@ -179,21 +179,12 @@ Exit criteria:
 - [ ] Support an explicit local trace bundle with `0600` permissions, bounded
   size, automatic expiry, and a manifest of sanitized environment/dependency
   versions.
-- [x] Add a registered read-only `computer_doctor` action/tool.
-  - [x] Implement the bounded, privacy-safe AT-SPI binding/bus/window diagnostic
-    in the Python helper.
-  - [x] Expose the tool with read-only checks for:
-    - [x] Hyprland discovery and ambiguity.
-    - [x] `hyprctl` monitor/workspace/client queries.
-    - [x] `grim` geometry and PNG validity.
-    - [x] Output transforms, scale, and cursor calibration.
-    - [x] ImageMagick availability while it remains required.
-    - [x] `ydotool`/`ydotoold` socket connectivity without emitting input,
-      including distinct permission, missing socket, daemon, and timeout codes.
-    - [x] Python, GI, and AT-SPI availability and versions.
-    - [x] Native timer, secure-random, PNG resize/tile/region/diff primitives and
-      separate coordinate, presentation, target-lock, grid, and semantic
-      readiness summaries.
+- [x] Keep diagnostics on the existing `computer_observe` and `computer` tools
+  instead of registering a separate diagnostic schema and paying for an extra
+  tool call.
+- [x] Reject a selected output whose Hyprland `dpmsStatus` is false before
+  spawning `grim`, with stable `output_dpms_off` classification and an
+  instruction not to retry until the display is awake.
 - [x] Document stable reason-code categories and a minimal privacy-safe
   bug-report workflow.
 
@@ -203,8 +194,8 @@ Exit criteria:
   tracing is enabled.
 - [ ] A trace can explain stale/ambiguous failures without exposing protected
   user content.
-- [x] `computer_doctor` distinguishes missing dependency, permission, session,
-  geometry, and daemon/socket failures.
+- [x] A sleeping display is identified by the ordinary observation call without
+  waiting for the screenshot timeout or registering another tool.
 
 ## 5. Performance and native-backend path
 
@@ -258,7 +249,7 @@ Performance targets:
 - [ ] Finish the full `tests/computer_test.lua` matrix.
   - [x] Add coverage for single-use tokens, `call_id` replay, unchanged pixels,
     ambiguity/not-delivered classification and recovery, state privacy, target
-    locks, doctor read-only behavior, trace fields, 1,000 target-tile races, and
+    locks, inline DPMS rejection, trace fields, 1,000 target-tile races, and
     native fast-path process ceilings.
   - [x] Add pre/post-reservation cancellation, native resize/region hashing, and
     older-Bone compatibility fallback coverage.
@@ -279,8 +270,7 @@ Performance targets:
   - [x] Document PNG output, normalized `0`–`1` coordinates, the split
     `computer_observe`/`computer` API, action-token freshness, semantic behavior,
     recovery rules, sanitized tracing, and native-helper feature detection.
-  - [x] Document `computer_doctor` usage, output, privacy contract, and
-    non-emitting socket check.
+  - [x] Document inline DPMS-off rejection and the two-tool diagnostic workflow.
   - [x] Distinguish `not_sent`, proven `not_delivered`, and
     `sent_unverified`/ambiguous recovery.
 - [x] Roll out state safety changes behind an explicit state-version boundary
@@ -322,11 +312,11 @@ slices, not worktree or PR branches.
   filtered/ranked discovery, and deterministic UI fixtures.
   - [x] Runtime and Python unit-test implementation is present.
   - [ ] Deterministic GTK/browser integration fixtures remain.
-- [ ] Slice 5 — Structured traces, stable reason codes, `computer_doctor`, and
+- [ ] Slice 5 — Structured traces, stable reason codes, inline failures, and
   debugging documentation.
   - [x] Privacy-safe in-memory tracing, expanded evidence fields, runtime
-    rejection traces, reason categories, registered read-only doctor, and
-    README workflow are present.
+    rejection traces, reason categories, DPMS preflight, and README workflow
+    are present.
   - [ ] Earlier validation-error tracing and the persistent trace bundle remain.
 - [ ] Slice 6 — Instrumented process/latency baseline and low-risk
   process/capture optimizations.

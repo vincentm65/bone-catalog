@@ -42,8 +42,7 @@ differences. The catalog feature-detects each helper independently and keeps
 bounded ImageMagick or timer fallbacks where available.
 
 If `ydotoold` uses a non-default socket, export `YDOTOOL_SOCKET` in Bone's
-environment. Use the read-only `computer_doctor` tool to probe the binary and
-daemon socket without emitting a test input into the live desktop.
+environment.
 
 Safe checks from the same environment that runs Bone include:
 
@@ -59,42 +58,10 @@ Remove the temporary screenshot after checking it. Missing sockets,
 permissions, session-bus access, or AT-SPI exposure must be fixed outside the
 computer tool.
 
-### Read-only diagnostics
-
-Call `computer_doctor` before the first live workflow or when dependencies
-change:
-
-```text
-computer_doctor(monitor="focused", trace=true)
-```
-
-`monitor` accepts the same output name, `focused`, or two-monitor `other`
-selection as `computer_observe`. The result contains:
-
-- top-level `coordinate_ready`, `presentation_ready`, `target_lock_ready`,
-  `grid_ready`, and independently evaluated `semantic_ready` booleans, plus an
-  overall `ok` and stable `reason_code`;
-- Bone runtime flags for native timing, secure random tokens, PNG resize, tile
-  hashes, exact region hashes, and in-memory PNG differences;
-- Hyprland discovery/query status and stable `grim` PNG dimensions, byte count,
-  and hash;
-- cursor calibration status, selected-output transform and scale, and whether
-  the current cursor is on that output;
-- separate ImageMagick and `ydotool` binary checks, plus `ydotoold` socket
-  categories for a missing path/socket, permission denial, unavailable daemon,
-  timeout, or another connection failure; and
-- privacy-safe Python, GI, AT-SPI binding, session-bus, desktop,
-  focused-application, and window-calibration checks.
-
-`ok` requires the coordinate and presentation paths; target locks, grids, and
-semantic support are reported separately so callers can see which narrower
-features remain usable. Inspect the individual `checks` entries as well as the
-summary booleans because native fast paths and their compatibility dependencies
-are also reported independently. The
-doctor may capture a screen internally to verify PNG geometry, but it returns
-no image pixels, creates no computer state, moves no pointer, and emits no input
-event. Its socket probe only connects and closes. With `trace=true`, it also
-returns the same bounded stage/process diagnostic used by the computer tools.
+`computer_observe` checks the selected output's Hyprland DPMS state before
+starting `grim`. A sleeping output fails immediately with
+`output_dpms_off` and an instruction to wake the display, rather than consuming
+the screenshot timeout. It never changes display power itself.
 
 ### Authorization and recovery
 
@@ -177,7 +144,7 @@ remain redacted.
 
 ### Tracing and performance
 
-Set `trace=true` on any of the three tools to include a bounded, in-memory
+Set `trace=true` on either computer tool to include a bounded, in-memory
 diagnostic with
 stage timings, subprocess counts, dependency exit categories, the
 `operation_id`, the host `call_id`, a terminal reason code, hashed
@@ -191,14 +158,12 @@ bundle remains planned and is not yet exposed.
 
 For a minimal bug report:
 
-1. Run `computer_doctor(trace=true)` and retain its reason codes and sanitized
-   checks.
-2. Start with `computer_observe(trace=true)`.
-3. Reproduce the problem once with the latest IDs and `trace=true`.
-4. Record the `operation_id`, `call_id`, `reason_code`, delivery state, stage
+1. Start with `computer_observe(trace=true)`.
+2. Reproduce the problem once with the latest IDs and `trace=true`.
+3. Record the `operation_id`, `call_id`, `reason_code`, delivery state, stage
    timings, and subprocess categories. Do not add titles, typed text, or
    screenshot content.
-5. If the response says delivery is ambiguous, do not retry; recover with
+4. If the response says delivery is ambiguous, do not retry; recover with
    `computer_observe`.
 
 Common terminal categories include `completed`, `input_delivery_ambiguous`,
@@ -232,31 +197,28 @@ and a fully native backend remain future work.
 This is a manual end-to-end check. Coordinates below are selected from each
 returned screenshot.
 
-1. Call `computer_doctor` and inspect every failed check without allowing it to
-   make system changes.
-2. Launch Firefox with Bone's `shell` tool and focus its window.
-3. Call `computer_observe`. Confirm that a PNG of the intended monitor is
+1. Launch Firefox with Bone's `shell` tool and focus its window.
+2. Call `computer_observe`. Confirm that a PNG of the intended monitor is
    attached, then save both `screenshot_id` and `action_token`.
-4. Call `computer(action="click", x=..., y=..., screenshot_id=...,
+3. Call `computer(action="click", x=..., y=..., screenshot_id=...,
    action_token=...)` on Firefox's address bar.
-5. Copy the fresh pair from the click response and call `type` with the URL.
+4. Copy the fresh pair from the click response and call `type` with the URL.
    The tool proceeds only if AT-SPI verifies that exactly one safely editable
    control has focus.
-6. Copy the next fresh pair and call `key` with `keys="ENTER"`.
-7. Use `wait` if the page needs time to render. Copy the fresh pair from every
+5. Copy the next fresh pair and call `key` with `keys="ENTER"`.
+6. Use `wait` if the page needs time to render. Copy the fresh pair from every
    successful response; do not assume an unchanged `screenshot_id` means the
    token is unchanged.
-8. Call `scroll` with normalized coordinates over a visible scrollable region
+7. Call `scroll` with normalized coordinates over a visible scrollable region
    and a nonzero `amount`, then inspect the post-action PNG.
-9. Reuse an older token and confirm it is rejected before input. If a response
+8. Reuse an older token and confirm it is rejected before input. If a response
    reports uncertain delivery, do not repeat it; recover with
    `computer_observe`. The automated idempotency harness, rather than a live
    manual retry, verifies that replaying the same host `call_id` emits no input.
-10. Optionally use `computer_observe(grid=true)`. The overlay is
+9. Optionally use `computer_observe(grid=true)`. The overlay is
    presentation-only; the captured state and freshness hashes remain based on
    the clean screenshot.
 
 If `ydotoold` is unavailable, observation and semantic discovery can still be
-tested, but coordinate input is blocked. `computer_doctor` reports that
-condition without sending input; do not let the tool start or reconfigure the
-daemon automatically.
+tested, but coordinate input is blocked. The failed input call reports that
+dependency without retrying or attempting to start/reconfigure the daemon.

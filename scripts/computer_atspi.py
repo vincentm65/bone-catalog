@@ -11,7 +11,6 @@ from collections import Counter
 import hashlib
 import json
 import math
-import os
 import re
 import sys
 import time
@@ -568,7 +567,7 @@ def parse_filters(request, window):
 
 
 def load_request():
-    operations = {"discover", "resolve", "activate", "focused", "doctor"}
+    operations = {"discover", "resolve", "activate", "focused"}
     if len(sys.argv) != 2 or sys.argv[1] not in operations:
         reject("invalid_operation", "invalid operation")
     try:
@@ -591,13 +590,12 @@ def load_request():
     if not isinstance(request, dict):
         reject("invalid_request", "invalid request")
     operation = sys.argv[1]
-    window = validate_window(request.get("window"), required=operation != "doctor")
+    window = validate_window(request.get("window"))
     allowed = {
         "discover": {"window", "query", "roles", "near", "max_results"},
         "resolve": {"window", "target_id", "fingerprint", "expected"},
         "activate": {"window", "target_id", "fingerprint", "expected", "action"},
         "focused": {"window"},
-        "doctor": {"window"},
     }
     if set(request) - allowed[operation]:
         reject("invalid_request", "request contains unsupported fields")
@@ -621,28 +619,6 @@ def import_atspi():
             "atspi_bindings_unavailable",
             "AT-SPI Python bindings are unavailable",
         )
-
-
-def import_atspi_for_doctor():
-    try:
-        import gi
-        gi.require_version("Atspi", "2.0")
-        from gi.repository import Atspi
-        try:
-            atspi_version = bounded_text(Atspi.get_version())
-        except Exception:
-            atspi_version = None
-        return Atspi, {
-            "gi_version": bounded_text(getattr(gi, "__version__", "")) or None,
-            "atspi_api": bounded_text(gi.get_required_version("Atspi")) or "2.0",
-            "atspi_version": atspi_version,
-        }
-    except Exception:
-        return None, {
-            "gi_version": None,
-            "atspi_api": "2.0",
-            "atspi_version": None,
-        }
 
 
 def get_desktop(Atspi):
@@ -1363,117 +1339,6 @@ def focused_result(root, root_path, window, Atspi, deadline):
     }
 
 
-def doctor_report(Atspi, metadata, window=None, environment=None, deadline=None):
-    """Return read-only, privacy-safe binding/bus/window diagnostics."""
-
-    environment = os.environ if environment is None else environment
-    deadline = time.monotonic() + DEADLINE_SECONDS if deadline is None else deadline
-    checks = {
-        "python": {
-            "ok": True,
-            "version": "{}.{}.{}".format(*sys.version_info[:3]),
-        },
-        "gi": {
-            "ok": Atspi is not None,
-            "version": metadata.get("gi_version"),
-        },
-        "atspi_bindings": {
-            "ok": Atspi is not None,
-            "api": metadata.get("atspi_api"),
-            "version": metadata.get("atspi_version"),
-        },
-    }
-    if Atspi is None:
-        return {
-            "ok": True,
-            "available": False,
-            "reason_code": "atspi_bindings_unavailable",
-            "checks": checks,
-        }
-
-    session_bus = bool(
-        environment.get("DBUS_SESSION_BUS_ADDRESS")
-        or environment.get("AT_SPI_BUS_ADDRESS")
-    )
-    checks["session_bus"] = {"ok": session_bus}
-    if not session_bus:
-        return {
-            "ok": True,
-            "available": False,
-            "reason_code": "session_bus_unavailable",
-            "checks": checks,
-        }
-
-    desktop = get_desktop(Atspi)
-    if desktop is None:
-        checks["desktop"] = {"ok": False, "applications": 0}
-        return {
-            "ok": True,
-            "available": False,
-            "reason_code": "atspi_desktop_unavailable",
-            "checks": checks,
-        }
-    try:
-        app_count = min(bounded_count(desktop.get_child_count()), MAX_CHILDREN)
-    except Exception:
-        app_count = 0
-    checks["desktop"] = {"ok": True, "applications": app_count}
-
-    if window is not None:
-        try:
-            app = find_application(
-                Atspi,
-                window["pid"],
-                deadline,
-                desktop=desktop,
-            )
-        except HelperFailure as error:
-            checks["focused_application"] = {"ok": False}
-            return {
-                "ok": True,
-                "available": False,
-                "reason_code": error.reason_code,
-                "checks": checks,
-            }
-        checks["focused_application"] = {"ok": app is not None}
-        if app is None:
-            return {
-                "ok": True,
-                "available": False,
-                "reason_code": "focused_application_unavailable",
-                "checks": checks,
-            }
-        try:
-            selected = choose_window(app, window, Atspi, deadline)
-        except HelperFailure as error:
-            checks["window_calibration"] = {"ok": False}
-            return {
-                "ok": True,
-                "available": False,
-                "reason_code": error.reason_code,
-                "checks": checks,
-            }
-        checks["window_calibration"] = {"ok": selected is not None}
-        if selected is None:
-            return {
-                "ok": True,
-                "available": False,
-                "reason_code": "window_calibration_failed",
-                "checks": checks,
-            }
-    return {
-        "ok": True,
-        "available": True,
-        "checks": checks,
-        "limits": {
-            "depth": MAX_DEPTH,
-            "nodes": MAX_NODES,
-            "children": MAX_CHILDREN,
-            "results": MAX_RESULTS,
-        },
-    }
-
-
 def unavailable_window_result(reason_code, reason):
     return {
         "ok": True,
@@ -1591,10 +1456,6 @@ def handle_window_operation(operation, request, window, Atspi, deadline=None):
 def main():
     try:
         operation, request, window = load_request()
-        if operation == "doctor":
-            Atspi, metadata = import_atspi_for_doctor()
-            emit(doctor_report(Atspi, metadata, window))
-            return
         Atspi = import_atspi()
         emit(handle_window_operation(operation, request, window, Atspi))
     except HelperFailure as error:
