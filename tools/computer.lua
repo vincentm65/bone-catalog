@@ -1,4 +1,4 @@
-local catalog_description = "Control Hyprland with hardened screenshots, AT-SPI semantic targets, freshness checks, and direct input execution."
+local catalog_description = "Control Hyprland through hardened screenshot observation, normalized-coordinate clicks, and typing."
 
 local STATE_KEY = "computer"
 local STATE_VERSION = 2
@@ -12,10 +12,6 @@ local MODEL_IMAGE_MAX_HEIGHT = 1080
 local DEFAULT_SETTLE_MS = 80
 local CLICK_SETTLE_MS = 120
 local CLICK_HOLD_MS = 30
-local INSPECT_RADIUS = 96
-local INSPECT_SIZE = 768
-local TARGET_PATCH_RADIUS = 24
-local TARGET_LOCK_TTL_SECONDS = 60
 local SCREENSHOT_TTL_SECONDS = 120
 local MAX_LEDGER_ENTRIES = 32
 local TILE_COLUMNS = 32
@@ -24,10 +20,8 @@ local TILE_SAMPLE_FACTOR = 3
 local POINTER_TOLERANCE = 1
 local MAX_TEXT_BYTES = 10000
 local MAX_DIAGNOSTIC_BYTES = 1024
-local MAX_SEMANTIC_BYTES = 256 * 1024
-local MAX_SEMANTIC_TARGETS = 64
-local SEMANTIC_TIMEOUT_MS = 2500
 local TRACE_VERSION = 1
+local OBSERVE_RECOVERY = "Call computer_observe before any further computer action; do not reuse the prior screenshot_id/action_token pair."
 
 local function fail(message)
     error(message, 0)
@@ -42,6 +36,31 @@ local function bounded_diagnostic(value)
         text = text:sub(1, MAX_DIAGNOSTIC_BYTES) .. "..."
     end
     return text
+end
+
+local function privacy_safe_observation_detail(value)
+    if value == nil then
+        return nil
+    end
+    local text = tostring(value)
+    local details = {}
+    for _, key in ipairs({
+        "runtime_error", "timed_out", "cancelled", "output_limit_exceeded",
+    }) do
+        if text:find(key .. "=true", 1, true) then
+            details[#details + 1] = key .. "=true"
+        end
+    end
+    for _, key in ipairs({ "stderr_bytes", "exit_code", "signal" }) do
+        local number = text:match(key .. "=(%-?%d+)")
+        if number then
+            details[#details + 1] = key .. "=" .. number
+        end
+    end
+    if #details == 0 then
+        details[1] = "detail_redacted=true"
+    end
+    return bounded_diagnostic(table.concat(details, ", "))
 end
 
 local function exec_diagnostic(result, call_error)
@@ -714,132 +733,29 @@ local function load_state(ctx)
     return state
 end
 
-local mutating_actions = {
-    move = true, click = true, click_locked = true, semantic_click = true,
-    double_click = true, right_click = true, drag = true, scroll = true,
-    type = true, key = true,
+local input_actions = {
+    click = true,
+    type = true,
 }
 
 local allowed_fields = {
     observe = { action = true, monitor = true, grid = true, trace = true },
-    inspect = {
-        action = true, screenshot_id = true, action_token = true, x = true, y = true,
-        radius = true, grid = true, trace = true,
-    },
-    semantic_find = {
-        action = true, screenshot_id = true, action_token = true,
-        grid = true, trace = true,
-        query = true, roles = true, near = true, max_results = true,
-    },
-    semantic_click = {
-        action = true, screenshot_id = true, semantic_id = true,
-        action_token = true, target_label = true, settle_ms = true,
-        grid = true, trace = true,
-    },
-    move = {
-        action = true, screenshot_id = true, action_token = true,
-        x = true, y = true, settle_ms = true, grid = true, trace = true,
-    },
     click = {
         action = true, screenshot_id = true, action_token = true,
         x = true, y = true, target_label = true, settle_ms = true,
-        grid = true, trace = true,
-    },
-    click_locked = {
-        action = true, screenshot_id = true, action_token = true,
-        target_token = true, target_label = true, settle_ms = true,
-        grid = true, trace = true,
-    },
-    double_click = {
-        action = true, screenshot_id = true, action_token = true,
-        x = true, y = true, target_label = true, settle_ms = true,
-        grid = true, trace = true,
-    },
-    right_click = {
-        action = true, screenshot_id = true, action_token = true,
-        x = true, y = true, target_label = true, settle_ms = true,
-        grid = true, trace = true,
-    },
-    drag = {
-        action = true, screenshot_id = true, action_token = true,
-        start_x = true, start_y = true, end_x = true, end_y = true,
-        settle_ms = true, grid = true, trace = true,
-    },
-    scroll = {
-        action = true, screenshot_id = true, action_token = true,
-        x = true, y = true, amount = true, settle_ms = true,
         grid = true, trace = true,
     },
     type = {
         action = true, screenshot_id = true, action_token = true,
         text = true, settle_ms = true, grid = true, trace = true,
     },
-    key = {
-        action = true, screenshot_id = true, action_token = true,
-        keys = true, settle_ms = true, grid = true, trace = true,
-    },
-    wait = {
-        action = true, screenshot_id = true, action_token = true,
-        duration_ms = true,
-        grid = true, trace = true,
-    },
 }
 
-local key_args
 local settle_duration
 
 local function validate_normalized(value, name)
     if not finite(value) or value < 0 or value > 1 then
         fail(name .. " must be a finite number from 0 through 1")
-    end
-end
-
-local function validate_semantic_filters(params)
-    if params.query ~= nil
-        and (type(params.query) ~= "string"
-            or #params.query == 0
-            or #params.query > 160
-            or params.query:find("[%z\1-\31\127]"))
-    then
-        fail("query must be non-empty printable text of at most 160 bytes")
-    end
-    if params.roles ~= nil then
-        if type(params.roles) ~= "table" or #params.roles == 0 or #params.roles > 16 then
-            fail("roles must contain from 1 through 16 semantic role names")
-        end
-        local seen = {}
-        for _, role in ipairs(params.roles) do
-            if type(role) ~= "string"
-                or #role == 0
-                or #role > 40
-                or not role:match("^[a-z_]+$")
-                or seen[role]
-            then
-                fail("roles must contain unique lowercase semantic role names")
-            end
-            seen[role] = true
-        end
-    end
-    if params.near ~= nil then
-        if type(params.near) ~= "table" then
-            fail("near must contain normalized x and y coordinates")
-        end
-        for key in pairs(params.near) do
-            if key ~= "x" and key ~= "y" and key ~= "radius" then
-                fail("near contains an irrelevant field")
-            end
-        end
-        validate_normalized(params.near.x, "near.x")
-        validate_normalized(params.near.y, "near.y")
-        if params.near.radius ~= nil then
-            validate_normalized(params.near.radius, "near.radius")
-            if params.near.radius == 0 then
-                fail("near.radius must be greater than zero")
-            end
-        end
-    end
-    if params.max_results ~= nil then
-        integer(params.max_results, "max_results", 1, MAX_SEMANTIC_TARGETS)
     end
 end
 
@@ -849,7 +765,7 @@ local function validate_request(params)
     end
     local fields = allowed_fields[params.action]
     if not fields then
-        fail("action must be observe, inspect, semantic_find, semantic_click, move, click, click_locked, double_click, right_click, drag, scroll, type, key, or wait")
+        fail("action must be observe, click, or type")
     end
     for key in pairs(params) do
         if type(key) ~= "string" or not fields[key] then
@@ -885,49 +801,19 @@ local function validate_request(params)
             or #params.screenshot_id == 0
             or #params.screenshot_id > 128)
     then
-        fail("screenshot_id is required for every non-observe action; call computer_observe first and copy its exact screenshot_id")
+        fail("screenshot_id is required for every computer action; call computer_observe first and copy its exact screenshot_id")
     end
     if requires_screenshot
         and (type(params.action_token) ~= "string"
             or #params.action_token < 16
             or #params.action_token > 128)
     then
-        fail("action_token is required for every non-observe action; copy it from the immediately preceding successful observation")
-    end
-    if params.action == "semantic_click"
-        and (type(params.semantic_id) ~= "string"
-            or #params.semantic_id == 0
-            or #params.semantic_id > 160
-            or not params.semantic_id:match("^atspi:%d+[%d%.]*$"))
-    then
-        fail("semantic_id is required for semantic_click; call semantic_find first")
-    end
-    if params.action == "click_locked"
-        and (type(params.target_token) ~= "string"
-            or #params.target_token == 0
-            or #params.target_token > 128)
-    then
-        fail("target_token is required for click_locked; call inspect first")
+        fail("action_token is required for every computer action; copy it from the immediately preceding successful observation")
     end
     local action = params.action
-    if action == "inspect" or action == "move" or action == "click"
-        or action == "double_click" or action == "right_click" or action == "scroll"
-    then
+    if action == "click" then
         validate_normalized(params.x, "x")
         validate_normalized(params.y, "y")
-    elseif action == "drag" then
-        validate_normalized(params.start_x, "start_x")
-        validate_normalized(params.start_y, "start_y")
-        validate_normalized(params.end_x, "end_x")
-        validate_normalized(params.end_y, "end_y")
-    end
-    if action == "inspect" and params.radius ~= nil then
-        integer(params.radius, "radius", 32, 256)
-    elseif action == "scroll" then
-        local amount = integer(params.amount, "amount", -20, 20)
-        if amount == 0 then
-            fail("amount must not be zero")
-        end
     elseif action == "type" then
         if type(params.text) ~= "string"
             or #params.text == 0
@@ -936,14 +822,8 @@ local function validate_request(params)
         then
             fail("text must be a non-empty string of at most 10000 bytes without NUL")
         end
-    elseif action == "key" then
-        key_args(params.keys)
-    elseif action == "wait" then
-        integer(params.duration_ms or 1000, "duration_ms", 0, 10000)
-    elseif action == "semantic_find" then
-        validate_semantic_filters(params)
     end
-    if mutating_actions[action] then
+    if input_actions[action] then
         settle_duration(params, action)
     end
 end
@@ -1019,53 +899,6 @@ end
 local function normalized_point(params, monitor, prefix)
     local source_x, source_y, width, height = normalized_source(params, monitor, prefix)
     return source_point(monitor, width, height, source_x, source_y)
-end
-
-local key_codes = {
-    CTRL = 29, LEFTCTRL = 29, SHIFT = 42, LEFTSHIFT = 42,
-    ALT = 56, LEFTALT = 56, META = 125, SUPER = 125,
-    ENTER = 28, TAB = 15, ESC = 1, ESCAPE = 1, BACKSPACE = 14,
-    DELETE = 111, SPACE = 57, LEFT = 105, RIGHT = 106, UP = 103,
-    DOWN = 108, HOME = 102, END = 107, PAGEUP = 104, PAGEDOWN = 109,
-    INSERT = 110, CAPSLOCK = 58,
-    A = 30, B = 48, C = 46, D = 32, E = 18, F = 33, G = 34,
-    H = 35, I = 23, J = 36, K = 37, L = 38, M = 50, N = 49,
-    O = 24, P = 25, Q = 16, R = 19, S = 31, T = 20, U = 22,
-    V = 47, W = 17, X = 45, Y = 21, Z = 44,
-    ["0"] = 11, ["1"] = 2, ["2"] = 3, ["3"] = 4, ["4"] = 5,
-    ["5"] = 6, ["6"] = 7, ["7"] = 8, ["8"] = 9, ["9"] = 10,
-    F1 = 59, F2 = 60, F3 = 61, F4 = 62, F5 = 63, F6 = 64,
-    F7 = 65, F8 = 66, F9 = 67, F10 = 68, F11 = 87, F12 = 88,
-}
-
-key_args = function(value)
-    if type(value) ~= "string" or value == "" then
-        fail("keys is required for key actions; use a combination such as ESCAPE, CTRL+L, ENTER, or SHIFT+F10")
-    end
-    if #value > 128 or not value:match("^[A-Za-z0-9+]+$") then
-        fail("keys must be a combination such as CTRL+L, ENTER, or SHIFT+F10")
-    end
-    local codes = {}
-    local seen = {}
-    for token in value:upper():gmatch("[^+]+") do
-        local code = key_codes[token]
-        if not code then
-            fail("unsupported key")
-        end
-        if seen[code] then
-            fail("duplicate key")
-        end
-        seen[code] = true
-        codes[#codes + 1] = code
-    end
-    local args = { "key" }
-    for _, code in ipairs(codes) do
-        args[#args + 1] = tostring(code) .. ":1"
-    end
-    for index = #codes, 1, -1 do
-        args[#args + 1] = tostring(codes[index]) .. ":0"
-    end
-    return args
 end
 
 local POST_INPUT_FAILURE = {}
@@ -1165,9 +998,7 @@ local function settle(ctx, action, duration)
 end
 
 settle_duration = function(params, action)
-    local default = (action == "click" or action == "click_locked" or action == "semantic_click" or action == "double_click" or action == "right_click")
-        and CLICK_SETTLE_MS
-        or DEFAULT_SETTLE_MS
+    local default = action == "click" and CLICK_SETTLE_MS or DEFAULT_SETTLE_MS
     return integer(params.settle_ms or default, "settle_ms", 0, 5000)
 end
 
@@ -1178,420 +1009,25 @@ local function log_target(ctx, action, normalized_x, normalized_y, x, y)
     ))
 end
 
-local semantic_state_keys = {
-    "checked", "editable", "enabled", "expanded", "focusable", "focused",
-    "pressed", "selected", "sensitive", "showing", "visible",
-}
-
-local function sanitized_count(value, maximum)
-    if finite(value)
-        and value % 1 == 0
-        and value >= 0
-        and value <= maximum
-    then
-        return value
-    end
-    return nil
-end
-
-local function sanitized_numeric_map(value, maximum)
-    local result = {}
-    if type(value) ~= "table" then
-        return result
-    end
-    for key, count in pairs(value) do
-        if type(key) == "string"
-            and #key > 0
-            and #key <= 48
-            and key:match("^[a-z0-9_]+$")
-            and finite(count)
-            and count % 1 == 0
-            and count >= 0
-            and count <= maximum
-        then
-            result[key] = count
-        end
-    end
-    return result
-end
-
-local function semantic_point_on_monitor(monitor, x, y)
-    local _, _, width, height = monitor_dimensions(monitor)
-    return x >= monitor.x and x < monitor.x + width
-        and y >= monitor.y and y < monitor.y + height
-end
-
-local function validate_semantic_target(target, snapshot, action)
-    if type(target) ~= "table"
-        or type(target.id) ~= "string"
-        or #target.id > 160
-        or not target.id:match("^atspi:%d+[%d%.]*$")
-        or type(target.fingerprint) ~= "string"
-        or not target.fingerprint:match("^atspi%-fp:v1:[0-9a-f]+$")
-        or #target.fingerprint ~= 76
-        or type(target.role) ~= "string"
-        or #target.role == 0 or #target.role > 64
-        or type(target.name) ~= "string"
-        or #target.name > 256
-        or type(target.states) ~= "table"
-        or type(target.bounds) ~= "table"
-        or type(target.center) ~= "table"
-        or type(target.actions) ~= "table"
-        or type(target.direct_activation) ~= "boolean"
-    then
-        fail(action .. ": invalid semantic helper result")
-    end
-    if target.role == "password_text" then
-        target.name = "[protected]"
-    end
-    for _, key in ipairs(semantic_state_keys) do
-        if type(target.states[key]) ~= "boolean" then
-            fail(action .. ": invalid semantic helper result")
-        end
-    end
-    local bounds = target.bounds
-    local center = target.center
-    for _, value in ipairs({ bounds.x, bounds.y, bounds.width, bounds.height, center.x, center.y }) do
-        if not finite(value) or value % 1 ~= 0 then
-            fail(action .. ": invalid semantic helper result")
-        end
-    end
-    local window = snapshot.window
-    if bounds.width <= 0 or bounds.height <= 0
-        or bounds.x < window.x or bounds.y < window.y
-        or bounds.x + bounds.width > window.x + window.width
-        or bounds.y + bounds.height > window.y + window.height
-        or center.x ~= bounds.x + math.floor(bounds.width / 2)
-        or center.y ~= bounds.y + math.floor(bounds.height / 2)
-        or not semantic_point_on_monitor(snapshot.monitor, center.x, center.y)
-    then
-        fail(action .. ": semantic target bounds are not safely clickable")
-    end
-    if not target.states.visible or not target.states.showing
-        or not target.states.sensitive or not target.states.enabled
-    then
-        fail(action .. ": semantic target is not safely actionable")
-    end
-    local seen_actions = {}
-    for _, name in ipairs(target.actions) do
-        if type(name) ~= "string"
-            or #name == 0
-            or #name > 40
-            or not name:match("^[a-z_]+$")
-            or seen_actions[name]
-        then
-            fail(action .. ": invalid semantic helper result")
-        end
-        seen_actions[name] = true
-    end
-    return target
-end
-
-local function semantic_helper_path(ctx)
-    if type(ctx.config_dir) ~= "string"
-        or ctx.config_dir == ""
-        or ctx.config_dir:find("\0", 1, true)
-    then
-        return nil
-    end
-    return ctx.config_dir .. "/lua/scripts/computer_atspi.py"
-end
-
-local function semantic_call(ctx, operation, snapshot, expected, params)
-    local helper = semantic_helper_path(ctx)
-    if not helper then
-        return nil, "semantic helper location is unavailable"
-    end
-    local request = { window = snapshot.window }
-    if expected then
-        request.target_id = expected.id
-        request.fingerprint = expected.fingerprint
-        request.expected = expected
-    end
-    if operation == "discover" and params then
-        request.query = params.query
-        request.roles = params.roles
-        request.max_results = params.max_results
-        if params.near then
-            local x, y = normalized_point(params.near, snapshot.monitor)
-            local _, _, logical_width, logical_height = monitor_dimensions(snapshot.monitor)
-            request.near = {
-                x = x,
-                y = y,
-                radius = params.near.radius
-                    and math.max(1, math.floor(
-                        params.near.radius * math.min(logical_width, logical_height) + 0.5
-                    ))
-                    or nil,
-            }
-        end
-    end
-    local raw, kind, detail = exec_result(ctx, "python3", { helper, operation }, {
-        stdin = json.encode(request),
-        timeout_ms = SEMANTIC_TIMEOUT_MS,
-        max_output_bytes = MAX_SEMANTIC_BYTES,
-        env = instance_environment(),
-    })
-    if not raw then
-        if kind == "spawn" then
-            return nil, "Python 3 is unavailable", "python_unavailable"
-        end
-        return nil, "AT-SPI helper failed safely", "helper_execution_failed"
-    end
-    local ok, result = pcall(decode_json, raw, "invalid semantic helper output")
-    if not ok or type(result) ~= "table" then
-        return nil, "invalid semantic helper output", "helper_output_invalid"
-    end
-    if result.ok ~= true then
-        return nil,
-            bounded_diagnostic(result.reason) or "semantic target verification failed",
-            bounded_diagnostic(result.reason_code) or "semantic_failure"
-    end
-    return result
-end
-
-local function semantic_discover(ctx, snapshot, params)
-    local result, reason, reason_code = semantic_call(ctx, "discover", snapshot, nil, params)
-    if not result then
-        return {
-            available = false,
-            reason = reason,
-            reason_code = reason_code,
-            targets = {},
-        }
-    end
-    if result.available ~= true then
-        return {
-            available = false,
-            reason = bounded_diagnostic(result.reason) or "focused application is not accessible",
-            reason_code = bounded_diagnostic(result.reason_code) or "semantic_unavailable",
-            targets = {},
-        }
-    end
-    if type(result.targets) ~= "table" or #result.targets > MAX_SEMANTIC_TARGETS then
-        fail("semantic_find: invalid semantic helper result")
-    end
-    local seen = {}
-    for _, target in ipairs(result.targets) do
-        validate_semantic_target(target, snapshot, "semantic_find")
-        if seen[target.id] then
-            fail("semantic_find: duplicate semantic target id")
-        end
-        seen[target.id] = true
-        if seen[target.fingerprint] then
-            fail("semantic_find: duplicate semantic target fingerprint")
-        end
-        seen[target.fingerprint] = true
-    end
-    local semantic = {
-        available = true,
-        targets = result.targets,
-        truncated = result.truncated == true,
-        visited = sanitized_count(result.visited, 100000),
-        matched = sanitized_count(result.matched, 100000),
-        rejections = sanitized_numeric_map(result.rejections, 100000),
-        limits = sanitized_numeric_map(result.limits, 100000),
-    }
-    local trace = ctx.__computer_trace
-    if type(trace) == "table" then
-        trace.semantic = {
-            visited = semantic.visited,
-            matched = semantic.matched,
-            returned = #semantic.targets,
-            truncated = semantic.truncated,
-            rejections = semantic.rejections,
-        }
-    end
-    return semantic
-end
-
-local function stored_semantic_target(prior, semantic_id)
-    local semantic = prior.semantic
-    if type(semantic) ~= "table" or type(semantic.targets) ~= "table" then
-        fail("semantic_click: semantic targets are unavailable; call semantic_find again")
-    end
-    local found
-    for _, target in ipairs(semantic.targets) do
-        if type(target) == "table" and target.id == semantic_id then
-            if found then
-                fail("semantic_click: semantic target id is ambiguous; call semantic_find again")
-            end
-            found = target
-        end
-    end
-    if not found then
-        fail("semantic_click: semantic target is stale or unknown; call semantic_find again")
-    end
-    return found
-end
-
-local function semantic_resolve(ctx, snapshot, expected)
-    local result, reason = semantic_call(ctx, "resolve", snapshot, expected)
-    if not result then
-        fail("semantic_click: " .. reason .. "; action was not sent")
-    end
-    local current = validate_semantic_target(result.target, snapshot, "semantic_click")
-    if current.fingerprint ~= expected.fingerprint
-        or current.role ~= expected.role
-    then
-        fail("semantic_click: semantic target identity changed; action was not sent")
-    end
-    return current
-end
-
-local function semantic_activate(ctx, snapshot, expected)
-    local result, reason, reason_code = semantic_call(ctx, "activate", snapshot, expected)
-    if not result then
-        post_input_failure(reason_code or "activation_delivery_ambiguous", reason)
-    end
-    if result.activated ~= true or result.delivery ~= "delivered" then
-        post_input_failure("activation_delivery_ambiguous", "invalid activation result")
-    end
-    local current = validate_semantic_target(result.target, snapshot, "semantic_click")
-    if current.fingerprint ~= expected.fingerprint or current.role ~= expected.role then
-        post_input_failure("activation_identity_mismatch", "activated target identity changed")
-    end
-    current.delivery = "delivered"
-    current.activation_action = result.action
-    current.state_changed = result.state_changed
-    current.direct = true
-    return current
-end
-
-local function semantic_focus_for_typing(ctx, snapshot)
-    local result, reason, reason_code = semantic_call(ctx, "focused", snapshot)
-    if not result
-        or result.available ~= true
-        or result.typing_safe ~= true
-        or type(result.target) ~= "table"
-    then
-        fail("type: accessible focus could not be verified ("
-            .. tostring(reason_code or (result and result.reason_code) or reason) .. "); action was not sent")
-    end
-    return validate_semantic_target(result.target, snapshot, "type")
-end
-
-local function perform_action(params, ctx, signature, snapshot, target_lock, semantic_target)
+local function perform_action(params, ctx, signature, snapshot)
     local action = params.action
     local monitor = snapshot.monitor
-    if (action == "type" or action == "key") and not monitor.focused then
-        fail(action .. ": selected monitor is not focused; action was not sent")
+    if action == "type" and not monitor.focused then
+        input_not_delivered("monitor_not_focused")
     end
-    if action == "move" then
+    if action == "click" then
         local x, y = normalized_point(params, monitor)
-        log_target(ctx, action, params.x, params.y, x, y)
-        move_and_verify(ctx, signature, action, x, y)
-        settle(ctx, action, settle_duration(params, action))
-        return
-    end
-    if action == "click" or action == "click_locked" or action == "semantic_click" or action == "double_click" or action == "right_click" then
-        local x
-        local y
-        if action == "semantic_click" then
-            if type(semantic_target) ~= "table" then
-                fail("semantic_click: verified semantic target is unavailable; action was not sent")
-            end
-            if semantic_target.direct == true then
-                settle(ctx, action, settle_duration(params, action))
-                return
-            end
-            x = semantic_target.center.x
-            y = semantic_target.center.y
-            accuracy_log(ctx, string.format(
-                "semantic_click target id=%s role=%s mapped=(%d,%d)",
-                semantic_target.id, semantic_target.role, x, y
-            ))
-        elseif action == "click_locked" then
-            if type(target_lock) ~= "table" then
-                fail("click_locked: target lock is unavailable; call inspect again")
-            end
-            x = target_lock.logical_x
-            y = target_lock.logical_y
-            accuracy_log(ctx, string.format(
-                "click_locked target token=%s source=(%d,%d) mapped=(%d,%d)",
-                target_lock.token, target_lock.source_x, target_lock.source_y, x, y
-            ))
-        else
-            x, y = normalized_point(params, monitor)
-            log_target(ctx, action, params.x, params.y, x, y)
-        end
-        move_and_verify(ctx, signature, action, x, y)
-        if action == "double_click" then
-            run_delivery(ctx, action, { "click", "--repeat", "2", "--next-delay", "100", "0xC0" })
-        elseif action == "right_click" then
-            run_delivery(ctx, action, { "click", "--next-delay", tostring(CLICK_HOLD_MS), "0xC1" })
-        else
-            run_delivery(ctx, action, { "click", "--next-delay", tostring(CLICK_HOLD_MS), "0xC0" })
-        end
-        settle(ctx, action, settle_duration(params, action))
-        return
-    end
-    if action == "drag" then
-        local start_x, start_y = normalized_point(params, monitor, "start_")
-        local end_x, end_y = normalized_point(params, monitor, "end_")
-        log_target(ctx, action .. " start", params.start_x, params.start_y, start_x, start_y)
-        log_target(ctx, action .. " end", params.end_x, params.end_y, end_x, end_y)
-        move_and_verify(ctx, signature, action, start_x, start_y)
-        run_delivery(ctx, action, { "click", "0x40" })
-        local moved = pcall(move_and_verify, ctx, signature, action, end_x, end_y)
-        local released = pcall(run_delivery, ctx, action, { "click", "0x80" })
-        if not moved or not released then
-            post_input_failure("drag_delivery_ambiguous", "drag movement or button release failed after button press")
-        end
-        settle(ctx, action, settle_duration(params, action))
-        return
-    end
-    if action == "scroll" then
-        local x, y = normalized_point(params, monitor)
-        local amount = integer(params.amount, "amount", -20, 20)
-        if amount == 0 then
-            fail("amount must not be zero")
-        end
         log_target(ctx, action, params.x, params.y, x, y)
         move_and_verify(ctx, signature, action, x, y)
         run_delivery(ctx, action, {
-            "mousemove", "--wheel", "--", "0", tostring(amount),
+            "click", "--next-delay", tostring(CLICK_HOLD_MS), "0xC0",
         })
         settle(ctx, action, settle_duration(params, action))
         return
     end
     if action == "type" then
-        if type(params.text) ~= "string"
-            or #params.text == 0
-            or #params.text > MAX_TEXT_BYTES
-            or params.text:find("\0", 1, true)
-        then
-            fail("text must be a non-empty string of at most 10000 bytes without NUL")
-        end
         run_delivery(ctx, action, { "type", "--key-delay", "12", "--", params.text })
         settle(ctx, action, settle_duration(params, action))
-        return
-    end
-    if action == "key" then
-        run_delivery(ctx, action, key_args(params.keys))
-        settle(ctx, action, settle_duration(params, action))
-        return
-    end
-    if action == "wait" then
-        local duration = integer(params.duration_ms or 1000, "duration_ms", 0, 10000)
-        if duration > 0 then
-            if type(ctx.time) == "table" and type(ctx.time.sleep_ms) == "function" then
-                local ok, problem = pcall(ctx.time.sleep_ms, duration)
-                if not ok then
-                    fail("wait failed (" .. bounded_diagnostic(problem) .. ")")
-                end
-            else
-                local _, kind, detail = exec_result(
-                    ctx,
-                    "sleep",
-                    { string.format("%.3f", duration / 1000) },
-                    { timeout_ms = duration + SLEEP_TIMEOUT_MARGIN_MS }
-                )
-                if kind then
-                    fail("wait failed (" .. detail .. ")")
-                end
-            end
-        end
         return
     end
     fail("unsupported action")
@@ -1655,12 +1091,9 @@ local function image_sha256(ctx, image, action)
 end
 
 local function capture(ctx, signature, monitor, _grid, action)
-    local cursor_visible = action == "move"
+    local cursor_visible = false
     local _, _, logical_width, logical_height = monitor_dimensions(monitor)
     local grim_args = { "-t", "png", "-s", tostring(monitor.scale) }
-    if cursor_visible then
-        grim_args[#grim_args + 1] = "-c"
-    end
     grim_args[#grim_args + 1] = "-o"
     grim_args[#grim_args + 1] = monitor.name
     grim_args[#grim_args + 1] = "-"
@@ -1742,31 +1175,63 @@ local function render_grid(ctx, image, width, height, action)
     return rendered
 end
 
+local function stable_observation_failure(message, capture_action)
+    message = tostring(message)
+    if capture_action == "validation" or not input_actions[capture_action] then
+        if not message:find("action was not sent", 1, true) then
+            message = message .. "; action was not sent"
+        end
+        if not message:find("Call computer_observe", 1, true) then
+            message = message .. ". " .. OBSERVE_RECOVERY
+        end
+    end
+    fail(message)
+end
+
 local function stable_observation(ctx, action, requested_monitor, signature, capture_action)
     local before
     if signature then
         local kind
         before, kind = snapshot_once(ctx, signature, action, requested_monitor)
         if not before then
-            fail(action .. ": stable observation metadata failed before capture (" .. tostring(kind) .. ")")
+            stable_observation_failure(
+                action .. ": stable observation metadata failed before capture (" .. tostring(kind) .. ")",
+                capture_action
+            )
         end
     else
-        signature, before = snapshot_with_race(ctx, action, requested_monitor)
+        local observed
+        observed, signature, before = pcall(
+            snapshot_with_race, ctx, action, requested_monitor
+        )
+        if not observed then
+            stable_observation_failure(signature, capture_action)
+        end
     end
 
-    local image, image_hash, width, height, cursor_visible = capture(
+    local captured, image, image_hash, width, height, cursor_visible = pcall(
+        capture,
         ctx,
         signature,
         before.monitor,
         false,
         capture_action or action
     )
+    if not captured then
+        stable_observation_failure(image, capture_action)
+    end
     local after, kind = snapshot_once(ctx, signature, action, before.monitor.name)
     if not after then
-        fail(action .. ": stable observation metadata failed after capture (" .. tostring(kind) .. ")")
+        stable_observation_failure(
+            action .. ": stable observation metadata failed after capture (" .. tostring(kind) .. ")",
+            capture_action
+        )
     end
     if not same_snapshot(before, after) then
-        fail(action .. ": screen context changed during capture; action was not sent")
+        stable_observation_failure(
+            action .. ": screen context changed during capture",
+            capture_action
+        )
     end
     return signature, after, image, image_hash, width, height, cursor_visible
 end
@@ -1854,16 +1319,7 @@ local function tile_index(grid, normalized_x, normalized_y)
 end
 
 local function coordinate_tiles(params, prior)
-    local action = params.action
-    if action == "drag" then
-        return {
-            tile_index(prior.tile_grid, params.start_x, params.start_y),
-            tile_index(prior.tile_grid, params.end_x, params.end_y),
-        }
-    end
-    if action == "move" or action == "click" or action == "double_click"
-        or action == "right_click" or action == "scroll"
-    then
+    if params.action == "click" then
         return { tile_index(prior.tile_grid, params.x, params.y) }
     end
     return {}
@@ -1877,7 +1333,7 @@ local function validate_coordinate_freshness(params, prior, current)
         or prior.tile_grid.width ~= current.width
         or prior.tile_grid.height ~= current.height
     then
-        fail(params.action .. ": referenced target-region fingerprints are unavailable; call computer_observe again")
+        fail(params.action .. ": referenced target-region fingerprints are unavailable; action was not sent. " .. OBSERVE_RECOVERY)
     end
     local seen = {}
     for _, index in ipairs(coordinate_tiles(params, prior)) do
@@ -1890,152 +1346,6 @@ local function validate_coordinate_freshness(params, prior, current)
             end
         end
     end
-end
-
-local function target_patch_hash(ctx, image, width, height, center_x, center_y, action)
-    local patch_left = math.max(0, center_x - TARGET_PATCH_RADIUS)
-    local patch_top = math.max(0, center_y - TARGET_PATCH_RADIUS)
-    local patch_right = math.min(width - 1, center_x + TARGET_PATCH_RADIUS)
-    local patch_bottom = math.min(height - 1, center_y + TARGET_PATCH_RADIUS)
-    local patch_width = patch_right - patch_left + 1
-    local patch_height = patch_bottom - patch_top + 1
-    if type(ctx.codec.png_region_sha256) == "function" then
-        local ok, result = pcall(
-            ctx.codec.png_region_sha256,
-            image,
-            patch_left,
-            patch_top,
-            patch_width,
-            patch_height
-        )
-        if not ok then
-            fail(action .. ": native target patch hashing failed ("
-                .. (bounded_diagnostic(result) or "native codec failure") .. ")")
-        end
-        if type(result) ~= "table"
-            or result.width ~= patch_width
-            or result.height ~= patch_height
-            or type(result.sha256) ~= "string"
-            or #result.sha256 ~= 64
-            or not result.sha256:match("^[0-9a-f]+$")
-        then
-            fail(action .. ": native target patch hashing returned invalid data")
-        end
-        return result.sha256, {
-            x = patch_left,
-            y = patch_top,
-            width = patch_width,
-            height = patch_height,
-        }
-    end
-    local patch, kind, detail = exec_result(ctx, "magick", {
-        "png:-",
-        "-crop", string.format("%dx%d+%d+%d", patch_width, patch_height, patch_left, patch_top),
-        "+repage", "-depth", "8", "rgba:-",
-    }, {
-        stdin = image,
-        max_output_bytes = patch_width * patch_height * 4,
-    })
-    if not patch then
-        fail(action .. ": target patch capture failed (" .. bounded_diagnostic(detail or kind) .. ")")
-    end
-    if #patch ~= patch_width * patch_height * 4 then
-        fail(action .. ": target patch had invalid geometry")
-    end
-    return image_sha256(ctx, patch, action), {
-        x = patch_left,
-        y = patch_top,
-        width = patch_width,
-        height = patch_height,
-    }
-end
-
-local function inspect_image(ctx, image, width, height, params)
-    local radius = integer(params.radius or INSPECT_RADIUS, "radius", 32, 256)
-    local center_x = math.floor(params.x * (width - 1) + 0.5)
-    local center_y = math.floor(params.y * (height - 1) + 0.5)
-    local left = math.max(0, center_x - radius)
-    local top = math.max(0, center_y - radius)
-    local right = math.min(width - 1, center_x + radius)
-    local bottom = math.min(height - 1, center_y + radius)
-    local crop_width = right - left + 1
-    local crop_height = bottom - top + 1
-
-    local clean, kind, detail = exec_result(ctx, "magick", {
-        "png:-",
-        "-crop", string.format("%dx%d+%d+%d", crop_width, crop_height, left, top),
-        "+repage", "-filter", "Lanczos",
-        "-resize", string.format("%dx%d!", INSPECT_SIZE, INSPECT_SIZE),
-        "png:-",
-    }, {
-        stdin = image,
-        max_output_bytes = MAX_IMAGE_BYTES,
-    })
-    if not clean then
-        if kind == "spawn" then
-            fail("inspect: ImageMagick is unavailable; install ImageMagick (" .. detail .. ")")
-        end
-        fail("inspect: target crop rendering failed (" .. detail .. ")")
-    end
-    local clean_width
-    local clean_height
-    clean, clean_width, clean_height = validate_png(clean, "inspect")
-    if clean_width ~= INSPECT_SIZE or clean_height ~= INSPECT_SIZE then
-        fail("inspect: target crop had invalid geometry")
-    end
-
-    local display_x = math.floor((center_x - left + 0.5) * INSPECT_SIZE / crop_width)
-    local display_y = math.floor((center_y - top + 0.5) * INSPECT_SIZE / crop_height)
-    display_x = math.max(0, math.min(INSPECT_SIZE - 1, display_x))
-    display_y = math.max(0, math.min(INSPECT_SIZE - 1, display_y))
-    local inner = 28
-    local outer = 56
-    local ticks = string.format(
-        "line %d,%d %d,%d line %d,%d %d,%d line %d,%d %d,%d line %d,%d %d,%d",
-        math.max(0, display_x - outer), display_y, math.max(0, display_x - inner), display_y,
-        math.min(INSPECT_SIZE - 1, display_x + inner), display_y, math.min(INSPECT_SIZE - 1, display_x + outer), display_y,
-        display_x, math.max(0, display_y - outer), display_x, math.max(0, display_y - inner),
-        display_x, math.min(INSPECT_SIZE - 1, display_y + inner), display_x, math.min(INSPECT_SIZE - 1, display_y + outer)
-    )
-    local rendered, render_kind, render_detail = exec_result(ctx, "magick", {
-        "png:-",
-        "-stroke", "rgba(255,64,64,0.95)", "-strokewidth", "3", "-fill", "none",
-        "-draw", ticks,
-        "png:-",
-    }, {
-        stdin = clean,
-        max_output_bytes = MAX_IMAGE_BYTES,
-    })
-    if not rendered then
-        fail("inspect: target annotation failed (" .. bounded_diagnostic(render_detail or render_kind) .. ")")
-    end
-    local inspected
-    local inspected_width
-    local inspected_height
-    inspected, inspected_width, inspected_height = validate_png(rendered, "inspect")
-    if inspected_width ~= INSPECT_SIZE or inspected_height ~= INSPECT_SIZE then
-        fail("inspect: annotated crop had invalid geometry")
-    end
-
-    local patch_sha256, patch_bounds = target_patch_hash(
-        ctx, image, width, height, center_x, center_y, "inspect"
-    )
-
-    return inspected, {
-        radius = radius,
-        source_x = center_x,
-        source_y = center_y,
-        source_bounds = { x = left, y = top, width = crop_width, height = crop_height },
-        display_x = display_x,
-        display_y = display_y,
-        width = inspected_width,
-        height = inspected_height,
-        magnification_x = INSPECT_SIZE / crop_width,
-        magnification_y = INSPECT_SIZE / crop_height,
-        annotation = "four exterior ticks; center remains unobscured",
-        patch_bounds = patch_bounds,
-        patch_sha256 = patch_sha256,
-    }
 end
 
 local function model_image_dimensions(width, height)
@@ -2114,8 +1424,6 @@ local function image_debug(ctx, image, encoded, hash)
     ))
 end
 
-local input_actions = mutating_actions
-
 local function point_metadata(params, snapshot, width, height, prefix, attachment_width, attachment_height)
     prefix = prefix or ""
     if params[prefix .. "x"] == nil or params[prefix .. "y"] == nil then
@@ -2135,78 +1443,6 @@ local function point_metadata(params, snapshot, width, height, prefix, attachmen
         point.attachment_y = math.floor(params[prefix .. "y"] * (attachment_height - 1) + 0.5)
     end
     return point
-end
-
-local function target_lock_for_inspection(
-    ctx, params, snapshot, screenshot_id, operation_id, image_hash, geometry, width, height
-)
-    local logical_x, logical_y = source_point(
-        snapshot.monitor, width, height, geometry.source_x, geometry.source_y
-    )
-    local created_at = monotonic_ms(ctx)
-    local token = "target-" .. random_hex(ctx, 16, table.concat({
-        screenshot_id,
-        operation_id,
-        image_hash,
-        tostring(geometry.source_x),
-        tostring(geometry.source_y),
-    }, ":"))
-    return {
-        token = token,
-        screenshot_id = screenshot_id,
-        monitor = snapshot.monitor.name,
-        geometry_fingerprint = geometry_fingerprint(ctx, snapshot.monitor, width, height, "inspect"),
-        normalized_x = params.x,
-        normalized_y = params.y,
-        source_x = geometry.source_x,
-        source_y = geometry.source_y,
-        logical_x = logical_x,
-        logical_y = logical_y,
-        image_width = width,
-        image_height = height,
-        radius = geometry.radius,
-        patch_bounds = geometry.patch_bounds,
-        patch_sha256 = geometry.patch_sha256,
-        created_monotonic_ms = created_at,
-        expires_monotonic_ms = created_at + TARGET_LOCK_TTL_SECONDS * 1000,
-    }
-end
-
-local function validate_target_lock(ctx, params, prior, snapshot, image, width, height)
-    local lock = prior.target_lock
-    if type(lock) ~= "table" or lock.token ~= params.target_token then
-        fail("click_locked: target token is stale, consumed, or unknown; action was not sent. Call inspect again")
-    end
-    if lock.screenshot_id ~= prior.screenshot_id
-        or lock.monitor ~= snapshot.monitor.name
-        or lock.image_width ~= width
-        or lock.image_height ~= height
-        or lock.geometry_fingerprint ~= geometry_fingerprint(ctx, snapshot.monitor, width, height, "click_locked")
-        or not finite(lock.source_x)
-        or not finite(lock.source_y)
-        or not finite(lock.logical_x)
-        or not finite(lock.logical_y)
-        or not finite(lock.expires_monotonic_ms)
-    then
-        fail("click_locked: target lock geometry is invalid; action was not sent. Call inspect again")
-    end
-    if monotonic_ms(ctx) > lock.expires_monotonic_ms then
-        fail("click_locked: target lock expired; action was not sent. Call inspect again")
-    end
-    local current_hash, current_bounds = target_patch_hash(
-        ctx, image, width, height, lock.source_x, lock.source_y, "click_locked"
-    )
-    local bounds = lock.patch_bounds
-    if type(bounds) ~= "table"
-        or bounds.x ~= current_bounds.x
-        or bounds.y ~= current_bounds.y
-        or bounds.width ~= current_bounds.width
-        or bounds.height ~= current_bounds.height
-        or current_hash ~= lock.patch_sha256
-    then
-        fail("click_locked: pixels around the locked target changed; action was not sent. Call inspect again")
-    end
-    return lock
 end
 
 local function changed_bounds(ctx, before_image, after_image, width, height, _operation_id)
@@ -2341,6 +1577,7 @@ local function replay_response(entry, state)
                 required = true,
             } or nil,
             next_action = resumable and nil or "observe",
+            recovery = resumable and nil or OBSERVE_RECOVERY,
         }),
     })
 end
@@ -2351,7 +1588,7 @@ local function check_call_replay(state, call_id, digest)
         return nil
     end
     if entry.params_sha256 ~= digest then
-        fail("call_id was already used with different parameters; action was not sent")
+        fail("call_id was already used with different parameters; action was not sent. " .. OBSERVE_RECOVERY)
     end
     return replay_response(entry, state)
 end
@@ -2368,11 +1605,6 @@ local function reserve_action(ctx, state, params, operation_id, call_id, digest)
     authorization.consumed_by = digest
     authorization.consumed_monotonic_ms = monotonic_ms(ctx)
     state.blocked_reason = nil
-    if params.action == "click_locked" then
-        state.target_lock = nil
-    elseif params.action == "semantic_click" then
-        state.semantic = nil
-    end
     append_ledger(state, {
         call_id = call_id,
         operation_id = operation_id,
@@ -2384,7 +1616,7 @@ local function reserve_action(ctx, state, params, operation_id, call_id, digest)
     local ok, problem = pcall(ctx.state.set, STATE_KEY, json.encode(state))
     if not ok then
         fail(params.action .. ": could not reserve single-use input authorization; action was not sent ("
-            .. bounded_diagnostic(problem) .. ")")
+            .. privacy_safe_observation_detail(problem) .. "). " .. OBSERVE_RECOVERY)
     end
 end
 
@@ -2415,48 +1647,9 @@ local function block_after_input(ctx, state, call_id, reason_code)
     pcall(ctx.state.set, STATE_KEY, json.encode(state))
 end
 
-local function semantic_state_for_storage(ctx, salt, semantic)
-    if type(semantic) ~= "table" then
-        return nil
-    end
-    local stored = {
-        available = semantic.available == true,
-        reason = bounded_diagnostic(semantic.reason),
-        truncated = semantic.truncated == true,
-        visited = semantic.visited,
-        matched = semantic.matched,
-        rejections = semantic.rejections,
-        targets = {},
-    }
-    for _, target in ipairs(semantic.targets or {}) do
-        stored.targets[#stored.targets + 1] = {
-            id = target.id,
-            fingerprint = target.fingerprint,
-            role = target.role,
-            name_sha256 = digest_fields(ctx, "semantic target", {
-                salt,
-                target.name or "",
-            }),
-            states = {
-                enabled = target.states and target.states.enabled == true,
-                sensitive = target.states and target.states.sensitive == true,
-                showing = target.states and target.states.showing == true,
-                visible = target.states and target.states.visible == true,
-            },
-            bounds = target.bounds,
-            center = target.center,
-            actions = target.actions,
-            direct_activation = target.direct_activation == true,
-        }
-    end
-    return stored
-end
-
 local function save_response(
     ctx, prior, signature, snapshot, params, grid, operation_id, call_id,
-    image, image_hash, width, height, cursor_visible,
-    inspection_image, inspection_geometry, before_image, before_hash, locked_target,
-    semantic, semantic_target
+    image, image_hash, width, height, cursor_visible, before_image, before_hash
 )
     local action = params.action
     local exact_unchanged = prior and prior.image_sha256 == image_hash
@@ -2467,13 +1660,6 @@ local function save_response(
     local generation = unchanged and prior.generation or (prior and prior.generation + 1 or 1)
     local operation_generation = prior and (prior.operation_generation or 0) + 1 or 1
     local screenshot_id = unchanged and prior.screenshot_id or "computer-" .. tostring(generation)
-    local target_lock
-    if inspection_geometry then
-        target_lock = target_lock_for_inspection(
-            ctx, params, snapshot, screenshot_id, operation_id, image_hash,
-            inspection_geometry, width, height
-        )
-    end
     local captured_at = monotonic_ms(ctx)
     local privacy_salt = prior and prior.privacy_salt
         or random_hex(ctx, 16, operation_id)
@@ -2509,41 +1695,14 @@ local function save_response(
             consumed = false,
         },
         ledger = prior and prior.ledger or {},
-        target_lock = target_lock,
-        semantic = semantic_state_for_storage(ctx, privacy_salt, semantic),
     }
 
     local pixel_width, pixel_height, logical_width, logical_height = monitor_dimensions(snapshot.monitor)
     local attachment_width, attachment_height = model_image_dimensions(width, height)
-    local force_attachment = action == "observe"
-        or action == "inspect"
-        or (prior and prior.grid ~= grid)
+    local force_attachment = action == "observe" or (prior and prior.grid ~= grid)
     local target = point_metadata(
         params, snapshot, width, height, nil, attachment_width, attachment_height
     )
-    if locked_target then
-        target = {
-            normalized_x = locked_target.normalized_x,
-            normalized_y = locked_target.normalized_y,
-            logical_x = locked_target.logical_x,
-            logical_y = locked_target.logical_y,
-            screenshot_x = locked_target.source_x,
-            screenshot_y = locked_target.source_y,
-            attachment_x = math.floor(locked_target.normalized_x * (attachment_width - 1) + 0.5),
-            attachment_y = math.floor(locked_target.normalized_y * (attachment_height - 1) + 0.5),
-            target_token = locked_target.token,
-        }
-    end
-    if semantic_target then
-        target = {
-            semantic_id = semantic_target.id,
-            role = semantic_target.role,
-            name = semantic_target.name,
-            logical_x = semantic_target.center.x,
-            logical_y = semantic_target.center.y,
-            bounds = semantic_target.bounds,
-        }
-    end
     local evidence
     local change_bounds
     if before_hash then
@@ -2563,9 +1722,7 @@ local function save_response(
     else
         evidence = exact_unchanged and "unchanged" or "changed_elsewhere"
     end
-    local input_delivery = input_actions[action]
-        and (semantic_target and semantic_target.delivery or "sent_unverified")
-        or "not_applicable"
+    local input_delivery = input_actions[action] and "sent_unverified" or "not_applicable"
     local trace = ctx.__computer_trace
     if type(trace) == "table" then
         trace.context_sha256 = state.context_sha256
@@ -2612,68 +1769,19 @@ local function save_response(
         },
         cursor_visible = cursor_visible,
         available_monitors = snapshot.available_monitors,
-        monitor_selection = "To inspect another monitor, call observe with monitor set to its name or 'other'.",
+        monitor_selection = "To observe another monitor, call computer_observe with monitor set to its name or 'other'.",
         coordinates = "Use finite normalized coordinates from 0 through 1 with this screenshot_id.",
         screenshot_captured = true,
         screenshot_attached = not unchanged or force_attachment,
         visual_change = evidence,
         change_bounds = change_bounds,
         input_delivery = input_delivery,
-        semantic_target = semantic_target and "verified" or (input_actions[action] and "unknown" or "not_applicable"),
         grid = grid,
         reason_code = "completed",
     }
-    if semantic then
-        content.semantic = semantic
-        content.semantic_instruction = semantic.available
-            and "Use an exact semantic target id with semantic_click. Targets are scoped to the focused window and will be re-resolved before input."
-            or "AT-SPI targeting is unavailable for this focused window. Continue with screenshot coordinates."
-    end
-    if semantic_target then
-        content.semantic_verification = {
-            id = semantic_target.id,
-            role = semantic_target.role,
-            name = semantic_target.name,
-            states = semantic_target.states,
-            bounds = semantic_target.bounds,
-            center = semantic_target.center,
-        }
-    end
     content.target = target
-    if action == "drag" then
-        content.start_target = point_metadata(
-            params, snapshot, width, height, "start_", attachment_width, attachment_height
-        )
-        content.end_target = point_metadata(
-            params, snapshot, width, height, "end_", attachment_width, attachment_height
-        )
-    end
     if input_actions[action] then
         content.settle_ms = settle_duration(params, action)
-    end
-    if inspection_geometry then
-        content.inspection_geometry = inspection_geometry
-        content.target_lock = {
-            target_token = target_lock.token,
-            ttl_seconds = TARGET_LOCK_TTL_SECONDS,
-            expires_in_ms = math.max(
-                0,
-                target_lock.expires_monotonic_ms - monotonic_ms(ctx)
-            ),
-            screenshot_id = target_lock.screenshot_id,
-            monitor = target_lock.monitor,
-            geometry_fingerprint = target_lock.geometry_fingerprint,
-            normalized_x = target_lock.normalized_x,
-            normalized_y = target_lock.normalized_y,
-            source_x = target_lock.source_x,
-            source_y = target_lock.source_y,
-            logical_x = target_lock.logical_x,
-            logical_y = target_lock.logical_y,
-            patch_bounds = target_lock.patch_bounds,
-            patch_sha256 = target_lock.patch_sha256,
-        }
-        content.next_call.target_token = target_lock.token
-        content.next_call.locked_action = "click_locked"
     end
     if unchanged then
         content.image_reused_from = prior.screenshot_id
@@ -2704,18 +1812,7 @@ local function save_response(
                 sha256 = attached_hash,
             },
         }
-        if inspection_image then
-            images[#images + 1] = {
-                media_type = "image/png",
-                data = ctx.codec.base64_encode(inspection_image),
-                width = inspection_geometry.width,
-                height = inspection_geometry.height,
-                sha256 = image_sha256(ctx, inspection_image, "inspect"),
-            }
-            content.image_instruction = "Two PNGs are attached: a downscaled current full-monitor screenshot and a magnified crop rendered from the native capture with a red crosshair. Inspect the crop before choosing whether to click. Coordinates remain normalized to the full monitor."
-        elseif cursor_visible then
-            content.image_instruction = "A downscaled PNG screenshot with the pointer visible is attached. Verify that the pointer is centered on the intended target before clicking; coordinates remain normalized to the full monitor."
-        elseif input_actions[action] then
+        if input_actions[action] then
             content.image_instruction = "A fresh downscaled post-action PNG is attached. Input was sent but not independently verified; inspect the image to determine whether the intended UI effect occurred. Coordinates remain normalized to the full monitor."
         else
             content.image_instruction = "A downscaled PNG screenshot is attached; inspect it directly before choosing normalized full-monitor coordinates."
@@ -2736,19 +1833,8 @@ local function save_response(
 end
 
 local action_status = {
-    inspect = "inspecting target",
-    semantic_find = "discovering accessible controls",
-    semantic_click = "verifying and clicking accessible control",
-    move = "moving pointer",
     click = "clicking",
-    click_locked = "validating and clicking locked target",
-    double_click = "double-clicking",
-    right_click = "right-clicking",
-    drag = "dragging",
-    scroll = "scrolling",
     type = "typing",
-    key = "pressing keys",
-    wait = "waiting",
 }
 
 local function status(ctx, message)
@@ -2756,7 +1842,7 @@ local function status(ctx, message)
 end
 
 local function input_observation_failure(
-    ctx, state, action, operation_id, call_id, reason, _detail
+    ctx, state, action, operation_id, call_id, reason, detail
 )
     block_after_input(ctx, state, call_id, reason)
     return json.encode({
@@ -2765,12 +1851,13 @@ local function input_observation_failure(
             call_id = call_id,
             action = action,
             input_delivery = "sent_unverified",
-            semantic_target = "unknown",
             screenshot_captured = false,
             observation = reason,
+            observation_detail = privacy_safe_observation_detail(detail),
             reason_code = reason,
             retry_input = false,
             next_action = "observe",
+            recovery = OBSERVE_RECOVERY,
             trace = trace_finish(ctx, reason),
         }),
     })
@@ -2792,12 +1879,12 @@ local function input_not_delivered_response(
             call_id = call_id,
             action = action,
             input_delivery = "not_delivered",
-            semantic_target = "unknown",
             screenshot_captured = false,
             observation = reason,
             reason_code = reason,
             retry_input = false,
             next_action = "observe",
+            recovery = OBSERVE_RECOVERY,
             trace = trace_finish(ctx, reason),
         }),
     })
@@ -2820,7 +1907,7 @@ local function execute_inner(params, ctx)
         and ctx.call_id
         or nil
     if input_actions[action] and (not call_id or #call_id > 256) then
-        fail("computer input requires a bounded host call_id; action was not sent")
+        fail("computer input requires a bounded host call_id; action was not sent. " .. OBSERVE_RECOVERY)
     end
     local prior
     if action == "observe" then
@@ -2829,7 +1916,7 @@ local function execute_inner(params, ctx)
     else
         prior = load_state(ctx)
         if not prior then
-            fail("stale screenshot_id; call computer_observe and copy its fresh screenshot_id")
+            fail("stale screenshot_id; action was not sent. Call computer_observe again and use its new screenshot_id/action_token pair")
         end
     end
     local operation_generation = prior and (prior.operation_generation or 0) + 1 or 1
@@ -2851,23 +1938,24 @@ local function execute_inner(params, ctx)
     end
     if action ~= "observe" then
         if params.screenshot_id ~= prior.screenshot_id then
-            fail("stale screenshot_id; call computer_observe and copy its fresh screenshot_id")
+            fail("stale screenshot_id; action was not sent. Call computer_observe again and use its new screenshot_id/action_token pair")
         end
         if prior.blocked_reason then
             fail("computer input authorization is blocked after "
-                .. tostring(prior.blocked_reason) .. "; call computer_observe again")
+                .. tostring(prior.blocked_reason)
+                .. "; action was not sent. Call computer_observe again")
         end
         if monotonic_ms(ctx) - prior.captured_monotonic_ms
             > SCREENSHOT_TTL_SECONDS * 1000
         then
-            fail("screenshot_id expired; action was not sent. Call computer_observe again")
+            fail("screenshot_id expired; action was not sent. Call computer_observe again and use its new screenshot_id/action_token pair")
         end
         local authorization = prior.authorization
         if type(authorization) ~= "table"
             or authorization.consumed == true
             or authorization.token ~= params.action_token
         then
-            fail("action_token is stale, consumed, or unavailable; call computer_observe again")
+            fail("action_token is stale, consumed, or unavailable; action was not sent. Call computer_observe again and use its new screenshot_id/action_token pair")
         end
     end
 
@@ -2877,9 +1965,6 @@ local function execute_inner(params, ctx)
     local before_hash
     local before_width
     local before_height
-    local locked_target
-    local semantic
-    local semantic_target
     local final_snapshot
     local final_image
     local final_hash
@@ -2893,29 +1978,6 @@ local function execute_inner(params, ctx)
         signature, final_snapshot, final_image, final_hash,
             final_width, final_height, final_cursor_visible = stable_observation(
                 ctx, action, params.monitor, nil, action
-            )
-    elseif action == "wait" then
-        trace_stage(ctx, "context_preflight")
-        status(ctx, "checking screen context")
-        signature, before = snapshot_with_race(ctx, action, prior.monitor.name)
-        local signature_hash = digest_fields(
-            ctx, action, { prior.privacy_salt, signature }
-        )
-        local current_context = context_fingerprint(
-            ctx, action, prior.privacy_salt, signature, before
-        )
-        if signature_hash ~= prior.signature_sha256
-            or current_context ~= prior.context_sha256
-        then
-            fail("screen context changed; action was not sent")
-        end
-        trace_stage(ctx, "wait")
-        perform_action(params, ctx, signature, before)
-        trace_stage(ctx, "stable_observation")
-        status(ctx, "taking stable screenshot")
-        signature, final_snapshot, final_image, final_hash,
-            final_width, final_height, final_cursor_visible = stable_observation(
-                ctx, action, prior.monitor.name, signature, action
             )
     else
         trace_stage(ctx, "stable_pre_action_observation")
@@ -2933,182 +1995,82 @@ local function execute_inner(params, ctx)
         if signature_hash ~= prior.signature_sha256
             or current_context ~= prior.context_sha256
         then
-            fail("screen context changed; action was not sent")
+            fail("screen context changed; action was not sent. Call computer_observe again")
         end
 
+        trace_stage(ctx, "freshness_validation")
+        status(ctx, "validating target freshness")
+        local current_tiles = image_tiles(
+            ctx, before_image, before_width, before_height, action
+        )
+        validate_coordinate_freshness(params, prior, current_tiles)
+
         status(ctx, action_status[action])
-        if action == "inspect" then
-            trace_stage(ctx, "inspect")
-            local inspected_ok
-            inspected_ok, final_image, final_snapshot = pcall(
-                inspect_image,
-                ctx,
-                before_image,
-                before_width,
-                before_height,
-                params
-            )
-            if not inspected_ok then
-                fail(final_image)
+        trace_stage(ctx, "reserve_input")
+        reserve_action(ctx, prior, params, operation_id, call_id, digest)
+        trace_stage(ctx, "input")
+        local performed, perform_error = pcall(
+            perform_action, params, ctx, signature, before
+        )
+        if not performed then
+            if type(perform_error) == "table"
+                and perform_error.marker == INPUT_NOT_DELIVERED
+            then
+                return input_not_delivered_response(
+                    ctx,
+                    prior,
+                    action,
+                    operation_id,
+                    call_id,
+                    perform_error.reason
+                )
             end
-            local inspection_image = final_image
-            local inspection_geometry = final_snapshot
-            final_snapshot = before
-            final_image = before_image
-            final_hash = before_hash
-            final_width = before_width
-            final_height = before_height
-            final_cursor_visible = false
-            trace_stage(ctx, "persist_response")
-            return save_response(
+            if type(perform_error) == "table"
+                and perform_error.marker == POST_INPUT_FAILURE
+            then
+                return input_observation_failure(
+                    ctx,
+                    prior,
+                    action,
+                    operation_id,
+                    call_id,
+                    perform_error.reason,
+                    perform_error.detail
+                )
+            end
+            return input_observation_failure(
                 ctx,
                 prior,
-                signature,
-                final_snapshot,
-                params,
-                params.grid == true,
+                action,
                 operation_id,
                 call_id,
-                final_image,
-                final_hash,
-                final_width,
-                final_height,
-                final_cursor_visible,
-                inspection_image,
-                inspection_geometry,
-                nil,
-                nil,
-                nil,
-                nil,
-                nil
+                "input_execution_failed",
+                perform_error
             )
-        elseif action == "semantic_find" then
-            trace_stage(ctx, "semantic_discovery")
-            semantic = semantic_discover(ctx, before, params)
-            final_snapshot = before
-            final_image = before_image
-            final_hash = before_hash
-            final_width = before_width
-            final_height = before_height
-            final_cursor_visible = false
-        else
-            trace_stage(ctx, "freshness_validation")
-            status(ctx, "validating target freshness")
-            local current_tiles = image_tiles(
-                ctx, before_image, before_width, before_height, action
+        end
+
+        trace_stage(ctx, "stable_post_action_observation")
+        status(ctx, "taking stable post-action screenshot")
+        local observed
+        observed, signature, final_snapshot, final_image, final_hash,
+            final_width, final_height, final_cursor_visible = pcall(
+                stable_observation,
+                ctx,
+                action,
+                before.monitor.name,
+                signature,
+                action
             )
-            validate_coordinate_freshness(params, prior, current_tiles)
-            if action == "click_locked" then
-                locked_target = validate_target_lock(
-                    ctx,
-                    params,
-                    prior,
-                    before,
-                    before_image,
-                    before_width,
-                    before_height
-                )
-            elseif action == "semantic_click" then
-                local expected = stored_semantic_target(prior, params.semantic_id)
-                if expected.direct_activation == true then
-                    semantic_target = expected
-                else
-                    trace_stage(ctx, "semantic_resolution")
-                    semantic_target = semantic_resolve(ctx, before, expected)
-                end
-            elseif action == "type" then
-                trace_stage(ctx, "typing_focus_verification")
-                semantic_focus_for_typing(ctx, before)
-            end
-
-            trace_stage(ctx, "reserve_input")
-            reserve_action(ctx, prior, params, operation_id, call_id, digest)
-            trace_stage(ctx, "input")
-            local performed
-            local perform_error
-            if action == "semantic_click" and semantic_target.direct_activation == true then
-                performed, perform_error = pcall(function()
-                    semantic_target = semantic_activate(
-                        ctx, before, semantic_target
-                    )
-                    perform_action(
-                        params,
-                        ctx,
-                        signature,
-                        before,
-                        locked_target,
-                        semantic_target
-                    )
-                end)
-            else
-                performed, perform_error = pcall(
-                    perform_action,
-                    params,
-                    ctx,
-                    signature,
-                    before,
-                    locked_target,
-                    semantic_target
-                )
-            end
-            if not performed then
-                if type(perform_error) == "table"
-                    and perform_error.marker == INPUT_NOT_DELIVERED
-                then
-                    return input_not_delivered_response(
-                        ctx,
-                        prior,
-                        action,
-                        operation_id,
-                        call_id,
-                        perform_error.reason
-                    )
-                end
-                if type(perform_error) == "table" and perform_error.marker == POST_INPUT_FAILURE then
-                    return input_observation_failure(
-                        ctx,
-                        prior,
-                        action,
-                        operation_id,
-                        call_id,
-                        perform_error.reason,
-                        perform_error.detail
-                    )
-                end
-                return input_observation_failure(
-                    ctx,
-                    prior,
-                    action,
-                    operation_id,
-                    call_id,
-                    "input_execution_failed",
-                    perform_error
-                )
-            end
-
-            trace_stage(ctx, "stable_post_action_observation")
-            status(ctx, "taking stable post-action screenshot")
-            local observed
-            observed, signature, final_snapshot, final_image, final_hash,
-                final_width, final_height, final_cursor_visible = pcall(
-                    stable_observation,
-                    ctx,
-                    action,
-                    before.monitor.name,
-                    signature,
-                    action
-                )
-            if not observed then
-                return input_observation_failure(
-                    ctx,
-                    prior,
-                    action,
-                    operation_id,
-                    call_id,
-                    "post_action_observation_failed",
-                    signature
-                )
-            end
+        if not observed then
+            return input_observation_failure(
+                ctx,
+                prior,
+                action,
+                operation_id,
+                call_id,
+                "post_action_observation_failed",
+                signature
+            )
         end
     end
 
@@ -3129,13 +2091,8 @@ local function execute_inner(params, ctx)
         final_width,
         final_height,
         final_cursor_visible,
-        nil,
-        nil,
         before_image,
-        before_hash,
-        locked_target,
-        semantic,
-        semantic_target
+        before_hash
     )
     if saved then
         return response
@@ -3163,9 +2120,6 @@ local function failure_reason_code(message)
         { "authorization is blocked", "authorization_blocked" },
         { "screen context changed", "context_changed" },
         { "pixels around the intended target changed", "target_pixels_changed" },
-        { "target token is stale", "target_lock_stale" },
-        { "semantic_", "semantic_rejected" },
-        { "AT-SPI", "semantic_unavailable" },
         { "DPMS off", "output_dpms_off" },
         { "Hyprland", "hyprland_unavailable" },
         { "hyprctl", "hyprctl_unavailable" },
@@ -3200,6 +2154,7 @@ local function execute(params, ctx)
                 reason_code = reason_code,
                 retry_input = false,
                 next_action = "observe",
+                recovery = OBSERVE_RECOVERY,
                 trace = trace,
             }),
         })
@@ -3215,7 +2170,7 @@ end
 
 bone.tool.register({
     name = "computer_observe",
-    description = "Start or recover computer control. Capture a stable selected Hyprland monitor observation, always attach its PNG, and return separate screenshot_id and single-use action_token values. Call this before computer and again after any failed or cancelled computer operation.",
+    description = "Start or recover computer control. Capture a stable selected Hyprland monitor observation, always attach its PNG, and return separate screenshot_id and single-use action_token values. This pair authorizes exactly one computer continuation; every successful continuation returns its replacement pair. Call this before computer and after any failed or cancelled computer operation.",
     safety = "read_only",
     stateful = true,
     state_key = STATE_KEY,
@@ -3232,7 +2187,7 @@ bone.tool.register({
             },
             grid = {
                 type = "boolean",
-                description = "Overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions.",
+                description = "Presentation only: overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot; grid itself performs no desktop action or input.",
             },
             trace = {
                 type = "boolean",
@@ -3247,7 +2202,7 @@ bone.tool.register({
 bone.tool.register({
     name = "computer",
     catalog_description = catalog_description,
-    description = "Continue from computer_observe or the immediately preceding successful computer call. Every action requires both screenshot_id and its single-use action_token. Semantic controls are re-resolved by fingerprint and directly activated through AT-SPI when supported. Input is reserved before delivery, sent at most once, and never automatically retried.",
+    description = "Continue from computer_observe or the immediately preceding successful computer call. Every click or type action requires the exact screenshot_id/action_token pair and returns its replacement pair after success. Click coordinates are normalized to the referenced full-monitor screenshot. Input is reserved before delivery, sent at most once, and never automatically retried.",
     safety = "danger",
     stateful = true,
     state_key = STATE_KEY,
@@ -3255,19 +2210,8 @@ bone.tool.register({
         template = "{action} {target_label}",
         value_labels = {
             action = {
-                inspect = "inspecting target",
-                semantic_find = "finding accessible controls",
-                semantic_click = "clicking accessible control",
-                move = "moving pointer",
                 click = "clicking",
-                click_locked = "clicking locked target",
-                double_click = "double-clicking",
-                right_click = "right-clicking",
-                drag = "dragging",
-                scroll = "scrolling",
                 type = "typing",
-                key = "pressing keys",
-                wait = "waiting",
             },
         },
         show_result = false,
@@ -3278,7 +2222,7 @@ bone.tool.register({
             action = {
                 type = "string",
                 description = "Action to perform on the referenced screenshot.",
-                enum = { "inspect", "semantic_find", "semantic_click", "move", "click", "click_locked", "double_click", "right_click", "drag", "scroll", "type", "key", "wait" },
+                enum = { "click", "type" },
             },
             screenshot_id = {
                 type = "string",
@@ -3291,107 +2235,37 @@ bone.tool.register({
                 maxLength = 128,
                 description = "Required. Copy the single-use action_token from computer_observe or the immediately preceding successful computer call.",
             },
-            semantic_id = {
-                type = "string",
-                minLength = 7,
-                maxLength = 160,
-                pattern = "^atspi:[0-9]+([.][0-9]+)*$",
-                description = "semantic_click only: exact target id returned by the preceding semantic_find.",
+            settle_ms = {
+                type = "integer", minimum = 0, maximum = 5000,
+                description = "Delay after input before capturing the refreshed screenshot.",
             },
-            query = {
-                type = "string",
-                minLength = 1,
-                maxLength = 160,
-                description = "semantic_find only: bounded case-insensitive accessible-name query.",
+            grid = {
+                type = "boolean",
+                description = "Presentation only: overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot; grid itself performs no desktop action or input.",
             },
-            roles = {
-                type = "array",
-                minItems = 1,
-                maxItems = 16,
-                uniqueItems = true,
-                items = {
-                    type = "string",
-                    enum = {
-                        "button", "check_box", "combo_box", "entry",
-                        "password_text", "link", "list_item", "menu_item",
-                        "page_tab", "radio_button", "slider", "spin_button",
-                        "toggle_button", "tree_item",
-                    },
-                },
-                description = "semantic_find only: include only these canonical roles.",
+            trace = {
+                type = "boolean",
+                description = "Include a bounded privacy-safe stage/process timing trace.",
             },
-            near = {
-                type = "object",
-                properties = {
-                    x = { type = "number", minimum = 0, maximum = 1 },
-                    y = { type = "number", minimum = 0, maximum = 1 },
-                    radius = {
-                        type = "number",
-                        exclusiveMinimum = 0,
-                        maximum = 1,
-                    },
-                },
-                required = { "x", "y" },
-                additionalProperties = false,
-                description = "semantic_find only: rank/filter near a normalized monitor coordinate.",
+            x = {
+                type = "number", minimum = 0, maximum = 1,
+                description = "Click only: normalized horizontal coordinate on the referenced full-monitor screenshot.",
             },
-            max_results = {
-                type = "integer",
-                minimum = 1,
-                maximum = MAX_SEMANTIC_TARGETS,
-                description = "semantic_find only: maximum ranked targets to return.",
+            y = {
+                type = "number", minimum = 0, maximum = 1,
+                description = "Click only: normalized vertical coordinate on the referenced full-monitor screenshot.",
             },
             target_label = {
                 type = "string",
                 minLength = 1,
                 maxLength = 80,
-                description = "Click actions only: concise non-sensitive description of the visible target for the transcript label; does not affect target selection.",
+                description = "Click only: concise non-sensitive description of the visible target for the transcript label; does not affect target selection.",
             },
-            target_token = {
+            text = {
                 type = "string",
                 minLength = 1,
-                description = "click_locked only: copy the exact target_token returned by inspect.",
-            },
-            x = {
-                type = "number", minimum = 0, maximum = 1,
-                description = "Inspect/move/click/double_click/right_click/scroll only: normalized horizontal coordinate. For scroll, target a visible scrollable region.",
-            },
-            y = {
-                type = "number", minimum = 0, maximum = 1,
-                description = "Inspect/move/click/double_click/right_click/scroll only: normalized vertical coordinate. For scroll, target a visible scrollable region.",
-            },
-            radius = {
-                type = "integer", minimum = 32, maximum = 256,
-                description = "Inspect only: crop radius in source screenshot pixels; defaults to 96.",
-            },
-            start_x = { type = "number", minimum = 0, maximum = 1, description = "Drag only." },
-            start_y = { type = "number", minimum = 0, maximum = 1, description = "Drag only." },
-            end_x = { type = "number", minimum = 0, maximum = 1, description = "Drag only." },
-            end_y = { type = "number", minimum = 0, maximum = 1, description = "Drag only." },
-            amount = {
-                type = "integer", minimum = -20, maximum = 20,
-                description = "Scroll only: non-zero vertical wheel steps at x/y; positive scrolls up and negative scrolls down.",
-            },
-            text = { type = "string", minLength = 1, maxLength = 10000, description = "Type only." },
-            keys = {
-                type = "string",
-                minLength = 1,
-                maxLength = 128,
-                pattern = "^[A-Za-z0-9+]+$",
-                description = "Required when action is key. Examples: ESCAPE, CTRL+L, ENTER, SHIFT+F10.",
-            },
-            duration_ms = {
-                type = "integer", minimum = 0, maximum = 10000,
-                description = "Wait only: delay before the refreshed screenshot.",
-            },
-            settle_ms = {
-                type = "integer", minimum = 0, maximum = 5000,
-                description = "Input actions, including scroll: delay after input before refreshing the screenshot.",
-            },
-            grid = { type = "boolean", description = "Overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot." },
-            trace = {
-                type = "boolean",
-                description = "Include a bounded privacy-safe stage/process timing trace.",
+                maxLength = 10000,
+                description = "Type only: text to enter in the currently focused window.",
             },
         },
         required = { "action", "screenshot_id", "action_token" },

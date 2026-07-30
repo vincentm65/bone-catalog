@@ -30,44 +30,67 @@ bone = {
 }
 assert(loadfile("tools/computer.lua"))()
 local observe = assert(registrations.computer_observe)
+assert(observe.description:find(
+    "This pair authorizes exactly one computer continuation; every successful continuation returns its replacement pair.",
+    1,
+    true
+))
 assert(observe.display.template == "observing screen")
 assert(observe.display.show_result == false)
 assert(observe.display.args == nil)
 assert(observe.display.value_labels == nil)
 assert(registered.name == "computer")
+assert(registered.description:find(
+    "Every click or type action requires the exact screenshot_id/action_token pair and returns its replacement pair after success.",
+    1,
+    true
+))
 assert(registrations.computer_doctor == nil)
 assert(registered.display.template == "{action} {target_label}")
 assert(registered.display.show_result == false)
 assert(registered.display.args == nil)
 local expected_labels = {
-    inspect = "inspecting target",
-    semantic_find = "finding accessible controls",
-    semantic_click = "clicking accessible control",
-    move = "moving pointer",
     click = "clicking",
-    click_locked = "clicking locked target",
-    double_click = "double-clicking",
-    right_click = "right-clicking",
-    drag = "dragging",
-    scroll = "scrolling",
     type = "typing",
-    key = "pressing keys",
-    wait = "waiting",
 }
 for action, label in pairs(expected_labels) do
     assert(registered.display.value_labels.action[action] == label)
 end
+assert(registered.display.value_labels.action.inspect == nil)
 assert(registered.safety == "danger")
 assert(registered.stateful == true)
 assert(registered.parameters.additionalProperties == false)
-assert(registered.parameters.properties.start_x)
-assert(registered.parameters.properties.duration_ms)
-assert(registered.parameters.properties.semantic_id)
-assert(registered.parameters.properties.semantic_id.pattern == "^atspi:[0-9]+([.][0-9]+)*$")
+local expected_properties = {
+    action = true,
+    screenshot_id = true,
+    action_token = true,
+    settle_ms = true,
+    grid = true,
+    trace = true,
+    x = true,
+    y = true,
+    target_label = true,
+    text = true,
+}
+for property in pairs(registered.parameters.properties) do
+    assert(expected_properties[property], property)
+    expected_properties[property] = nil
+end
+assert(next(expected_properties) == nil)
+local grid_description = "Presentation only: overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot; grid itself performs no desktop action or input."
+assert(observe.parameters.properties.grid.description == grid_description)
+assert(registered.parameters.properties.grid.description == grid_description)
 local target_label_schema = assert(registered.parameters.properties.target_label)
 assert(target_label_schema.type == "string")
 assert(target_label_schema.minLength == 1)
 assert(target_label_schema.maxLength == 80)
+local observe_recovery = "Call computer_observe before any further computer action; do not reuse the prior screenshot_id/action_token pair."
+local function assert_recovery(result, delivery)
+    assert(result.input_delivery == delivery)
+    assert(result.retry_input == false)
+    assert(result.next_action == "observe")
+    assert(result.recovery == observe_recovery)
+end
 local required_fields = {}
 for _, field in ipairs(registered.parameters.required) do
     required_fields[field] = true
@@ -75,11 +98,9 @@ end
 assert(required_fields.action)
 assert(required_fields.screenshot_id)
 assert(required_fields.action_token)
-local actions = {}
-for _, action in ipairs(registered.parameters.properties.action.enum) do
-    actions[action] = true
-end
-assert(actions.semantic_find and actions.semantic_click)
+local action_enum = registered.parameters.properties.action.enum
+assert(#action_enum == 2)
+assert(action_enum[1] == "click" and action_enum[2] == "type")
 
 local function crc32(data)
     local crc = 0xffffffff
@@ -160,7 +181,6 @@ local function new_fixture()
         png = valid_png,
         call_sequence = 0,
         random_sequence = 0,
-        region_calls = 0,
         tile_versions = {},
     }
 
@@ -208,24 +228,6 @@ local function new_fixture()
             end,
             png_resize = function()
                 error("unexpected native resize for the small fixture")
-            end,
-            png_region_sha256 = function(value, x, y, width, height)
-                assert(value == fixture.png)
-                fixture.region_calls = fixture.region_calls + 1
-                return {
-                    width = width,
-                    height = height,
-                    sha256 = string.rep(string.format(
-                        "%08x",
-                        crc32(table.concat({
-                            value,
-                            tostring(x),
-                            tostring(y),
-                            tostring(width),
-                            tostring(height),
-                        }, ":"))
-                    ), 8),
-                }
             end,
             png_diff = function(before, after)
                 if before == after then
@@ -291,48 +293,11 @@ local function new_fixture()
             fixture.cursor_y = tonumber(args[4])
             return success()
         end
-        if program == "ydotool" and args[1] == "mousemove" then
-            fixture.cursor_x = tonumber(args[3])
-            fixture.cursor_y = tonumber(args[4])
-            return success()
-        end
         if program == "ydotool" or program == "sleep" then
             return success()
         end
         if program == "python3" and args[1] == "-c" then
             return success()
-        end
-        if program == "python3" and args[2] == "focused" then
-            return success(cjson.encode({
-                ok = true,
-                available = true,
-                typing_safe = true,
-                target = {
-                    id = "atspi:0.1",
-                    fingerprint = "atspi-fp:v1:" .. string.rep("a", 64),
-                    role = "entry",
-                    name = "Search",
-                    actions = {},
-                    direct_activation = false,
-                    states = {
-                        checked = false,
-                        editable = true,
-                        enabled = true,
-                        expanded = false,
-                        focusable = true,
-                        focused = true,
-                        pressed = false,
-                        selected = false,
-                        sensitive = true,
-                        showing = true,
-                        visible = true,
-                    },
-                    bounds = { x = -70, y = -30, width = 40, height = 20 },
-                    center = { x = -50, y = -20 },
-                },
-                visited = 3,
-                rejections = {},
-            }))
         end
         if program == "grim" then
             return success(fixture.png)
@@ -494,12 +459,19 @@ fallback_timer.ctx.time = nil
 local fallback_timer_observed = content(fallback_timer, { action = "observe" })
 reset_calls(fallback_timer)
 content(fallback_timer, {
-    action = "wait",
+    action = "click",
     screenshot_id = fallback_timer_observed.screenshot_id,
-    duration_ms = 25,
+    action_token = fallback_timer.last_action_token,
+    x = 0.5,
+    y = 0.5,
+    target_label = "Fallback timer target",
+    settle_ms = 25,
 })
-local fallback_sleep = assert(calls_for(fallback_timer, "sleep")[1])
-assert(fallback_sleep.args[1] == "0.025")
+local fallback_settle_found = false
+for _, call in ipairs(calls_for(fallback_timer, "sleep")) do
+    fallback_settle_found = fallback_settle_found or call.args[1] == "0.025"
+end
+assert(fallback_settle_found)
 
 -- Observe is the recovery boundary for corrupted or obsolete persisted state.
 for _, broken_state in ipairs({
@@ -516,11 +488,12 @@ local corrupt_action = new_fixture()
 corrupt_action.state.computer = "not-mocked-json"
 reset_calls(corrupt_action)
 failure(corrupt_action, {
-    action = "move",
+    action = "click",
     screenshot_id = "computer-1",
     action_token = "action-" .. string.rep("a", 48),
     x = 0,
     y = 0,
+    target_label = "Corrupt-state target",
 }, "invalid computer state")
 assert(#corrupt_action.calls == 0)
 
@@ -560,87 +533,59 @@ assert(not recursively_contains(persisted, "SECRET WINDOW TITLE"))
 assert(not recursively_contains(persisted, "fixture-app"))
 local first_id = observed.screenshot_id
 
--- Read-only continuation actions use the same observation pair. A stale token
--- rejects before capture or semantic helper startup.
+-- Response presentation and persistence failures after input preserve only
+-- privacy-safe observation metadata and require a fresh observation.
 do
-    local continuation = new_fixture()
-    local baseline = content(continuation, { action = "observe" })
-    local baseline_token = continuation.last_action_token
-    local discovered = content(continuation, {
-        action = "semantic_find",
-        screenshot_id = baseline.screenshot_id,
-        action_token = baseline_token,
-    })
-    assert(discovered.screenshot_id == baseline.screenshot_id)
-    assert(discovered.action_token ~= baseline_token)
-
-    reset_calls(continuation)
-    failure(continuation, {
-        action = "semantic_find",
-        screenshot_id = baseline.screenshot_id,
-        action_token = baseline_token,
-    }, "action_token is stale")
-    assert(#continuation.calls == 0)
-end
-
--- A failed read-only response must not commit a token that the caller never
--- receives. This covers both presentation work before the commit and a state
--- write failure after the response and trace have already been prepared.
-do
-    local atomic = new_fixture()
-    local baseline = content(atomic, { action = "observe" })
-    local baseline_state = atomic.state.computer
-    local baseline_token = atomic.last_action_token
-    local encode = atomic.ctx.codec.base64_encode
-    atomic.ctx.codec.base64_encode = function()
+    local presentation = new_fixture()
+    local baseline = content(presentation, { action = "observe" })
+    presentation.ctx.codec.base64_encode = function()
         error("SECRET presentation failure")
     end
-    local presentation_failure = content(atomic, {
-        action = "inspect",
+    presentation.hook = function(call, state)
+        if call.program == "ydotool" then
+            state.png = fixture_png(200, 100, "changed")
+        end
+    end
+    reset_calls(presentation)
+    local failed = content(presentation, {
+        action = "click",
         screenshot_id = baseline.screenshot_id,
-        action_token = baseline_token,
         x = 0.5,
         y = 0.5,
-        trace = true,
+        target_label = "Presentation failure target",
+        settle_ms = 0,
     })
-    assert(presentation_failure.ok == false)
-    assert(presentation_failure.action_token == nil)
-    assert(presentation_failure.trace.reason_code == "request_rejected")
-    assert(atomic.state.computer == baseline_state)
-    assert(atomic.last_action_token == baseline_token)
-    atomic.ctx.codec.base64_encode = encode
+    assert(failed.reason_code == "response_persistence_failed")
+    assert_recovery(failed, "sent_unverified")
+    assert(failed.observation_detail == "detail_redacted=true")
+    assert(not recursively_contains(failed, "SECRET"))
+    assert(#calls_for(presentation, "ydotool") == 1)
 
-    local state_set = atomic.ctx.state.set
-    local fail_next_set = true
-    atomic.ctx.state.set = function(key, value)
-        if fail_next_set then
-            fail_next_set = false
+    local persistence = new_fixture()
+    baseline = content(persistence, { action = "observe" })
+    local state_set = persistence.ctx.state.set
+    local set_count = 0
+    persistence.ctx.state.set = function(key, value)
+        set_count = set_count + 1
+        if set_count == 2 then
             error("SECRET state failure")
         end
         return state_set(key, value)
     end
-    local persistence_failure = content(atomic, {
-        action = "inspect",
+    reset_calls(persistence)
+    failed = content(persistence, {
+        action = "click",
         screenshot_id = baseline.screenshot_id,
-        action_token = baseline_token,
         x = 0.5,
         y = 0.5,
-        trace = true,
+        target_label = "Persistence failure target",
+        settle_ms = 0,
     })
-    assert(persistence_failure.ok == false)
-    assert(persistence_failure.action_token == nil)
-    assert(persistence_failure.trace.reason_code == "request_rejected")
-    assert(atomic.state.computer == baseline_state)
-    assert(atomic.last_action_token == baseline_token)
-
-    local retry = content(atomic, {
-        action = "inspect",
-        screenshot_id = baseline.screenshot_id,
-        action_token = baseline_token,
-        x = 0.5,
-        y = 0.5,
-    })
-    assert(retry.action_token ~= baseline_token)
+    assert(failed.reason_code == "response_persistence_failed")
+    assert_recovery(failed, "sent_unverified")
+    assert(failed.observation_detail == "detail_redacted=true")
+    assert(not recursively_contains(failed, "SECRET"))
+    assert(#calls_for(persistence, "ydotool") == 1)
 end
 
 -- Every subprocess is direct argv, bounded, timed, and redacted.
@@ -659,12 +604,12 @@ local validation_cases = {
     { { action = 1 }, "action must" },
     { { action = "Observe" }, "action must be observe" },
     { { action = "observe", x = 0.5 }, "irrelevant field" },
-    { { action = "move", screenshot_id = first_id, x = 0, y = 0, text = "x" }, "irrelevant field" },
-    { { action = "wait", screenshot_id = first_id, settle_ms = 1 }, "irrelevant field" },
-    { { action = "semantic_click", screenshot_id = first_id }, "semantic_id is required" },
-    { { action = "semantic_click", screenshot_id = first_id, semantic_id = "atspi:0.bad" }, "semantic_id is required" },
-    { { action = "semantic_find", screenshot_id = first_id, semantic_id = "atspi:0.1" }, "irrelevant field" },
-    { { action = "semantic_find", screenshot_id = first_id, action_token = false }, "action_token is required for every non-observe action" },
+    { { action = "click", action_token = "action-" .. string.rep("a", 48), x = 0, y = 0 }, "screenshot_id is required" },
+    { { action = "click", screenshot_id = first_id, action_token = false, x = 0, y = 0 }, "action_token is required" },
+    { { action = "type", screenshot_id = first_id, action_token = false, text = "x" }, "action_token is required" },
+    { { action = "click", screenshot_id = first_id, x = 0, y = 0, text = "x" }, "irrelevant field" },
+    { { action = "type", screenshot_id = first_id, text = "x", x = 0 }, "irrelevant field" },
+    { { action = "type", screenshot_id = first_id, text = "x", target_label = "visible target" }, "irrelevant field" },
     { { action = "observe", grid = "yes" }, "grid must" },
     { { action = "observe", monitor = string.rep("x", 257) }, "monitor must be a bounded" },
     { { action = "observe", monitor = "DP-1\0ignored" }, "monitor must be a bounded" },
@@ -679,32 +624,64 @@ for _, case in ipairs(validation_cases) do
     assert(#fixture.calls == 0)
 end
 for _, action in ipairs({
-    "observe", "inspect", "semantic_find", "move", "drag", "scroll", "type", "key", "wait",
+    "inspect", "semantic_find", "semantic_click", "click_locked", "move",
+    "double_click", "right_click", "drag", "scroll", "key", "wait",
 }) do
     reset_calls(fixture)
-    failure(fixture, { action = action, target_label = "visible target" }, "irrelevant field")
+    failure(fixture, { action = action }, "action must be observe, click, or type")
     assert(#fixture.calls == 0)
+end
+
+fixture.next_call_id = string.rep("x", 257)
+reset_calls(fixture)
+local call_id_problem = failure(fixture, {
+    action = "click", screenshot_id = first_id, x = 0, y = 0,
+    target_label = "Call-id target",
+}, "computer input requires a bounded host call_id")
+assert(call_id_problem == "computer input requires a bounded host call_id; action was not sent. " .. observe_recovery)
+assert(#fixture.calls == 0)
+
+-- Reservation failures send no input and redact host state errors.
+do
+    local reservation = new_fixture()
+    local baseline = content(reservation, { action = "observe" })
+    reservation.ctx.state.set = function()
+        error("SECRET state failure")
+    end
+    reset_calls(reservation)
+    local problem = failure(reservation, {
+        action = "type",
+        screenshot_id = baseline.screenshot_id,
+        text = "SECRET text",
+        settle_ms = 0,
+    }, "could not reserve single-use input authorization")
+    assert(problem == "type: could not reserve single-use input authorization; action was not sent (detail_redacted=true). " .. observe_recovery)
+    assert(not problem:find("SECRET", 1, true))
+    assert(#calls_for(reservation, "ydotool") == 0)
 end
 
 -- Coordinate validation preserves negative origins and uses floor(value + 0.5).
 for _, bad in ipairs({ -0.01, 1.01, math.huge, -math.huge, 0 / 0, "0.5" }) do
     reset_calls(fixture)
     failure(fixture, {
-        action = "move", screenshot_id = first_id, x = bad, y = 0,
+        action = "click", screenshot_id = first_id, x = bad, y = 0,
+        target_label = "Coordinate target",
     }, "x must be a finite number")
     assert(#calls_for(fixture, "ydotool") == 0)
 end
 reset_calls(fixture)
-local moved = content(fixture, {
-    action = "move", screenshot_id = first_id, x = 0.5, y = 1, settle_ms = 0,
+local clicked = content(fixture, {
+    action = "click", screenshot_id = first_id, x = 0.5, y = 1, settle_ms = 0,
+    target_label = "Boundary target",
 })
-assert(moved.screenshot_id == first_id, moved.screenshot_id)
-assert(moved.action_token ~= observed.action_token)
+assert(clicked.screenshot_id == first_id, clicked.screenshot_id)
+assert(clicked.action_token ~= observed.action_token)
 local move_call = assert(calls_for(fixture, "hyprctl", "dispatch")[1])
 assert(move_call.args[3] == "-20", move_call.args[3])
 assert(move_call.args[4] == "29", move_call.args[4])
 assert(#calls_for(fixture, "hyprctl", "--batch") >= 2)
-local current_id = moved.screenshot_id
+assert(#calls_for(fixture, "ydotool") == 1)
+local current_id = clicked.screenshot_id
 
 -- Failed pointer verification is ambiguous and never retries input.
 fixture.hook = function(call)
@@ -713,23 +690,27 @@ fixture.hook = function(call)
     end
 end
 reset_calls(fixture)
-local move_failure = content(fixture, {
-    action = "move", screenshot_id = current_id, x = 0, y = 0, settle_ms = 0,
+local pointer_failure = content(fixture, {
+    action = "click", screenshot_id = current_id, x = 0, y = 0, settle_ms = 0,
+    target_label = "Ambiguous pointer target",
 })
-assert(move_failure.input_delivery == "sent_unverified")
-assert(move_failure.observation == "pointer_delivery_ambiguous")
-assert(move_failure.retry_input == false)
+assert(pointer_failure.observation == "pointer_delivery_ambiguous")
+assert_recovery(pointer_failure, "sent_unverified")
+assert(pointer_failure.observation_detail == "timed_out=true, stderr_bytes=6")
+assert(not recursively_contains(pointer_failure, "SECRET"))
 assert(#calls_for(fixture, "hyprctl", "dispatch") == 1)
+assert(#calls_for(fixture, "ydotool") == 0)
 fixture.hook = nil
 local ambiguous_call_id = fixture.ctx.call_id
 reset_calls(fixture)
 fixture.next_call_id = ambiguous_call_id
 local ambiguous_replay = content(fixture, {
-    action = "move",
+    action = "click",
     screenshot_id = current_id,
     action_token = fixture.last_action_token,
     x = 0,
     y = 0,
+    target_label = "Ambiguous pointer target",
     settle_ms = 0,
 })
 assert(ambiguous_replay.replayed == true)
@@ -738,11 +719,12 @@ assert(ambiguous_replay.retry_input == false)
 assert(#calls_for(fixture, "hyprctl", "dispatch") == 0)
 reset_calls(fixture)
 failure(fixture, {
-    action = "move",
+    action = "click",
     screenshot_id = current_id,
     action_token = fixture.last_action_token,
     x = 0,
     y = 0,
+    target_label = "Ambiguous pointer target",
     settle_ms = 0,
 }, "authorization is blocked")
 assert(#fixture.calls == 0)
@@ -959,8 +941,9 @@ local cancelled_post_result = content(cancelled_post, {
     settle_ms = 0,
 })
 assert(cancelled_post_result.reason_code == "post_action_observation_failed")
-assert(cancelled_post_result.input_delivery == "sent_unverified")
-assert(cancelled_post_result.retry_input == false)
+assert_recovery(cancelled_post_result, "sent_unverified")
+assert(cancelled_post_result.observation_detail == "cancelled=true, stderr_bytes=26")
+assert(not recursively_contains(cancelled_post_result, "SECRET"))
 assert(#calls_for(cancelled_post, "ydotool") == 1)
 cancelled_post.hook = nil
 reset_calls(cancelled_post)
@@ -976,55 +959,25 @@ failure(cancelled_post, {
 assert(#cancelled_post.calls == 0)
 content(cancelled_post, { action = "observe" })
 
--- All non-verifiable input actions report ambiguous delivery after one attempt.
+-- Click and type report ambiguous delivery after one successful attempt.
 local input_cases = {
     {
         action = "click", params = { x = 0, y = 0, target_label = "Submit button" },
         check = function(calls)
-            assert(calls[#calls].args[1] == "click" and calls[#calls].args[#calls[#calls].args] == "0xC0")
-        end,
-    },
-    {
-        action = "double_click", params = { x = 0, y = 0, target_label = "Document row" },
-        check = function(calls)
             local args = calls[#calls].args
-            assert(args[1] == "click" and args[2] == "--repeat" and args[3] == "2")
-        end,
-    },
-    {
-        action = "right_click", params = { x = 0, y = 0, target_label = "Document row" },
-        check = function(calls)
-            assert(calls[#calls].args[#calls[#calls].args] == "0xC1")
-        end,
-    },
-    {
-        action = "drag",
-        params = { start_x = 0, start_y = 0, end_x = 1, end_y = 1 },
-        check = function(calls)
-            assert(calls[1].args[2] == "0x40")
-            assert(calls[2].args[2] == "0x80")
-        end,
-    },
-    {
-        action = "scroll", params = { x = 0, y = 0, amount = -3 },
-        check = function(calls)
-            local args = calls[#calls].args
-            assert(table.concat(args, " ") == "mousemove --wheel -- 0 -3")
+            assert(args[1] == "click")
+            assert(args[2] == "--next-delay" and args[3] == "30")
+            assert(args[#args] == "0xC0")
         end,
     },
     {
         action = "type", params = { text = "SECRET typed $(payload)" },
         check = function(calls)
             local call = calls[#calls]
+            assert(call.args[1] == "type")
+            assert(call.args[2] == "--key-delay" and call.args[3] == "12")
             assert(call.args[#call.args] == "SECRET typed $(payload)")
             assert(call.options.redact_args == true)
-        end,
-    },
-    {
-        action = "key", params = { keys = "CTRL+L" },
-        check = function(calls)
-            local args = calls[#calls].args
-            assert(table.concat(args, " ") == "key 29:1 38:1 38:0 29:0")
         end,
     },
 }
@@ -1036,432 +989,22 @@ for _, case in ipairs(input_cases) do
     end
     local result = content(fixture, params)
     assert(result.input_delivery == "sent_unverified")
-    assert(result.semantic_target == "unknown")
     current_id = result.screenshot_id
     case.check(calls_for(fixture, "ydotool"))
 end
 
--- Inspect creates a native-hashed target lock; click_locked rechecks the exact
--- patch, sends one click, and avoids the former ImageMagick hash subprocesses.
-local locked = new_fixture()
-local locked_observed = content(locked, { action = "observe" })
-reset_calls(locked)
-local inspected_envelope = envelope(locked, {
-    action = "inspect",
-    screenshot_id = locked_observed.screenshot_id,
-    x = 0.5,
-    y = 0.5,
-    radius = 64,
-})
-local inspected = cjson.decode(inspected_envelope.content)
-assert(type(inspected.target_lock.target_token) == "string")
-assert(inspected.target_lock.screenshot_id == inspected.screenshot_id)
-assert(inspected.target_lock.patch_sha256:match("^[0-9a-f]+$"))
-assert(#inspected_envelope.images == 2)
-assert(#calls_for(locked, "magick") == 2)
-assert(locked.region_calls == 1)
-reset_calls(locked)
-local locked_clicked = content(locked, {
-    action = "click_locked",
-    screenshot_id = inspected.screenshot_id,
-    action_token = locked.last_action_token,
-    target_token = inspected.target_lock.target_token,
-    target_label = "Inspected target",
-    settle_ms = 0,
-})
-assert(locked_clicked.input_delivery == "sent_unverified")
-assert(#calls_for(locked, "ydotool") == 1)
-assert(#calls_for(locked, "magick") == 0)
-assert(locked.region_calls == 2)
-assert(cjson.decode(locked.state.computer).target_lock == nil)
-
-local fallback_lock = new_fixture()
-fallback_lock.ctx.codec.png_region_sha256 = nil
-local fallback_lock_observed = content(fallback_lock, { action = "observe" })
-reset_calls(fallback_lock)
-local fallback_inspected = content(fallback_lock, {
-    action = "inspect",
-    screenshot_id = fallback_lock_observed.screenshot_id,
-    x = 0.5,
-    y = 0.5,
-    radius = 64,
-})
-assert(#calls_for(fallback_lock, "magick") == 3)
-reset_calls(fallback_lock)
-local fallback_locked_clicked = content(fallback_lock, {
-    action = "click_locked",
-    screenshot_id = fallback_inspected.screenshot_id,
-    action_token = fallback_lock.last_action_token,
-    target_token = fallback_inspected.target_lock.target_token,
-    target_label = "Compatibility target",
-    settle_ms = 0,
-})
-assert(fallback_locked_clicked.input_delivery == "sent_unverified")
-assert(#calls_for(fallback_lock, "magick") == 1)
-assert(#calls_for(fallback_lock, "ydotool") == 1)
-
--- Locked clicks accept target descriptions before independently verifying the lock.
-reset_calls(fixture)
-failure(fixture, {
-    action = "click_locked",
-    screenshot_id = current_id,
-    action_token = fixture.last_action_token,
-    target_token = "missing-token",
-    target_label = "Submit button",
-}, "target token is stale")
-assert(#calls_for(fixture, "ydotool") == 0)
-
 -- Invalid input is rejected before ydotool runs.
 local invalid_inputs = {
-    { { action = "scroll", screenshot_id = current_id, x = 0, y = 0, amount = 0 }, "amount must not" },
     { { action = "type", screenshot_id = current_id, text = "" }, "text must" },
-    { { action = "key", screenshot_id = current_id }, "keys is required for key actions" },
-    { { action = "key", screenshot_id = current_id, keys = "CTRL+UNKNOWN" }, "unsupported key" },
-    { { action = "key", screenshot_id = current_id, keys = "CTRL+CTRL" }, "duplicate key" },
-    { { action = "drag", screenshot_id = current_id, start_x = 0, start_y = 0, end_x = 2, end_y = 0 }, "end_x must" },
+    { { action = "click", screenshot_id = current_id, y = 0 }, "x must" },
+    { { action = "click", screenshot_id = current_id, x = 0, y = 2 }, "y must" },
+    { { action = "click", screenshot_id = current_id, x = 0, y = 0, target_label = "" }, "target_label must" },
 }
 for _, case in ipairs(invalid_inputs) do
     reset_calls(fixture)
     failure(fixture, case[1], case[2])
     assert(#calls_for(fixture, "ydotool") == 0)
 end
-
-local function fixture_semantic_fingerprint(seed)
-    local encoded = {}
-    for index = 1, #seed do
-        encoded[#encoded + 1] = string.format("%02x", seed:byte(index))
-    end
-    return "atspi-fp:v1:" .. (table.concat(encoded) .. string.rep("0", 64)):sub(1, 64)
-end
-
-local function semantic_target(overrides)
-    local target = {
-        id = "atspi:0.2.1",
-        role = "button",
-        name = "Apply",
-        states = {
-            checked = false,
-            editable = false,
-            enabled = true,
-            expanded = false,
-            focusable = true,
-            focused = false,
-            pressed = false,
-            selected = false,
-            sensitive = true,
-            showing = true,
-            visible = true,
-        },
-        bounds = { x = -70, y = -30, width = 40, height = 20 },
-        center = { x = -50, y = -20 },
-        actions = {},
-        direct_activation = false,
-    }
-    for key, value in pairs(overrides or {}) do
-        target[key] = value
-    end
-    if not (overrides and overrides.fingerprint) then
-        target.fingerprint = fixture_semantic_fingerprint(
-            table.concat({ target.id, target.role, target.name }, "|")
-        )
-    end
-    return target
-end
-
-local function semantic_fixture(resolve_target, discovered_target)
-    local semantic = new_fixture()
-    local target = discovered_target or semantic_target()
-    semantic.hook = function(call)
-        if call.program == "python3" then
-            assert(call.args[1] == "/tmp/bone-test-config/lua/scripts/computer_atspi.py")
-            assert(call.options.timeout_ms == 2500)
-            assert(call.options.max_output_bytes == 256 * 1024)
-            if call.args[2] == "discover" then
-                return success(cjson.encode({
-                    ok = true,
-                    available = true,
-                    targets = { target },
-                    visited = 4,
-                    truncated = false,
-                    limits = { depth = 16, nodes = 512, results = 64 },
-                }))
-            end
-            assert(call.args[2] == "resolve" or call.args[2] == "activate")
-            local request = cjson.decode(call.options.stdin)
-            assert(request.target_id == target.id)
-            assert(request.fingerprint == target.fingerprint)
-            assert(request.expected.name == nil)
-            assert(type(request.expected.name_sha256) == "string")
-            if call.args[2] == "activate" then
-                return success(cjson.encode({
-                    ok = true,
-                    activated = true,
-                    delivery = "delivered",
-                    action = "click",
-                    target = resolve_target or target,
-                }))
-            end
-            return success(cjson.encode({ ok = true, target = resolve_target or target }))
-        end
-    end
-    local baseline = content(semantic, { action = "observe" })
-    local found = content(semantic, {
-        action = "semantic_find", screenshot_id = baseline.screenshot_id,
-    })
-    assert(found.semantic.available == true)
-    assert(found.semantic.targets[1].id == target.id)
-    assert(found.semantic.targets[1].states.enabled == true)
-    assert(found.semantic.targets[1].states.focusable == true)
-    return semantic, found, target
-end
-
--- Semantic discovery falls back cleanly when AT-SPI or calibration is unavailable.
-for _, reason in ipairs({
-    "focused application is not exposed through AT-SPI",
-    "focused AT-SPI window bounds could not be calibrated",
-}) do
-    local fallback = new_fixture()
-    fallback.hook = function(call)
-        if call.program == "python3" then
-            return success(cjson.encode({ ok = true, available = false, reason = reason, targets = {} }))
-        end
-    end
-    local baseline = content(fallback, { action = "observe" })
-    local found = content(fallback, {
-        action = "semantic_find", screenshot_id = baseline.screenshot_id,
-    })
-    assert(found.semantic.available == false)
-    assert(found.semantic.reason == reason)
-    assert(#found.semantic.targets == 0)
-    assert(found.semantic_instruction:find("screenshot coordinates", 1, true))
-    assert(#calls_for(fallback, "ydotool") == 0)
-end
-
--- Discovery output is bounded and rejects duplicate IDs.
-for _, targets in ipairs({
-    { semantic_target(), semantic_target() },
-    (function()
-        local many = {}
-        for index = 1, 65 do
-            many[index] = semantic_target({ id = "atspi:0." .. index })
-        end
-        return many
-    end)(),
-}) do
-    local bounded = new_fixture()
-    bounded.hook = function(call)
-        if call.program == "python3" then
-            return success(cjson.encode({ ok = true, available = true, targets = targets }))
-        end
-    end
-    local baseline = content(bounded, { action = "observe" })
-    failure(bounded, {
-        action = "semantic_find", screenshot_id = baseline.screenshot_id,
-    }, #targets > 64 and "invalid semantic helper result" or "duplicate semantic target id")
-    assert(#calls_for(bounded, "ydotool") == 0)
-end
-
--- Helper diagnostics are bounded before they can enter results, state, or traces.
-do
-    local bounded_diagnostics = new_fixture()
-    bounded_diagnostics.hook = function(call)
-        if call.program == "python3" then
-            return success(cjson.encode({
-                ok = true,
-                available = true,
-                targets = { semantic_target() },
-                visited = -1,
-                matched = 100001,
-                rejections = { hidden = 2, invalid = -1, fractional = 1.5 },
-            }))
-        end
-    end
-    local baseline = content(bounded_diagnostics, { action = "observe" })
-    local found = content(bounded_diagnostics, {
-        action = "semantic_find", screenshot_id = baseline.screenshot_id,
-    })
-    assert(found.semantic.visited == nil)
-    assert(found.semantic.matched == nil)
-    assert(found.semantic.rejections.hidden == 2)
-    assert(found.semantic.rejections.invalid == nil)
-    assert(found.semantic.rejections.fractional == nil)
-end
-
--- Defense in depth rejects non-actionable targets even if a helper returns one.
-for _, state_name in ipairs({ "enabled", "sensitive", "showing", "visible" }) do
-    local unsafe_semantic = new_fixture()
-    unsafe_semantic.hook = function(call)
-        if call.program == "python3" then
-            local target = semantic_target()
-            target.states[state_name] = false
-            return success(cjson.encode({ ok = true, available = true, targets = { target } }))
-        end
-    end
-    local unsafe_baseline = content(unsafe_semantic, { action = "observe" })
-    failure(unsafe_semantic, {
-        action = "semantic_find", screenshot_id = unsafe_baseline.screenshot_id,
-    }, "not safely actionable")
-    assert(#calls_for(unsafe_semantic, "ydotool") == 0)
-end
-
--- Password names are redacted again at the Lua trust boundary.
-local password_semantic = new_fixture()
-password_semantic.hook = function(call)
-    if call.program == "python3" then
-        return success(cjson.encode({
-            ok = true,
-            available = true,
-            targets = { semantic_target({ role = "password_text", name = "SECRET password name" }) },
-        }))
-    end
-end
-local password_baseline = content(password_semantic, { action = "observe" })
-local protected = content(password_semantic, {
-    action = "semantic_find", screenshot_id = password_baseline.screenshot_id,
-})
-assert(protected.semantic.targets[1].name == "[protected]")
-assert(protected.semantic.targets[1].role == "password_text")
-
--- Unknown IDs, changed identity/state/bounds, and uncalibrated centers reject before input.
-local semantic_unknown, unknown_found = semantic_fixture()
-reset_calls(semantic_unknown)
-failure(semantic_unknown, {
-    action = "semantic_click",
-    screenshot_id = unknown_found.screenshot_id,
-    action_token = semantic_unknown.last_action_token,
-    semantic_id = "atspi:0.9",
-}, "stale or unknown")
-assert(#calls_for(semantic_unknown, "python3") == 0)
-assert(#calls_for(semantic_unknown, "ydotool") == 0)
-
-local mismatch_cases = {
-    { semantic_target({ name = "Changed" }), "identity changed" },
-    { semantic_target({ role = "menu_item" }), "identity changed" },
-    { semantic_target({ states = semantic_target().states }), "not safely actionable", "enabled" },
-    { semantic_target({ center = { x = -69, y = -30 } }), "bounds are not safely clickable" },
-}
-mismatch_cases[3][1].states.enabled = false
-for _, case in ipairs(mismatch_cases) do
-    local changed, found = semantic_fixture(case[1])
-    reset_calls(changed)
-    failure(changed, {
-        action = "semantic_click",
-        screenshot_id = found.screenshot_id,
-        action_token = changed.last_action_token,
-        semantic_id = "atspi:0.2.1",
-        settle_ms = 0,
-    }, case[2])
-    assert(#calls_for(changed, "ydotool") == 0)
-    assert(#calls_for(changed, "hyprctl", "dispatch") == 0)
-end
-
--- A verified semantic click consumes discovery and sends one ordinary left click at the resolved center.
-local semantic_click, semantic_found = semantic_fixture()
-reset_calls(semantic_click)
-local clicked = content(semantic_click, {
-    action = "semantic_click",
-    screenshot_id = semantic_found.screenshot_id,
-    semantic_id = "atspi:0.2.1",
-    target_label = "Apply button",
-    settle_ms = 0,
-})
-assert(clicked.semantic_target == "verified")
-assert(clicked.semantic_verification.id == "atspi:0.2.1")
-local semantic_moves = calls_for(semantic_click, "hyprctl", "dispatch")
-assert(#semantic_moves == 1)
-assert(semantic_moves[1].args[3] == "-50" and semantic_moves[1].args[4] == "-20")
-local semantic_clicks = calls_for(semantic_click, "ydotool")
-assert(#semantic_clicks == 1)
-assert(semantic_clicks[1].args[1] == "click")
-assert(semantic_clicks[1].args[#semantic_clicks[1].args] == "0xC0")
-assert(cjson.decode(semantic_click.state.computer).semantic == nil)
-reset_calls(semantic_click)
-failure(semantic_click, {
-    action = "semantic_click",
-    screenshot_id = clicked.screenshot_id,
-    action_token = semantic_click.last_action_token,
-    semantic_id = "atspi:0.2.1",
-}, "semantic targets are unavailable")
-assert(#calls_for(semantic_click, "ydotool") == 0)
-
--- Direct AT-SPI activation is reserved once, avoids coordinate input, and
--- replays the ledger outcome without launching the helper again.
-local direct_target = semantic_target({
-    actions = { "click" },
-    direct_activation = true,
-})
-local direct_semantic, direct_found = semantic_fixture(nil, direct_target)
-local direct_token = direct_semantic.last_action_token
-local direct_call_id = "semantic-direct-call"
-direct_semantic.next_call_id = direct_call_id
-reset_calls(direct_semantic)
-local direct_clicked = content(direct_semantic, {
-    action = "semantic_click",
-    screenshot_id = direct_found.screenshot_id,
-    action_token = direct_token,
-    semantic_id = direct_target.id,
-    target_label = "Apply button",
-    settle_ms = 0,
-})
-assert(direct_clicked.input_delivery == "delivered")
-assert(#calls_for(direct_semantic, "python3") == 1)
-assert(calls_for(direct_semantic, "python3")[1].args[2] == "activate")
-assert(#calls_for(direct_semantic, "hyprctl", "dispatch") == 0)
-assert(#calls_for(direct_semantic, "ydotool") == 0)
-local direct_next_token = direct_semantic.last_action_token
-reset_calls(direct_semantic)
-direct_semantic.next_call_id = direct_call_id
-local direct_replay = content(direct_semantic, {
-    action = "semantic_click",
-    screenshot_id = direct_found.screenshot_id,
-    action_token = direct_token,
-    semantic_id = direct_target.id,
-    target_label = "Apply button",
-    settle_ms = 0,
-})
-assert(direct_replay.replayed == true)
-assert(direct_replay.ledger_status == "completed")
-assert(direct_replay.action_token == direct_next_token)
-assert(#direct_semantic.calls == 0)
-
--- An old completed replay cannot expose a token from a later same-pixel
--- continuation merely because its screenshot_id was reused.
-local intervening = content(direct_semantic, {
-    action = "semantic_find",
-    screenshot_id = direct_clicked.screenshot_id,
-    action_token = direct_next_token,
-})
-assert(intervening.screenshot_id == direct_clicked.screenshot_id)
-local intervening_token = intervening.action_token
-reset_calls(direct_semantic)
-direct_semantic.next_call_id = direct_call_id
-local old_replay = content(direct_semantic, {
-    action = "semantic_click",
-    screenshot_id = direct_found.screenshot_id,
-    action_token = direct_token,
-    semantic_id = direct_target.id,
-    target_label = "Apply button",
-    settle_ms = 0,
-})
-assert(old_replay.replayed == true)
-assert(old_replay.ledger_status == "completed")
-assert(old_replay.action_token == nil)
-assert(old_replay.next_call == nil)
-assert(old_replay.next_action == "observe")
-assert(direct_semantic.last_action_token == intervening_token)
-assert(#direct_semantic.calls == 0)
-
-reset_calls(direct_semantic)
-direct_semantic.next_call_id = direct_call_id
-failure(direct_semantic, {
-    action = "semantic_click",
-    screenshot_id = direct_found.screenshot_id,
-    action_token = direct_semantic.last_action_token,
-    semantic_id = direct_target.id,
-    target_label = "Different request",
-    settle_ms = 0,
-}, "call_id was already used with different parameters")
-assert(#direct_semantic.calls == 0)
 
 -- Spawn failures are known not delivered; post-spawn failures are ambiguous.
 fixture.hook = function(call)
@@ -1475,10 +1018,9 @@ local spawn_result = content(fixture, {
     action_token = fixture.last_action_token,
     text = "SECRET text",
 })
-assert(spawn_result.input_delivery == "not_delivered")
 assert(spawn_result.reason_code == "ydotool_unavailable")
-assert(spawn_result.retry_input == false)
-assert(not cjson.encode(spawn_result):find("SECRET", 1, true))
+assert_recovery(spawn_result, "not_delivered")
+assert(not recursively_contains(spawn_result, "SECRET"))
 assert(#calls_for(fixture, "ydotool") == 1)
 current_id = content(fixture, { action = "observe" }).screenshot_id
 fixture.hook = function(call)
@@ -1490,8 +1032,10 @@ reset_calls(fixture)
 local timeout_result = content(fixture, {
     action = "type", screenshot_id = current_id, text = "SECRET text",
 })
-assert(timeout_result.observation == "input_delivery_ambiguous")
-assert(timeout_result.retry_input == false)
+assert(timeout_result.reason_code == "input_delivery_ambiguous")
+assert_recovery(timeout_result, "sent_unverified")
+assert(timeout_result.observation_detail == "timed_out=true, stderr_bytes=6")
+assert(not cjson.encode(timeout_result):find("SECRET", 1, true))
 assert(#calls_for(fixture, "ydotool") == 1)
 current_id = content(fixture, { action = "observe" }).screenshot_id
 fixture.hook = function(call)
@@ -1512,38 +1056,37 @@ current_id = content(fixture, { action = "observe" }).screenshot_id
 -- Stale IDs and changed fingerprints reject before input.
 reset_calls(fixture)
 failure(fixture, {
-    action = "move", screenshot_id = "computer-old",
+    action = "click", screenshot_id = "computer-old",
     action_token = fixture.last_action_token,
-    x = 0, y = 0,
+    x = 0, y = 0, target_label = "Stale target",
 }, "stale screenshot_id")
 assert(#fixture.calls == 0)
 fixture.window.workspace.id = 8
 reset_calls(fixture)
 failure(fixture, {
-    action = "move", screenshot_id = current_id,
+    action = "click", screenshot_id = current_id,
     action_token = fixture.last_action_token,
-    x = 0, y = 0,
+    x = 0, y = 0, target_label = "Changed-context target",
 }, "screen context changed")
 assert(#calls_for(fixture, "ydotool") == 0)
 fixture.window.workspace.id = 7
 
--- Wait is non-input, returns a fresh screenshot, and grid uses direct ImageMagick.
+-- Observe returns fresh authorization, and grid is presentation-only.
 reset_calls(fixture)
-local before_wait_ms = fixture.monotonic_ms
-local before_wait_token = fixture.last_action_token
-local waited_envelope = envelope(fixture, {
-    action = "wait", screenshot_id = current_id, duration_ms = 25, grid = true,
-})
-local waited = cjson.decode(waited_envelope.content)
-assert(waited.screenshot_id == current_id)
-assert(waited.action_token ~= before_wait_token)
+local before_grid_ms = fixture.monotonic_ms
+local before_grid_token = fixture.last_action_token
+local grid_envelope = cjson.decode(observe.execute({ grid = true }, fixture.ctx))
+local gridded = cjson.decode(grid_envelope.content)
+fixture.last_action_token = gridded.action_token
+assert(gridded.screenshot_id == current_id)
+assert(gridded.action_token ~= before_grid_token)
 assert(#calls_for(fixture, "ydotool") == 0)
 assert(#calls_for(fixture, "sleep") == 0)
-assert(fixture.monotonic_ms == before_wait_ms + 25)
+assert(fixture.monotonic_ms == before_grid_ms)
 local magick = assert(calls_for(fixture, "magick")[1])
 assert(magick.options.stdin == fixture.png)
 assert(magick.options.timeout_ms == 4000)
-current_id = waited.screenshot_id
+current_id = gridded.screenshot_id
 
 -- Invalid and boundary PNGs are rejected without leaking bytes.
 local png_cases = {

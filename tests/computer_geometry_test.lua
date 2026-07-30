@@ -220,22 +220,6 @@ local function new_fixture(monitors, selected_name, fixture_id)
             png_resize = function()
                 error("unexpected native resize for geometry fixtures")
             end,
-            png_region_sha256 = function(value, x, y, width, height)
-                return {
-                    width = width,
-                    height = height,
-                    sha256 = string.rep(string.format(
-                        "%08x",
-                        crc32(table.concat({
-                            value,
-                            tostring(x),
-                            tostring(y),
-                            tostring(width),
-                            tostring(height),
-                        }, ":"))
-                    ), 8),
-                }
-            end,
             png_diff = function(before, after)
                 if before == after then
                     return {
@@ -321,16 +305,6 @@ local function new_fixture(monitors, selected_name, fixture_id)
             return success(fixture_png(geometry.pixel_width, geometry.pixel_height))
         end
         if program == "ydotool" then
-            -- Accept a future direct absolute-pointer backend while continuing
-            -- to distinguish it from wheel events.
-            if args[1] == "mousemove" and args[2] ~= "--wheel" then
-                local x, y = cursor_from_arguments(args, #args - 1)
-                if x and y then
-                    fixture.cursor_x = x
-                    fixture.cursor_y = y
-                    fixture.cursor_moves[#fixture.cursor_moves + 1] = { x = x, y = y }
-                end
-            end
             return success()
         end
         if program == "sleep" then
@@ -352,9 +326,7 @@ local function response_action_token(content, envelope)
         or (type(envelope) == "table" and envelope.action_token)
 end
 
--- Keep evolving authorization plumbing in one place. ctx.call_id is populated
--- today; if call_id/action_token become tool parameters, the schema-controlled
--- branches below attach them without touching the geometry properties.
+-- Keep host call IDs and continuation authorization plumbing in one place.
 local function invoke(fixture, tool, params)
     local request = {}
     for key, value in pairs(params) do
@@ -506,8 +478,8 @@ for transform = 0, 7 do
 
         for point_index, point in ipairs(property_points(selected, transform, scale_index)) do
             fixture.cursor_moves = {}
-            local moved = invoke(fixture, computer_tool, {
-                action = "move",
+            local clicked = invoke(fixture, computer_tool, {
+                action = "click",
                 screenshot_id = current.screenshot_id,
                 x = point[1],
                 y = point[2],
@@ -555,12 +527,12 @@ for transform = 0, 7 do
                 actual.y
             )
             check(
-                moved.monitor.name == selected_name,
-                "move response changed selected monitor from %s to %s",
+                clicked.monitor.name == selected_name,
+                "click response changed selected monitor from %s to %s",
                 selected_name,
-                tostring(moved.monitor.name)
+                tostring(clicked.monitor.name)
             )
-            current = moved
+            current = clicked
             checked_points = checked_points + 1
         end
 

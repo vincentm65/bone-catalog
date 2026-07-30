@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate catalog.json from the visible tools/ and commands/ .lua files.
-# Theme files and tool runtime helpers are bundled with their owning Lua item
-# rather than indexed separately.
+# Theme files are bundled with their owning Lua item rather than indexed
+# separately.
 #
 # Each entry: { name, kind, description, sha256, files? }.
 #  - description: prefer a `description = "..."` field, else the first `--`
@@ -54,8 +54,6 @@ for kind in tools commands; do
     bundled_files=()
     if [[ "$file" == "commands/themes.lua" ]]; then
       mapfile -t bundled_files < <(find themes -maxdepth 1 -type f -name '*.lua' | sort)
-    elif [[ "$file" == "tools/computer.lua" ]]; then
-      bundled_files=(scripts/computer_atspi.py)
     fi
     if [[ ${#bundled_files[@]} -gt 0 ]]; then
       printf ', "files": [' >> "$out"
