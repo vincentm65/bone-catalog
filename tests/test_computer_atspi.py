@@ -109,6 +109,11 @@ class FakeNode:
     def get_parent(self):
         return self._parent
 
+    def get_index_in_parent(self):
+        if self._parent is None:
+            return -1
+        return self._parent._children.index(self)
+
     def get_process_id(self):
         return self._pid
 
@@ -136,6 +141,49 @@ FakeAtspi = SimpleNamespace(
     StateType=SimpleNamespace(**{name: name for name in computer_atspi.STATE_NAMES}),
     CoordType=SimpleNamespace(WINDOW="window"),
 )
+
+
+class FakeCollection:
+    def __init__(self, matches=(), error=None):
+        self.matches = list(matches)
+        self.error = error
+        self.calls = []
+
+    def get_matches(self, rule, sort_order, count, traverse):
+        self.calls.append((rule, sort_order, count, traverse))
+        if self.error is not None:
+            raise self.error
+        return self.matches[:count]
+
+
+class FakeMatchRule:
+    calls = []
+
+    @classmethod
+    def new(cls, *args):
+        cls.calls.append(args)
+        return SimpleNamespace(args=args)
+
+
+class FakeCollectionStateSet:
+    calls = []
+
+    @classmethod
+    def new(cls, states):
+        cls.calls.append(list(states))
+        return FakeStateSet(states)
+
+
+def enable_collection(atspi, root, matches=(), error=None):
+    collection = FakeCollection(matches, error)
+    root.get_collection_iface = lambda: collection
+    atspi.StateSet = FakeCollectionStateSet
+    atspi.MatchRule = FakeMatchRule
+    atspi.CollectionMatchType = SimpleNamespace(ALL="all")
+    atspi.CollectionSortOrder = SimpleNamespace(CANONICAL="canonical")
+    FakeCollectionStateSet.calls.clear()
+    FakeMatchRule.calls.clear()
+    return collection
 
 WINDOW = {
     "pid": 4242,
@@ -243,6 +291,22 @@ class EnumKeyTests(unittest.TestCase):
                     computer_atspi.enum_key(getattr(Atspi.Role, role_name)),
                     role_name,
                 )
+
+        states = Atspi.StateSet.new([Atspi.StateType.FOCUSED])
+        match_all = Atspi.CollectionMatchType.ALL
+        rule = Atspi.MatchRule.new(
+            states,
+            match_all,
+            None,
+            match_all,
+            None,
+            match_all,
+            None,
+            match_all,
+            False,
+        )
+        self.assertIsNotNone(states)
+        self.assertIsNotNone(rule)
 
 
 class TargetDataTests(unittest.TestCase):
@@ -1116,6 +1180,280 @@ class ActivationTests(unittest.TestCase):
 
 
 class FocusInspectionTests(unittest.TestCase):
+    def test_collection_finds_focused_entry_beyond_bounded_tree_scan(self):
+        branches = []
+        for branch_index in range(4):
+            branches.append(FakeNode(
+                "ATSPI_ROLE_PANEL",
+                name=f"Filler branch {branch_index}",
+                states=enabled_states(),
+                children=[
+                    FakeNode(
+                        "ATSPI_ROLE_BUTTON",
+                        name=f"Filler {branch_index}-{child_index}",
+                        states=enabled_states(),
+                    )
+                    for child_index in range(computer_atspi.MAX_CHILDREN)
+                ],
+            ))
+        entry = FakeNode(
+            "ATSPI_ROLE_ENTRY",
+            name="Firefox address",
+            states=enabled_states(
+                FOCUSED=True,
+                FOCUSABLE=True,
+                EDITABLE=True,
+            ),
+        )
+        branches.append(FakeNode(
+            "ATSPI_ROLE_PANEL",
+            name="Late branch",
+            states=enabled_states(),
+            children=[entry],
+        ))
+        atspi, _, _, window = fake_tree(branches)
+        collection = enable_collection(atspi, window, [entry])
+
+        with mock.patch.object(
+            computer_atspi,
+            "scan_candidates",
+            side_effect=AssertionError("Collection success must avoid a tree scan"),
+        ):
+            result = computer_atspi.handle_window_operation(
+                "focused",
+                {"window": dict(WINDOW)},
+                dict(WINDOW),
+                atspi,
+                deadline=time.monotonic() + 10,
+            )
+
+        self.assertTrue(result["typing_safe"])
+        self.assertEqual(result["target"]["name"], "Firefox address")
+        self.assertEqual(result["target"]["id"], "atspi:0.4.0")
+        self.assertEqual(result["visited"], 1)
+        self.assertEqual(FakeCollectionStateSet.calls, [["FOCUSED"]])
+        self.assertEqual(len(FakeMatchRule.calls), 1)
+        self.assertEqual(
+            collection.calls[0][1:],
+            ("canonical", computer_atspi.MAX_FOCUSED_MATCHES, True),
+        )
+
+    def test_collection_accepts_focused_editable_combo_box_for_typing(self):
+        combo_box = FakeNode(
+            "ATSPI_ROLE_COMBO_BOX",
+            name="Firefox address",
+            states=enabled_states(
+                FOCUSED=True,
+                FOCUSABLE=True,
+                EDITABLE=True,
+            ),
+        )
+        atspi, _, _, window = fake_tree([combo_box])
+        collection = enable_collection(atspi, window, [combo_box])
+
+        with mock.patch.object(
+            computer_atspi,
+            "scan_candidates",
+            side_effect=AssertionError("Collection success must avoid a tree scan"),
+        ):
+            result = computer_atspi.handle_window_operation(
+                "focused",
+                {"window": dict(WINDOW)},
+                dict(WINDOW),
+                atspi,
+                deadline=time.monotonic() + 10,
+            )
+
+        self.assertTrue(result["available"])
+        self.assertTrue(result["typing_safe"])
+        self.assertEqual(result["target"]["role"], "combo_box")
+        self.assertTrue(result["target"]["states"]["editable"])
+        self.assertEqual(result["visited"], 1)
+        self.assertEqual(len(collection.calls), 1)
+
+    def test_collection_multiple_focus_claims_fail_closed_without_scanning(self):
+        entries = [
+            FakeNode(
+                "ATSPI_ROLE_ENTRY",
+                name=f"Entry {index}",
+                states=enabled_states(FOCUSED=True, EDITABLE=True),
+            )
+            for index in range(2)
+        ]
+        atspi, _, _, window = fake_tree(entries)
+        collection = enable_collection(atspi, window, entries)
+
+        with mock.patch.object(
+            computer_atspi,
+            "scan_candidates",
+            side_effect=AssertionError("Known ambiguity must not scan"),
+        ):
+            result = computer_atspi.handle_window_operation(
+                "focused",
+                {"window": dict(WINDOW)},
+                dict(WINDOW),
+                atspi,
+                deadline=time.monotonic() + 10,
+            )
+
+        self.assertFalse(result["typing_safe"])
+        self.assertEqual(result["reason_code"], "focused_control_ambiguous")
+        self.assertEqual(result["visited"], 2)
+        self.assertEqual(len(collection.calls), 1)
+
+    def test_collection_non_target_focus_reports_not_editable_without_scan(self):
+        document = FakeNode(
+            "ATSPI_ROLE_DOCUMENT_WEB",
+            name="Private document name",
+            states=enabled_states(FOCUSED=True, FOCUSABLE=True),
+        )
+        atspi, _, _, window = fake_tree([document])
+        collection = enable_collection(atspi, window, [document])
+
+        with mock.patch.object(
+            computer_atspi,
+            "scan_candidates",
+            side_effect=AssertionError("Known non-editable focus must not scan"),
+        ):
+            result = computer_atspi.handle_window_operation(
+                "focused",
+                {"window": dict(WINDOW)},
+                dict(WINDOW),
+                atspi,
+                deadline=time.monotonic() + 10,
+            )
+
+        self.assertTrue(result["available"])
+        self.assertFalse(result["typing_safe"])
+        self.assertEqual(result["reason_code"], "focused_control_not_editable")
+        self.assertNotIn("target", result)
+        self.assertNotIn("Private document name", repr(result))
+        self.assertEqual(document.name_reads, 0)
+        self.assertEqual(result["visited"], 1)
+        self.assertEqual(len(collection.calls), 1)
+
+    def test_collection_ignoring_count_is_capped_and_fails_closed(self):
+        entries = [
+            FakeNode(
+                "ATSPI_ROLE_ENTRY",
+                name=f"Entry {index}",
+                states=enabled_states(FOCUSED=True, EDITABLE=True),
+            )
+            for index in range(4)
+        ]
+        atspi, _, _, window = fake_tree(entries)
+        collection = enable_collection(atspi, window, entries)
+
+        def ignore_count(rule, sort_order, count, traverse):
+            collection.calls.append((rule, sort_order, count, traverse))
+            return entries
+
+        collection.get_matches = ignore_count
+        original_candidate = computer_atspi.collection_candidate
+        original_scan = computer_atspi.scan_candidates
+        with (
+            mock.patch.object(
+                computer_atspi,
+                "collection_candidate",
+                wraps=original_candidate,
+            ) as candidate,
+            mock.patch.object(
+                computer_atspi,
+                "scan_candidates",
+                wraps=original_scan,
+            ) as scan,
+        ):
+            result = computer_atspi.handle_window_operation(
+                "focused",
+                {"window": dict(WINDOW)},
+                dict(WINDOW),
+                atspi,
+                deadline=time.monotonic() + 10,
+            )
+
+        self.assertFalse(result["typing_safe"])
+        self.assertEqual(result["reason_code"], "focused_control_ambiguous")
+        self.assertEqual(candidate.call_count, computer_atspi.MAX_FOCUSED_MATCHES)
+        scan.assert_not_called()
+        self.assertEqual(
+            collection.calls[0][2],
+            computer_atspi.MAX_FOCUSED_MATCHES,
+        )
+
+    def test_collection_error_falls_back_to_bounded_scan(self):
+        entry = FakeNode(
+            "ATSPI_ROLE_ENTRY",
+            name="Search",
+            states=enabled_states(FOCUSED=True, EDITABLE=True),
+        )
+        atspi, _, _, window = fake_tree([entry])
+        collection = enable_collection(
+            atspi,
+            window,
+            error=RuntimeError("private collection diagnostic"),
+        )
+        original_scan = computer_atspi.scan_candidates
+
+        with mock.patch.object(
+            computer_atspi,
+            "scan_candidates",
+            wraps=original_scan,
+        ) as scan:
+            result = computer_atspi.handle_window_operation(
+                "focused",
+                {"window": dict(WINDOW)},
+                dict(WINDOW),
+                atspi,
+                deadline=time.monotonic() + 10,
+            )
+
+        self.assertTrue(result["typing_safe"])
+        scan.assert_called_once()
+        self.assertEqual(len(collection.calls), 1)
+        self.assertNotIn("private collection diagnostic", repr(result))
+
+    def test_one_valid_and_one_unusable_collection_match_falls_back(self):
+        entry = FakeNode(
+            "ATSPI_ROLE_ENTRY",
+            name="Search",
+            states=enabled_states(FOCUSED=True, EDITABLE=True),
+        )
+        atspi, _, _, window = fake_tree([entry])
+        outside_root = FakeNode(
+            "ATSPI_ROLE_PANEL",
+            children=[
+                FakeNode(
+                    "ATSPI_ROLE_ENTRY",
+                    name="Outside",
+                    states=enabled_states(FOCUSED=True, EDITABLE=True),
+                ),
+            ],
+        )
+        collection = enable_collection(
+            atspi,
+            window,
+            [entry, outside_root.get_child_at_index(0)],
+        )
+        original_scan = computer_atspi.scan_candidates
+
+        with mock.patch.object(
+            computer_atspi,
+            "scan_candidates",
+            wraps=original_scan,
+        ) as scan:
+            result = computer_atspi.handle_window_operation(
+                "focused",
+                {"window": dict(WINDOW)},
+                dict(WINDOW),
+                atspi,
+                deadline=time.monotonic() + 10,
+            )
+
+        self.assertTrue(result["typing_safe"])
+        self.assertEqual(result["target"]["name"], "Search")
+        scan.assert_called_once()
+        self.assertEqual(len(collection.calls), 1)
+
     def test_focused_editable_entry_is_safe_for_typing(self):
         entry = FakeNode(
             "ATSPI_ROLE_ENTRY",

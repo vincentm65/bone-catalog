@@ -68,6 +68,13 @@ local target_label_schema = assert(registered.parameters.properties.target_label
 assert(target_label_schema.type == "string")
 assert(target_label_schema.minLength == 1)
 assert(target_label_schema.maxLength == 80)
+local required_fields = {}
+for _, field in ipairs(registered.parameters.required) do
+    required_fields[field] = true
+end
+assert(required_fields.action)
+assert(required_fields.screenshot_id)
+assert(required_fields.action_token)
 local actions = {}
 for _, action in ipairs(registered.parameters.properties.action.enum) do
     actions[action] = true
@@ -98,12 +105,12 @@ local function chunk(kind, data)
     return uint32(#data) .. kind .. data .. uint32(crc32(kind .. data))
 end
 
-local function fixture_png(width, height)
+local function fixture_png(width, height, payload)
     local ihdr = uint32(width) .. uint32(height)
         .. string.char(8, 2, 0, 0, 0)
     return "\137PNG\r\n\26\n"
         .. chunk("IHDR", ihdr)
-        .. chunk("IDAT", "compressed")
+        .. chunk("IDAT", payload or "compressed")
         .. chunk("IEND", "")
 end
 
@@ -370,12 +377,7 @@ local function new_fixture()
 end
 
 local function envelope(fixture, params)
-    local mutating = {
-        move = true, click = true, click_locked = true, semantic_click = true,
-        double_click = true, right_click = true, drag = true, scroll = true,
-        type = true, key = true,
-    }
-    if mutating[params.action] and params.action_token == nil then
+    if params.action ~= "observe" and params.action_token == nil then
         params.action_token = fixture.last_action_token
     end
     fixture.call_sequence = fixture.call_sequence + 1
@@ -394,6 +396,12 @@ local function content(fixture, params)
 end
 
 local function failure(fixture, params, needle)
+    if params.action ~= nil
+        and params.action ~= "observe"
+        and params.action_token == nil
+    then
+        params.action_token = fixture.last_action_token
+    end
     fixture.call_sequence = fixture.call_sequence + 1
     fixture.ctx.call_id = fixture.next_call_id or ("failure-call-" .. fixture.call_sequence)
     fixture.next_call_id = nil
@@ -552,6 +560,89 @@ assert(not recursively_contains(persisted, "SECRET WINDOW TITLE"))
 assert(not recursively_contains(persisted, "fixture-app"))
 local first_id = observed.screenshot_id
 
+-- Read-only continuation actions use the same observation pair. A stale token
+-- rejects before capture or semantic helper startup.
+do
+    local continuation = new_fixture()
+    local baseline = content(continuation, { action = "observe" })
+    local baseline_token = continuation.last_action_token
+    local discovered = content(continuation, {
+        action = "semantic_find",
+        screenshot_id = baseline.screenshot_id,
+        action_token = baseline_token,
+    })
+    assert(discovered.screenshot_id == baseline.screenshot_id)
+    assert(discovered.action_token ~= baseline_token)
+
+    reset_calls(continuation)
+    failure(continuation, {
+        action = "semantic_find",
+        screenshot_id = baseline.screenshot_id,
+        action_token = baseline_token,
+    }, "action_token is stale")
+    assert(#continuation.calls == 0)
+end
+
+-- A failed read-only response must not commit a token that the caller never
+-- receives. This covers both presentation work before the commit and a state
+-- write failure after the response and trace have already been prepared.
+do
+    local atomic = new_fixture()
+    local baseline = content(atomic, { action = "observe" })
+    local baseline_state = atomic.state.computer
+    local baseline_token = atomic.last_action_token
+    local encode = atomic.ctx.codec.base64_encode
+    atomic.ctx.codec.base64_encode = function()
+        error("SECRET presentation failure")
+    end
+    local presentation_failure = content(atomic, {
+        action = "inspect",
+        screenshot_id = baseline.screenshot_id,
+        action_token = baseline_token,
+        x = 0.5,
+        y = 0.5,
+        trace = true,
+    })
+    assert(presentation_failure.ok == false)
+    assert(presentation_failure.action_token == nil)
+    assert(presentation_failure.trace.reason_code == "request_rejected")
+    assert(atomic.state.computer == baseline_state)
+    assert(atomic.last_action_token == baseline_token)
+    atomic.ctx.codec.base64_encode = encode
+
+    local state_set = atomic.ctx.state.set
+    local fail_next_set = true
+    atomic.ctx.state.set = function(key, value)
+        if fail_next_set then
+            fail_next_set = false
+            error("SECRET state failure")
+        end
+        return state_set(key, value)
+    end
+    local persistence_failure = content(atomic, {
+        action = "inspect",
+        screenshot_id = baseline.screenshot_id,
+        action_token = baseline_token,
+        x = 0.5,
+        y = 0.5,
+        trace = true,
+    })
+    assert(persistence_failure.ok == false)
+    assert(persistence_failure.action_token == nil)
+    assert(persistence_failure.trace.reason_code == "request_rejected")
+    assert(atomic.state.computer == baseline_state)
+    assert(atomic.last_action_token == baseline_token)
+
+    local retry = content(atomic, {
+        action = "inspect",
+        screenshot_id = baseline.screenshot_id,
+        action_token = baseline_token,
+        x = 0.5,
+        y = 0.5,
+    })
+    assert(retry.action_token ~= baseline_token)
+end
+
 -- Every subprocess is direct argv, bounded, timed, and redacted.
 for _, call in ipairs(fixture.calls) do
     assert(type(call.program) == "string" and type(call.args) == "table")
@@ -573,6 +664,7 @@ local validation_cases = {
     { { action = "semantic_click", screenshot_id = first_id }, "semantic_id is required" },
     { { action = "semantic_click", screenshot_id = first_id, semantic_id = "atspi:0.bad" }, "semantic_id is required" },
     { { action = "semantic_find", screenshot_id = first_id, semantic_id = "atspi:0.1" }, "irrelevant field" },
+    { { action = "semantic_find", screenshot_id = first_id, action_token = false }, "action_token is required for every non-observe action" },
     { { action = "observe", grid = "yes" }, "grid must" },
     { { action = "observe", monitor = string.rep("x", 257) }, "monitor must be a bounded" },
     { { action = "observe", monitor = "DP-1\0ignored" }, "monitor must be a bounded" },
@@ -755,6 +847,48 @@ assert(type(performance_clicked.trace.context_sha256) == "string")
 assert(performance_clicked.trace.visual.image_reused == true)
 assert(#calls_for(performance, "sleep") == 0)
 assert(#calls_for(performance, "magick") == 0)
+
+-- A completed input replay is recognized before current-screen freshness
+-- checks, so a successful action that changed the screenshot is never sent
+-- again and can still return its recorded result.
+local changed_replay = new_fixture()
+local changed_replay_observed = content(changed_replay, { action = "observe" })
+local changed_replay_token = changed_replay.last_action_token
+local changed_replay_call_id = "changed-screen-replay"
+changed_replay.hook = function(call, active)
+    if call.program == "ydotool" then
+        active.png = fixture_png(200, 100, "changed pixels")
+    end
+end
+changed_replay.next_call_id = changed_replay_call_id
+reset_calls(changed_replay)
+local changed_replay_clicked = content(changed_replay, {
+    action = "click",
+    screenshot_id = changed_replay_observed.screenshot_id,
+    action_token = changed_replay_token,
+    x = 0.5,
+    y = 0.5,
+    target_label = "Changing target",
+    settle_ms = 0,
+})
+assert(changed_replay_clicked.screenshot_id ~= changed_replay_observed.screenshot_id)
+changed_replay.hook = nil
+changed_replay.next_call_id = changed_replay_call_id
+reset_calls(changed_replay)
+local changed_screen_replay = content(changed_replay, {
+    action = "click",
+    screenshot_id = changed_replay_observed.screenshot_id,
+    action_token = changed_replay_token,
+    x = 0.5,
+    y = 0.5,
+    target_label = "Changing target",
+    settle_ms = 0,
+})
+assert(changed_screen_replay.replayed == true)
+assert(changed_screen_replay.ledger_status == "completed")
+assert(changed_screen_replay.screenshot_id == changed_replay_clicked.screenshot_id)
+assert(changed_screen_replay.action_token == changed_replay.last_action_token)
+assert(#changed_replay.calls == 0)
 
 -- Cancellation before reservation preserves authorization and sends no input.
 local cancelled_pre = new_fixture()
@@ -981,6 +1115,7 @@ assert(#calls_for(fixture, "ydotool") == 0)
 local invalid_inputs = {
     { { action = "scroll", screenshot_id = current_id, x = 0, y = 0, amount = 0 }, "amount must not" },
     { { action = "type", screenshot_id = current_id, text = "" }, "text must" },
+    { { action = "key", screenshot_id = current_id }, "keys is required for key actions" },
     { { action = "key", screenshot_id = current_id, keys = "CTRL+UNKNOWN" }, "unsupported key" },
     { { action = "key", screenshot_id = current_id, keys = "CTRL+CTRL" }, "duplicate key" },
     { { action = "drag", screenshot_id = current_id, start_x = 0, start_y = 0, end_x = 2, end_y = 0 }, "end_x must" },
@@ -1288,6 +1423,34 @@ assert(direct_replay.replayed == true)
 assert(direct_replay.ledger_status == "completed")
 assert(direct_replay.action_token == direct_next_token)
 assert(#direct_semantic.calls == 0)
+
+-- An old completed replay cannot expose a token from a later same-pixel
+-- continuation merely because its screenshot_id was reused.
+local intervening = content(direct_semantic, {
+    action = "semantic_find",
+    screenshot_id = direct_clicked.screenshot_id,
+    action_token = direct_next_token,
+})
+assert(intervening.screenshot_id == direct_clicked.screenshot_id)
+local intervening_token = intervening.action_token
+reset_calls(direct_semantic)
+direct_semantic.next_call_id = direct_call_id
+local old_replay = content(direct_semantic, {
+    action = "semantic_click",
+    screenshot_id = direct_found.screenshot_id,
+    action_token = direct_token,
+    semantic_id = direct_target.id,
+    target_label = "Apply button",
+    settle_ms = 0,
+})
+assert(old_replay.replayed == true)
+assert(old_replay.ledger_status == "completed")
+assert(old_replay.action_token == nil)
+assert(old_replay.next_call == nil)
+assert(old_replay.next_action == "observe")
+assert(direct_semantic.last_action_token == intervening_token)
+assert(#direct_semantic.calls == 0)
+
 reset_calls(direct_semantic)
 direct_semantic.next_call_id = direct_call_id
 failure(direct_semantic, {

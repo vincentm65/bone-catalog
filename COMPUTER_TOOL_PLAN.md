@@ -52,6 +52,9 @@ Exit criteria:
 - [x] Split visual identity from input authorization:
   - [x] Keep an image/content ID for screenshot reuse.
   - [x] Issue a new single-use action token after every successful observation.
+  - [x] Require the same `{screenshot_id, action_token}` pair for every
+    non-observe action, including read-only continuation actions, so the schema
+    has one predictable contract and successful calls always rotate the pair.
   - [x] Consume the action token before input, even when the post-action pixels
     are unchanged.
 - [x] Use the host-supplied `call_id` for mutating actions and record a bounded
@@ -69,6 +72,12 @@ Exit criteria:
     observation recovery.
   - [x] Fail a reservation write before input and treat a post-input persistence
     failure as ambiguous without retrying delivery.
+  - [x] Prepare all read-only response artifacts before committing a rotated
+    pair, so presentation/encoding failure leaves the caller's prior pair
+    usable.
+- [x] Bind a completed ledger replay's returned continuation to its exact
+  resulting operation generation; never expose an unrelated later token merely
+  because identical pixels reused the same screenshot ID.
 - [x] Reject ambiguous multiple Hyprland instances rather than choosing the first
   discovered signature.
 - [x] Store only a minimal hashed window/context fingerprint in state; never
@@ -150,6 +159,12 @@ Exit criteria:
 - [x] Rank enabled, visible, named, actionable controls ahead of structural or
   unnamed nodes and report truncation.
 - [x] Verify the focused accessible control before sensitive typing.
+  - [x] Query at most three focused nodes through the selected window's AT-SPI
+    Collection interface, validate each result back to that root, reject
+    ambiguity, and retain the bounded tree walk only as a compatibility
+    fallback.
+  - [x] Treat a focused, editable combo box as typing-safe; Firefox exposes its
+    address bar with that role rather than as a plain entry.
 - [x] Return stable reason codes for rejected, ambiguous, stale, protected, and
   unavailable targets.
 
@@ -217,6 +232,9 @@ Instrument first; optimize against P50/P95 data rather than estimates.
   in-memory PNG difference plus native tile fingerprints.
 - [x] Hash exact target-lock regions in-process with native
   `png_region_sha256`, retaining the older-Bone ImageMagick crop/hash fallback.
+- [x] Avoid the ordinary 512-node accessibility walk during typing-focus checks
+  when AT-SPI Collection is available by querying no more than three focused
+  controls and failing closed on ambiguity.
 - [ ] Keep the AT-SPI bridge persistent so Python/GI startup is not paid on every
   semantic call.
 - [ ] Compact repeated response instructions and avoid serializing unchanged
@@ -271,6 +289,8 @@ Performance targets:
     `computer_observe`/`computer` API, action-token freshness, semantic behavior,
     recovery rules, sanitized tracing, and native-helper feature detection.
   - [x] Document inline DPMS-off rejection and the two-tool diagnostic workflow.
+  - [x] Document the bounded Collection focus query and why raw `wtype` or a
+    long-lived `wl-copy` process is not an automatic safe-typing fallback.
   - [x] Distinguish `not_sent`, proven `not_delivered`, and
     `sent_unverified`/ambiguous recovery.
 - [x] Roll out state safety changes behind an explicit state-version boundary

@@ -7,7 +7,7 @@ The catalog exposes two state-sharing tools:
 - `computer_observe` is read-only. It captures a stable Hyprland monitor
   observation and returns a `screenshot_id` plus a single-use `action_token`.
 - `computer` inspects that observation, discovers semantic controls, waits for
-  UI changes, or sends input. Input actions require both values from the most
+  UI changes, or sends input. Every call requires both values from the most
   recent successfully persisted observation.
 
 Screenshots are PNG images. Coordinates are finite normalized values from `0`
@@ -69,20 +69,28 @@ Every successfully captured and persisted observation returns a pair:
 
 - `screenshot_id` identifies the clean captured pixels. It can remain unchanged
   when a later capture has identical pixels.
-- `action_token` authorizes exactly one input action. A fresh token is issued
-  after every newly persisted observation, even when `screenshot_id` is reused.
+- `action_token` continues exactly one step in the observation chain. A fresh
+  token is issued after every newly persisted observation, even when
+  `screenshot_id` is reused.
 
 Always copy both values from the immediately preceding observation response.
 `inspect`, `semantic_find`, and `wait` do not send input, but their successful
-responses still rotate the token, so older tokens must not be reused. Bone
-supplies a bounded host `call_id` for each mutating tool call; it is not a
-`computer` parameter.
+responses still require and rotate the token, so older tokens must not be
+reused. Bone supplies a bounded host `call_id` for each mutating tool call; it
+is not a `computer` parameter.
 
 Before input, the tool consumes the token and persists a bounded `call_id`
 outcome ledger. Replaying the same completed call returns its recorded outcome
 without sending input again. Replaying an in-flight or ambiguous call also
 sends no input, and reusing a `call_id` with different parameters is rejected.
-Input is never automatically retried.
+An old completed replay returns a continuation token only while its exact
+resulting operation generation is still current; identical pixels from a later
+call cannot expose that later token. Input is never automatically retried.
+
+The complete response, including presentation images and encoding, is prepared
+before a read-only call commits its rotated pair. If response preparation or
+the state write fails, the prior pair remains usable; a token that was never
+returned is not committed.
 
 Structured failure results distinguish three delivery states:
 
@@ -120,8 +128,8 @@ a click, drag, or scroll proceeds.
 Semantic targeting uses AT-SPI controls scoped to the focused window:
 
 1. Call `computer` with `action="semantic_find"` and the current
-   `screenshot_id`. Optional bounded filters are `query`, `roles`, `near`, and
-   `max_results`.
+   `screenshot_id` and `action_token`. Optional bounded filters are `query`,
+   `roles`, `near`, and `max_results`.
 2. Select an exact returned `semantic_id`. Results are ranked toward named,
    enabled, visible, actionable controls and report traversal, truncation, and
    privacy-safe rejection counts.
@@ -133,8 +141,23 @@ Semantic targeting uses AT-SPI controls scoped to the focused window:
 
 Ambiguous fingerprints or changed controls are rejected without input.
 Password controls are returned as `[protected]`, and their names and values are
-not read. Before `type`, the helper requires exactly one focused, safely
-editable AT-SPI control; typing is rejected when that cannot be verified.
+not read. Before `type`, the helper asks the selected window's AT-SPI Collection
+interface for at most three focused controls and validates each result back to
+that window. This avoids a full Firefox accessibility-tree walk. If Collection
+is unavailable or cannot provide a usable result, the helper falls back to the
+existing bounded walk. A focused document or other non-editable role is
+classified immediately without reading its name. The helper requires exactly
+one focused, safely editable control; ambiguous, incomplete, or unverifiable
+focus is rejected. Editable combo boxes are accepted because Firefox exposes
+its address bar with that AT-SPI role.
+
+Shell-level `wtype` and clipboard commands are not automatic recovery paths for
+a rejected `type`: they bypass the observation, accessible-focus, freshness,
+single-use authorization, and delivery ledger checks. In particular,
+`wl-copy` keeps a Wayland selection owner alive; when that process inherits a
+bounded shell call's output pipes, the call can remain open until timeout and
+the clipboard disappears when it is terminated. Recover with a fresh
+`computer_observe`, restore verifiable focus, and use `computer` again.
 
 Persisted tool state contains salted context and semantic-name digests rather
 than window titles, window classes, typed text, accessibility names, or
@@ -180,7 +203,9 @@ native cancellable waits when the Bone runtime provides them, and uses native
 in-memory PNG resize, tile, exact-region, and difference helpers instead of
 ImageMagick subprocesses. Native resize removes the large-overview resize
 process; native region hashing removes the former `click_locked` crop/hash
-process. Each has an older-Bone ImageMagick fallback.
+process. Focus verification uses the bounded AT-SPI Collection query when the
+application exposes it, avoiding the ordinary 512-node discovery walk in large
+browser trees. Each native image helper has an older-Bone ImageMagick fallback.
 
 Regression tests currently bound the native fast path to at most four
 subprocesses for a cached observation and ten for a stable coordinate click

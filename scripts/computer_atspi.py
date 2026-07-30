@@ -21,6 +21,7 @@ MAX_DEPTH = 16
 MAX_NODES = 512
 MAX_CHILDREN = 128
 MAX_RESULTS = 64
+MAX_FOCUSED_MATCHES = 3
 MAX_ACTIONS = 32
 MAX_NAME_BYTES = 160
 MAX_QUERY_BYTES = 160
@@ -60,7 +61,7 @@ STATE_NAMES = (
     "CHECKED", "EDITABLE", "ENABLED", "EXPANDED", "FOCUSABLE", "FOCUSED",
     "PRESSED", "SELECTED", "SENSITIVE", "SHOWING", "VISIBLE",
 )
-TYPING_ROLES = {"entry", "password_text", "spin_button"}
+TYPING_ROLES = {"combo_box", "entry", "password_text", "spin_button"}
 ACTIVATION_PREFERENCE = (
     "click", "press", "activate", "default", "toggle", "open", "jump", "select",
 )
@@ -1281,24 +1282,237 @@ def activate_candidate(
     return entry["name"], None, candidate["target"]
 
 
-def focused_result(root, root_path, window, Atspi, deadline):
-    candidates, visited, truncated, rejected = scan_candidates(
-        root,
-        root_path,
+def collection_candidate(
+    node,
+    root,
+    root_path,
+    window,
+    Atspi,
+    deadline,
+    rejected,
+):
+    """Reconstruct and validate a Collection result under the selected root."""
+
+    if node is None:
+        rejected["inaccessible"] += 1
+        return None
+    lineage = [node]
+    child_indexes = []
+    current = node
+    while not same_accessible(current, root):
+        deadline_check(deadline)
+        if len(child_indexes) >= MAX_DEPTH:
+            rejected["inaccessible"] += 1
+            return None
+        try:
+            parent = current.get_parent()
+            index = current.get_index_in_parent()
+        except Exception:
+            rejected["inaccessible"] += 1
+            return None
+        if (
+            parent is None
+            or not isinstance(index, int)
+            or isinstance(index, bool)
+            or index < 0
+            or index >= MAX_CHILDREN
+        ):
+            rejected["inaccessible"] += 1
+            return None
+        try:
+            count = bounded_count(parent.get_child_count())
+            indexed_child = (
+                parent.get_child_at_index(index)
+                if index < count
+                else None
+            )
+        except Exception:
+            rejected["inaccessible"] += 1
+            return None
+        if indexed_child is None or not same_accessible(indexed_child, current):
+            rejected["inaccessible"] += 1
+            return None
+        child_indexes.append(index)
+        lineage.append(parent)
+        current = parent
+
+    ancestor_nodes = tuple(reversed(lineage[1:]))
+    try:
+        ancestors = tuple(
+            hierarchy_identity(ancestor, enum_key(ancestor.get_role()))
+            for ancestor in ancestor_nodes
+        )
+    except Exception:
+        rejected["inaccessible"] += 1
+        return None
+    path = list(root_path) + list(reversed(child_indexes))
+    try:
+        role_key = enum_key(node.get_role())
+        focus_states = states_for(node, Atspi)
+    except Exception:
+        rejected["inaccessible"] += 1
+        return None
+    if not focus_states["focused"]:
+        rejected["unavailable_state"] += 1
+        return None
+    candidate = make_candidate(
+        node,
+        path,
         window,
         Atspi,
-        deadline,
+        ancestors,
+        ancestor_nodes,
+        rejected,
+        role_key=role_key,
     )
-    if truncated:
-        return {
-            "ok": True,
-            "available": False,
-            "typing_safe": False,
-            "reason_code": "semantic_search_incomplete",
-            "reason": "AT-SPI focus search was truncated",
-            "visited": visited,
-            "rejections": sanitized_rejections(rejected),
+    if candidate is None:
+        # A focused document or other non-target role is still decisive
+        # evidence that typing is unsafe. Keep only private, name-free state;
+        # never turn a candidate that failed full validation into a target.
+        candidate = {
+            "node": node,
+            "path": path,
+            "ancestor_nodes": ancestor_nodes,
+            "ancestors": ancestors,
+            "target": {
+                "role": role_key.lower(),
+                "states": focus_states,
+            },
+            "typing_safe_candidate": False,
         }
+    else:
+        candidate["typing_safe_candidate"] = (
+            candidate["target"]["role"] in TYPING_ROLES
+            and candidate["target"]["states"]["editable"]
+        )
+    candidate["root"] = root
+
+    # The Collection result is an independent remote proxy.  Re-read every
+    # parent edge after building the candidate so a stale or out-of-root proxy
+    # cannot authorize typing.
+    try:
+        live_sample = live_ancestor_sample(candidate, deadline)
+    except HelperFailure as error:
+        if error.reason_code == "traversal_timeout":
+            raise
+        rejected["inaccessible"] += 1
+        return None
+    if not ancestor_sample_matches(
+        live_sample,
+        (ancestor_nodes, ancestors),
+    ):
+        rejected["inaccessible"] += 1
+        return None
+    try:
+        final_role_key = enum_key(node.get_role())
+        final_states = states_for(node, Atspi)
+    except Exception:
+        rejected["inaccessible"] += 1
+        return None
+    if final_role_key != role_key or not final_states["focused"]:
+        rejected["unavailable_state"] += 1
+        return None
+    candidate["target"]["states"] = final_states
+    candidate["typing_safe_candidate"] = (
+        candidate["typing_safe_candidate"] is True
+        and actionable(role_key, final_states)
+        and final_states["editable"]
+    )
+    candidate["ancestor_nodes"] = live_sample[0]
+    candidate["ancestors"] = live_sample[1]
+    return candidate
+
+
+def focused_collection_candidates(
+    root,
+    root_path,
+    window,
+    Atspi,
+    deadline,
+):
+    """Query up to three focused nodes, or return None to request a scan."""
+
+    deadline_check(deadline)
+    try:
+        collection = root.get_collection_iface()
+    except Exception:
+        return None
+    if collection is None:
+        return None
+    deadline_check(deadline)
+    try:
+        states = Atspi.StateSet.new([Atspi.StateType.FOCUSED])
+        match_all = Atspi.CollectionMatchType.ALL
+        rule = Atspi.MatchRule.new(
+            states,
+            match_all,
+            None,
+            match_all,
+            None,
+            match_all,
+            None,
+            match_all,
+            False,
+        )
+        raw_matches = collection.get_matches(
+            rule,
+            Atspi.CollectionSortOrder.CANONICAL,
+            MAX_FOCUSED_MATCHES,
+            True,
+        )
+    except Exception:
+        return None
+    deadline_check(deadline)
+    if raw_matches is None:
+        return None
+
+    # Do not trust an implementation to honor the requested count.
+    matches = []
+    try:
+        iterator = iter(raw_matches)
+        for _ in range(MAX_FOCUSED_MATCHES):
+            try:
+                matches.append(next(iterator))
+            except StopIteration:
+                break
+    except Exception:
+        return None
+
+    rejected = Counter()
+    candidates = []
+    uncertain = False
+    for node in matches:
+        deadline_check(deadline)
+        candidate = collection_candidate(
+            node,
+            root,
+            root_path,
+            window,
+            Atspi,
+            deadline,
+            rejected,
+        )
+        if candidate is None:
+            uncertain = True
+            continue
+        if any(
+            same_accessible(candidate["node"], existing["node"])
+            for existing in candidates
+        ):
+            continue
+        candidates.append(candidate)
+    return {
+        "candidates": candidates,
+        "visited": len(matches),
+        "uncertain": uncertain,
+        # Three results may be a server-side truncation.  One usable match is
+        # not sufficient in that case because a later match could be ambiguous.
+        "complete": len(matches) < MAX_FOCUSED_MATCHES,
+        "rejected": rejected,
+    }
+
+
+def focused_candidates_result(candidates, visited, rejected):
     focused = [
         candidate
         for candidate in candidates
@@ -1307,8 +1521,11 @@ def focused_result(root, root_path, window, Atspi, deadline):
     safe = [
         candidate
         for candidate in focused
-        if candidate["target"]["role"] in TYPING_ROLES
-        and candidate["target"]["states"]["editable"]
+        if candidate.get(
+            "typing_safe_candidate",
+            candidate["target"]["role"] in TYPING_ROLES
+            and candidate["target"]["states"]["editable"],
+        )
     ]
     if len(focused) == 1 and len(safe) == 1:
         return {
@@ -1337,6 +1554,47 @@ def focused_result(root, root_path, window, Atspi, deadline):
         "visited": visited,
         "rejections": sanitized_rejections(rejected),
     }
+
+
+def focused_result(root, root_path, window, Atspi, deadline):
+    collection_result = focused_collection_candidates(
+        root,
+        root_path,
+        window,
+        Atspi,
+        deadline,
+    )
+    if collection_result is not None:
+        candidates = collection_result["candidates"]
+        if len(candidates) > 1 or (
+            len(candidates) == 1
+            and collection_result["complete"]
+            and not collection_result["uncertain"]
+        ):
+            return focused_candidates_result(
+                candidates,
+                collection_result["visited"],
+                collection_result["rejected"],
+            )
+
+    candidates, visited, truncated, rejected = scan_candidates(
+        root,
+        root_path,
+        window,
+        Atspi,
+        deadline,
+    )
+    if truncated:
+        return {
+            "ok": True,
+            "available": False,
+            "typing_safe": False,
+            "reason_code": "semantic_search_incomplete",
+            "reason": "AT-SPI focus search was truncated",
+            "visited": visited,
+            "rejections": sanitized_rejections(rejected),
+        }
+    return focused_candidates_result(candidates, visited, rejected)
 
 
 def unavailable_window_result(reason_code, reason):

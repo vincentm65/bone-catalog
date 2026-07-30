@@ -115,6 +115,7 @@ local function random_hex(ctx, bytes, seed)
 end
 
 local function trace_begin(ctx, enabled, operation_id, call_id, action)
+    ctx.__computer_trace_finalized = false
     ctx.__computer_trace = {
         enabled = enabled == true,
         version = TRACE_VERSION,
@@ -149,14 +150,17 @@ local function trace_finish(ctx, reason_code)
     if type(trace) ~= "table" then
         return nil
     end
-    local now = monotonic_ms(ctx)
-    if trace.current_stage then
-        trace.current_stage.elapsed_ms = math.max(0, now - trace.current_stage.started_ms)
-        trace.current_stage.started_ms = nil
-        trace.current_stage = nil
+    if ctx.__computer_trace_finalized ~= true then
+        local now = monotonic_ms(ctx)
+        if trace.current_stage then
+            trace.current_stage.elapsed_ms = math.max(0, now - trace.current_stage.started_ms)
+            trace.current_stage.started_ms = nil
+            trace.current_stage = nil
+        end
+        trace.total_elapsed_ms = math.max(0, now - trace.started_ms)
+        trace.started_ms = nil
+        ctx.__computer_trace_finalized = true
     end
-    trace.total_elapsed_ms = math.max(0, now - trace.started_ms)
-    trace.started_ms = nil
     trace.reason_code = reason_code
     if not trace.enabled then
         return nil
@@ -698,6 +702,8 @@ local function load_state(ctx)
         or #state.privacy_salt < 16
         or not finite(state.generation)
         or state.generation % 1 ~= 0
+        or not finite(state.operation_generation)
+        or state.operation_generation % 1 ~= 0
         or type(state.monitor) ~= "table"
         or type(state.ledger) ~= "table"
         or not finite(state.captured_monotonic_ms)
@@ -717,11 +723,12 @@ local mutating_actions = {
 local allowed_fields = {
     observe = { action = true, monitor = true, grid = true, trace = true },
     inspect = {
-        action = true, screenshot_id = true, x = true, y = true,
+        action = true, screenshot_id = true, action_token = true, x = true, y = true,
         radius = true, grid = true, trace = true,
     },
     semantic_find = {
-        action = true, screenshot_id = true, grid = true, trace = true,
+        action = true, screenshot_id = true, action_token = true,
+        grid = true, trace = true,
         query = true, roles = true, near = true, max_results = true,
     },
     semantic_click = {
@@ -772,7 +779,8 @@ local allowed_fields = {
         keys = true, settle_ms = true, grid = true, trace = true,
     },
     wait = {
-        action = true, screenshot_id = true, duration_ms = true,
+        action = true, screenshot_id = true, action_token = true,
+        duration_ms = true,
         grid = true, trace = true,
     },
 }
@@ -879,6 +887,13 @@ local function validate_request(params)
     then
         fail("screenshot_id is required for every non-observe action; call computer_observe first and copy its exact screenshot_id")
     end
+    if requires_screenshot
+        and (type(params.action_token) ~= "string"
+            or #params.action_token < 16
+            or #params.action_token > 128)
+    then
+        fail("action_token is required for every non-observe action; copy it from the immediately preceding successful observation")
+    end
     if params.action == "semantic_click"
         and (type(params.semantic_id) ~= "string"
             or #params.semantic_id == 0
@@ -930,12 +945,6 @@ local function validate_request(params)
     end
     if mutating_actions[action] then
         settle_duration(params, action)
-        if type(params.action_token) ~= "string"
-            or #params.action_token < 16
-            or #params.action_token > 128
-        then
-            fail("action_token is required for input actions; copy it from the immediately preceding successful observation")
-        end
     end
 end
 
@@ -1030,11 +1039,10 @@ local key_codes = {
 }
 
 key_args = function(value)
-    if type(value) ~= "string"
-        or value == ""
-        or #value > 128
-        or not value:match("^[A-Za-z0-9+]+$")
-    then
+    if type(value) ~= "string" or value == "" then
+        fail("keys is required for key actions; use a combination such as ESCAPE, CTRL+L, ENTER, or SHIFT+F10")
+    end
+    if #value > 128 or not value:match("^[A-Za-z0-9+]+$") then
         fail("keys must be a combination such as CTRL+L, ENTER, or SHIFT+F10")
     end
     local codes = {}
@@ -2307,6 +2315,7 @@ local function replay_response(entry, state)
     local resumable = type(state) == "table"
         and entry.status == "completed"
         and outcome.screenshot_id == state.screenshot_id
+        and outcome.operation_generation == state.operation_generation
         and type(authorization) == "table"
         and authorization.consumed ~= true
         and type(authorization.token) == "string"
@@ -2388,6 +2397,7 @@ local function finish_ledger(state, call_id, status, outcome)
     entry.finished_monotonic_ms = outcome.finished_monotonic_ms
     entry.outcome = {
         screenshot_id = outcome.screenshot_id,
+        operation_generation = outcome.operation_generation,
         input_delivery = outcome.input_delivery,
         visual_change = outcome.visual_change,
         reason_code = outcome.reason_code,
@@ -2569,13 +2579,13 @@ local function save_response(
     if input_actions[action] then
         finish_ledger(state, call_id, "completed", {
             screenshot_id = screenshot_id,
+            operation_generation = operation_generation,
             input_delivery = input_delivery,
             visual_change = evidence,
             reason_code = "completed",
             finished_monotonic_ms = captured_at,
         })
     end
-    ctx.state.set(STATE_KEY, json.encode(state))
 
     local content = {
         screenshot_id = screenshot_id,
@@ -2669,53 +2679,60 @@ local function save_response(
         content.image_reused_from = prior.screenshot_id
     end
 
+    local response
     if unchanged and not force_attachment then
         content.image_instruction = input_actions[action]
             and "Input was delivered and a fresh post-action screenshot was captured, but no visual change was detected. This does not establish whether the intended UI target was activated. Continue using the prior image and this screenshot_id."
             or "A fresh screenshot was captured, but visual content was unchanged, so no duplicate image was attached. Continue using the prior image and this screenshot_id."
         content.trace = trace_finish(ctx, "completed")
-        return json.encode({ content = json.encode(content) })
+        response = json.encode({ content = json.encode(content) })
+    else
+        local presentation_image = grid and render_grid(ctx, image, width, height, action) or image
+        local attached_image
+        attached_image, attachment_width, attachment_height = model_image(
+            ctx, presentation_image, width, height, action
+        )
+        local attached_hash = image_sha256(ctx, attached_image, action)
+        local encoded = ctx.codec.base64_encode(attached_image)
+        image_debug(ctx, attached_image, encoded, attached_hash)
+        local images = {
+            {
+                media_type = "image/png",
+                data = encoded,
+                width = attachment_width,
+                height = attachment_height,
+                sha256 = attached_hash,
+            },
+        }
+        if inspection_image then
+            images[#images + 1] = {
+                media_type = "image/png",
+                data = ctx.codec.base64_encode(inspection_image),
+                width = inspection_geometry.width,
+                height = inspection_geometry.height,
+                sha256 = image_sha256(ctx, inspection_image, "inspect"),
+            }
+            content.image_instruction = "Two PNGs are attached: a downscaled current full-monitor screenshot and a magnified crop rendered from the native capture with a red crosshair. Inspect the crop before choosing whether to click. Coordinates remain normalized to the full monitor."
+        elseif cursor_visible then
+            content.image_instruction = "A downscaled PNG screenshot with the pointer visible is attached. Verify that the pointer is centered on the intended target before clicking; coordinates remain normalized to the full monitor."
+        elseif input_actions[action] then
+            content.image_instruction = "A fresh downscaled post-action PNG is attached. Input was sent but not independently verified; inspect the image to determine whether the intended UI effect occurred. Coordinates remain normalized to the full monitor."
+        else
+            content.image_instruction = "A downscaled PNG screenshot is attached; inspect it directly before choosing normalized full-monitor coordinates."
+        end
+        content.trace = trace_finish(ctx, "completed")
+        response = json.encode({
+            content = json.encode(content),
+            images = images,
+            ephemeral_images = true,
+        })
     end
 
-    local presentation_image = grid and render_grid(ctx, image, width, height, action) or image
-    local attached_image
-    attached_image, attachment_width, attachment_height = model_image(
-        ctx, presentation_image, width, height, action
-    )
-    local attached_hash = image_sha256(ctx, attached_image, action)
-    local encoded = ctx.codec.base64_encode(attached_image)
-    image_debug(ctx, attached_image, encoded, attached_hash)
-    local images = {
-        {
-            media_type = "image/png",
-            data = encoded,
-            width = attachment_width,
-            height = attachment_height,
-            sha256 = attached_hash,
-        },
-    }
-    if inspection_image then
-        images[#images + 1] = {
-            media_type = "image/png",
-            data = ctx.codec.base64_encode(inspection_image),
-            width = inspection_geometry.width,
-            height = inspection_geometry.height,
-            sha256 = image_sha256(ctx, inspection_image, "inspect"),
-        }
-        content.image_instruction = "Two PNGs are attached: a downscaled current full-monitor screenshot and a magnified crop rendered from the native capture with a red crosshair. Inspect the crop before choosing whether to click. Coordinates remain normalized to the full monitor."
-    elseif cursor_visible then
-        content.image_instruction = "A downscaled PNG screenshot with the pointer visible is attached. Verify that the pointer is centered on the intended target before clicking; coordinates remain normalized to the full monitor."
-    elseif input_actions[action] then
-        content.image_instruction = "A fresh downscaled post-action PNG is attached. Input was sent but not independently verified; inspect the image to determine whether the intended UI effect occurred. Coordinates remain normalized to the full monitor."
-    else
-        content.image_instruction = "A downscaled PNG screenshot is attached; inspect it directly before choosing normalized full-monitor coordinates."
-    end
-    content.trace = trace_finish(ctx, "completed")
-    return json.encode({
-        content = json.encode(content),
-        images = images,
-        ephemeral_images = true,
-    })
+    -- Prepare the complete response before rotating authorization. If image
+    -- presentation or encoding fails, the caller can safely retry with the
+    -- pair it still holds.
+    ctx.state.set(STATE_KEY, json.encode(state))
+    return response
 end
 
 local action_status = {
@@ -2811,7 +2828,7 @@ local function execute_inner(params, ctx)
         prior = loaded and value or nil
     else
         prior = load_state(ctx)
-        if not prior or params.screenshot_id ~= prior.screenshot_id then
+        if not prior then
             fail("stale screenshot_id; call computer_observe and copy its fresh screenshot_id")
         end
     end
@@ -2833,6 +2850,9 @@ local function execute_inner(params, ctx)
         end
     end
     if action ~= "observe" then
+        if params.screenshot_id ~= prior.screenshot_id then
+            fail("stale screenshot_id; call computer_observe and copy its fresh screenshot_id")
+        end
         if prior.blocked_reason then
             fail("computer input authorization is blocked after "
                 .. tostring(prior.blocked_reason) .. "; call computer_observe again")
@@ -2842,14 +2862,12 @@ local function execute_inner(params, ctx)
         then
             fail("screenshot_id expired; action was not sent. Call computer_observe again")
         end
-        if input_actions[action] then
-            local authorization = prior.authorization
-            if type(authorization) ~= "table"
-                or authorization.consumed == true
-                or authorization.token ~= params.action_token
-            then
-                fail("action_token is stale, consumed, or unavailable; action was not sent. Call computer_observe again")
-            end
+        local authorization = prior.authorization
+        if type(authorization) ~= "table"
+            or authorization.consumed == true
+            or authorization.token ~= params.action_token
+        then
+            fail("action_token is stale, consumed, or unavailable; call computer_observe again")
         end
     end
 
@@ -3229,7 +3247,7 @@ bone.tool.register({
 bone.tool.register({
     name = "computer",
     catalog_description = catalog_description,
-    description = "Act on a stable observation returned by computer_observe or the immediately preceding successful computer call. Every input action requires both screenshot_id and its single-use action_token. Semantic controls are re-resolved by fingerprint and directly activated through AT-SPI when supported. Input is reserved before delivery, sent at most once, and never automatically retried.",
+    description = "Continue from computer_observe or the immediately preceding successful computer call. Every action requires both screenshot_id and its single-use action_token. Semantic controls are re-resolved by fingerprint and directly activated through AT-SPI when supported. Input is reserved before delivery, sent at most once, and never automatically retried.",
     safety = "danger",
     stateful = true,
     state_key = STATE_KEY,
@@ -3271,7 +3289,7 @@ bone.tool.register({
                 type = "string",
                 minLength = 16,
                 maxLength = 128,
-                description = "Input actions only. Copy the single-use action_token from the immediately preceding successful observation.",
+                description = "Required. Copy the single-use action_token from computer_observe or the immediately preceding successful computer call.",
             },
             semantic_id = {
                 type = "string",
@@ -3355,7 +3373,13 @@ bone.tool.register({
                 description = "Scroll only: non-zero vertical wheel steps at x/y; positive scrolls up and negative scrolls down.",
             },
             text = { type = "string", minLength = 1, maxLength = 10000, description = "Type only." },
-            keys = { type = "string", description = "Key only." },
+            keys = {
+                type = "string",
+                minLength = 1,
+                maxLength = 128,
+                pattern = "^[A-Za-z0-9+]+$",
+                description = "Required when action is key. Examples: ESCAPE, CTRL+L, ENTER, SHIFT+F10.",
+            },
             duration_ms = {
                 type = "integer", minimum = 0, maximum = 10000,
                 description = "Wait only: delay before the refreshed screenshot.",
@@ -3370,7 +3394,7 @@ bone.tool.register({
                 description = "Include a bounded privacy-safe stage/process timing trace.",
             },
         },
-        required = { "action", "screenshot_id" },
+        required = { "action", "screenshot_id", "action_token" },
         additionalProperties = false,
     },
     execute = execute,
