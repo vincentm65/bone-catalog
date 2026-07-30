@@ -2,26 +2,27 @@
 
 ## Hyprland computer tool
 
-The catalog exposes two state-sharing tools:
+The catalog exposes one stateful `computer` tool with three actions:
 
-- `computer_observe` only captures an observation. Optional fields are `monitor`,
-  `grid`, and `trace`.
-- `computer` performs exactly `action="click"` or `action="type"`. Every call
-  requires `action`, `screenshot_id`, and `action_token` from the immediately
-  preceding successful tool response.
+- `computer(action="observe")` captures or recovers an observation. Optional
+  fields are `monitor`, `grid`, and `trace`.
+- `computer(action="click", x=..., y=...)` clicks normalized coordinates on the
+  latest screenshot. Optional fields are `target_label`, `settle_ms`, `grid`,
+  and `trace`.
+- `computer(action="type", text=...)` types into the focused window. Optional
+  fields are `settle_ms`, `grid`, and `trace`.
 
-Every successful call captures clean PNG pixels and returns a replacement
-`screenshot_id`/`action_token` pair. `computer_observe` always attaches its PNG;
-a continuation can reuse the preceding image when the pixels are unchanged.
-`settle_ms`, `grid`, and `trace` are optional continuation fields. A click
-requires normalized `x` and `y` coordinates; a non-sensitive `target_label`
-remains optional. Typing requires `text` in addition to the common continuation
-fields. Action-specific fields are rejected on the other action.
+`action` is the only field required for every request. Click and type implicitly
+use the latest screenshot returned by the preceding successful `computer` call;
+there are no model-facing screenshot identifiers, authorization tokens, or
+continuation objects. Action-specific fields are rejected on other actions.
 
-Coordinates are finite normalized values from `0` through `1` relative to the
-full selected-monitor screenshot. They are not percentages or `0`–`1000`
-values. Select coordinates from the latest returned PNG, including any monitor
-transform or scale already represented by that image.
+Every successful call captures clean PNG pixels and attaches one fresh ephemeral
+PNG, even when the pixels are unchanged. Coordinates are finite normalized
+values from `0` through `1` relative to the full selected-monitor screenshot.
+They are not percentages or `0`–`1000` values. Select coordinates from the
+latest returned PNG, including any monitor transform or scale represented by
+that image.
 
 The tool does not launch applications, install packages, start daemons, or
 alter device permissions. Use Bone's `shell` tool for application launch and
@@ -44,8 +45,8 @@ Install these dependencies through the operating system:
 
 ImageMagick renders optional grids and provides bounded compatibility fallbacks
 when native Bone PNG helpers are unavailable. A current Bone build provides
-native monotonic timers, random token generation, PNG resizing, tile hashing,
-and in-memory PNG differences.
+native monotonic timers, secure randomness, PNG resizing, tile hashing, and
+in-memory PNG differences.
 
 If `ydotoold` uses a non-default socket, export `YDOTOOL_SOCKET` in Bone's
 environment.
@@ -62,35 +63,32 @@ magick identify /tmp/bone-grim-check.png
 Remove the temporary screenshot after checking it. Missing sockets,
 permissions, or session access must be fixed outside the computer tool.
 
-`computer_observe` checks the selected output's Hyprland DPMS state before
-starting `grim`. A sleeping output fails immediately with
+`computer(action="observe")` checks the selected output's Hyprland DPMS state
+before starting `grim`. A sleeping output fails immediately with
 `output_dpms_off` and an instruction to wake the display, rather than consuming
 the screenshot timeout. It never changes display power itself.
 
 ### Authorization and recovery
 
-Every successfully captured and persisted observation returns a pair:
+The tool preserves internal capture identity, observation and operation
+generations, single-use authorization, and a bounded replay ledger. These values
+are never exposed as request parameters or response continuation data.
 
-- `screenshot_id` identifies the clean captured pixels. It can remain unchanged
-  when a later capture has identical pixels.
-- `action_token` authorizes exactly one continuation. A fresh token is issued
-  after every successful call, even when `screenshot_id` is reused.
+A successfully captured and persisted observation becomes the implicit basis
+for the next click or type. Before delivering input, the tool consumes and
+persists its internal authorization. A successful input then captures and
+persists the replacement observation that authorizes the next action.
 
-Always copy both values from the immediately preceding successful response.
-Bone supplies a bounded host `call_id` for each input call; it is not a
-`computer` parameter.
+Bone supplies a bounded host call ID for each input call; it is not a
+`computer` parameter. Replaying the same call ID with identical public
+parameters returns its recorded outcome without sending input again. Replaying
+an in-flight or ambiguous call also sends no input, and reusing a call ID with
+different parameters is rejected. Input is sent at most once and is never
+automatically retried.
 
-Before input, the tool consumes the token and persists a bounded `call_id`
-outcome ledger. Replaying the same completed call returns its recorded outcome
-without sending input again. Replaying an in-flight or ambiguous call also
-sends no input, and reusing a `call_id` with different parameters is rejected.
-An old completed replay returns a continuation token only while its exact
-resulting operation generation is still current. Input is sent at most once and
-is never automatically retried.
-
-The complete response and its persisted state are committed as one operation.
-A pair that was not successfully persisted and returned is never exposed as a
-valid continuation. Input failures after reservation are recorded before a
+The complete response and persisted state are committed as one operation. A
+replacement observation that was not successfully persisted and returned never
+becomes current. Input failures after reservation are recorded before a
 recovery response is returned.
 
 Structured failure results distinguish three delivery states:
@@ -102,10 +100,10 @@ Structured failure results distinguish three delivery states:
 - `input_delivery="sent_unverified"` means delivery or post-action observation
   is ambiguous. The effect may already have happened.
 
-All three use `retry_input=false`. Do not repeat a failed or cancelled action or
-reuse its pair. Call `computer_observe`, review the current UI, and make a new
-decision from the replacement pair. Old or corrupt state versions also require
-a fresh observation.
+All three use `retry_input=false`. After any failed, cancelled, or ambiguous
+input, do not repeat the action. Call `computer(action="observe")`, review the
+attached screenshot, and make a new decision. Missing, expired, consumed,
+corrupt, or obsolete internal state also requires a fresh observation.
 
 ### Reliability checks
 
@@ -114,11 +112,11 @@ focused-window, geometry, scale, transform, and Hyprland-instance metadata,
 captures pixels, then verifies the same metadata again. Pre-input and
 post-input screenshots use the same stable-observation path.
 
-Immediately before a click, the tool compares the target tile with the
-referenced observation. Unrelated changes elsewhere on the monitor do not
-invalidate that local check. The normalized point is converted to Hyprland
-coordinates, the cursor position is set and read back, and the click is sent
-only when the reported position is within one logical pixel.
+Immediately before a click, the tool compares the target tile with the latest
+observation. Unrelated changes elsewhere on the monitor do not invalidate that
+local check. The normalized point is converted to Hyprland coordinates, the
+cursor position is set and read back, and the click is sent only when the
+reported position is within one logical pixel.
 
 Typing sends the requested text to the currently focused window. It retains the
 same monitor, focused-window, workspace, screenshot-freshness, single-use
@@ -131,7 +129,7 @@ reports whether pixels were unchanged, changed near the click, changed
 elsewhere, changed substantially, or changed without localized bounds. This is
 visual evidence, not proof that the intended UI effect occurred.
 
-A grid changes only the attached presentation image. Screenshot identity,
+A grid changes only the attached presentation image. Internal capture identity,
 tile fingerprints, freshness checks, and change classification remain based on
 the clean capture.
 
@@ -141,9 +139,9 @@ images.
 
 ### Tracing and performance
 
-Set `trace=true` on either tool to include a bounded in-memory diagnostic with
-stage timings, subprocess counts, dependency exit categories, `operation_id`,
-the host `call_id`, a terminal reason code, hashed instance/context identity,
+Set `trace=true` on any action to include a bounded in-memory diagnostic with
+stage timings, subprocess counts, dependency exit categories, the operation ID,
+the host call ID, a terminal reason code, hashed instance/context identity,
 capture dimensions, byte counts and hashes, visual-change evidence and bounds,
 and requested versus actual click position. Runtime rejections after trace
 initialization return the trace with a stable terminal category.
@@ -154,12 +152,13 @@ exposed.
 
 For a minimal bug report:
 
-1. Start with `computer_observe(trace=true)`.
-2. Reproduce the problem once with the latest pair and `trace=true`.
-3. Record the `operation_id`, `call_id`, `reason_code`, delivery state, stage
+1. Start with `computer(action="observe", trace=true)`.
+2. Reproduce the problem once with the next implicit action and `trace=true`.
+3. Record the operation ID, host call ID, `reason_code`, delivery state, stage
    timings, and subprocess categories. Do not add titles, typed text, or
    screenshot content.
-4. If delivery is ambiguous, do not retry; recover with `computer_observe`.
+4. If delivery is ambiguous, do not retry; recover with
+   `computer(action="observe")`.
 
 Common terminal categories include `completed`, `input_delivery_ambiguous`,
 `pointer_position_mismatch`, `post_action_observation_failed`, and
@@ -180,22 +179,19 @@ This is a manual end-to-end check. Select every coordinate from the latest
 returned screenshot.
 
 1. Launch Firefox with Bone's `shell` tool and focus its window.
-2. Call `computer_observe`. Confirm that the intended monitor PNG is attached,
-   then save both `screenshot_id` and `action_token`.
-3. Call `computer(action="click", x=..., y=..., target_label="Address bar",
-   screenshot_id=..., action_token=...)`.
-4. Copy the replacement pair from the click response and call `type` with the
-   URL. Typing uses the current focused window, so confirm the address bar focus
-   before sending text.
-5. Review the post-input screenshot, copy its replacement pair, and click the
-   visible navigation control.
-6. If the page is still changing, call `computer_observe` for a fresh capture
-   before choosing another action. Never infer token freshness from an
-   unchanged `screenshot_id`.
-7. Reuse an older token once and confirm it is rejected before input. If a
-   response reports uncertain delivery, do not repeat it; recover with
-   `computer_observe`.
-8. Optionally use `computer_observe(grid=true)`. The overlay is
+2. Call `computer(action="observe")` and confirm that the intended monitor PNG
+   is attached.
+3. Call `computer(action="click", x=..., y=...,
+   target_label="Address bar")` using coordinates from that screenshot.
+4. Review the attached post-click screenshot and call
+   `computer(action="type", text="https://example.com")` after confirming the
+   address bar is focused.
+5. Review the post-type screenshot and click the visible navigation control if
+   needed.
+6. If the page is still changing, observe again before choosing another action.
+7. If a response reports failed or uncertain delivery, do not repeat it;
+   recover with `computer(action="observe")`.
+8. Optionally use `computer(action="observe", grid=true)`. The overlay is
    presentation-only; captured state and freshness hashes remain based on the
    clean screenshot.
 

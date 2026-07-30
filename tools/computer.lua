@@ -21,7 +21,7 @@ local POINTER_TOLERANCE = 1
 local MAX_TEXT_BYTES = 10000
 local MAX_DIAGNOSTIC_BYTES = 1024
 local TRACE_VERSION = 1
-local OBSERVE_RECOVERY = "Call computer_observe before any further computer action; do not reuse the prior screenshot_id/action_token pair."
+local OBSERVE_RECOVERY = "Call computer with action='observe' before any further computer action."
 
 local function fail(message)
     error(message, 0)
@@ -415,7 +415,7 @@ local function validate_monitor(monitors, action, requested)
         fail(
             action .. ": selected monitor " .. selected.name
                 .. " is asleep (DPMS off); wake the display before calling "
-                .. "computer_observe again. Do not retry while the display is asleep"
+                .. "computer with action='observe' again. Do not retry while the display is asleep"
         )
     end
 
@@ -741,13 +741,11 @@ local input_actions = {
 local allowed_fields = {
     observe = { action = true, monitor = true, grid = true, trace = true },
     click = {
-        action = true, screenshot_id = true, action_token = true,
-        x = true, y = true, target_label = true, settle_ms = true,
-        grid = true, trace = true,
+        action = true, x = true, y = true, target_label = true,
+        settle_ms = true, grid = true, trace = true,
     },
     type = {
-        action = true, screenshot_id = true, action_token = true,
-        text = true, settle_ms = true, grid = true, trace = true,
+        action = true, text = true, settle_ms = true, grid = true, trace = true,
     },
 }
 
@@ -794,21 +792,6 @@ local function validate_request(params)
             or params.monitor:find("\0", 1, true))
     then
         fail("monitor must be a bounded non-empty output name, 'focused', or 'other'")
-    end
-    local requires_screenshot = params.action ~= "observe"
-    if requires_screenshot
-        and (type(params.screenshot_id) ~= "string"
-            or #params.screenshot_id == 0
-            or #params.screenshot_id > 128)
-    then
-        fail("screenshot_id is required for every computer action; call computer_observe first and copy its exact screenshot_id")
-    end
-    if requires_screenshot
-        and (type(params.action_token) ~= "string"
-            or #params.action_token < 16
-            or #params.action_token > 128)
-    then
-        fail("action_token is required for every computer action; copy it from the immediately preceding successful observation")
     end
     local action = params.action
     if action == "click" then
@@ -1108,7 +1091,7 @@ local function capture(ctx, signature, monitor, _grid, action)
             fail(action .. ": grim is unavailable; install grim (" .. detail .. ")")
         end
         if kind == "cancelled" then
-            fail(action .. ": screenshot cancelled by the host; no new screenshot_id was produced. Do not retry during this cancelled turn; begin the next active turn with computer_observe (" .. detail .. ")")
+            fail(action .. ": screenshot cancelled by the host; no new observation was produced. Do not retry during this cancelled turn; begin the next active turn by calling computer with action='observe' (" .. detail .. ")")
         end
         fail(action .. ": screenshot capture failed (" .. detail .. ")")
     end
@@ -1181,7 +1164,7 @@ local function stable_observation_failure(message, capture_action)
         if not message:find("action was not sent", 1, true) then
             message = message .. "; action was not sent"
         end
-        if not message:find("Call computer_observe", 1, true) then
+        if not message:find(OBSERVE_RECOVERY, 1, true) then
             message = message .. ". " .. OBSERVE_RECOVERY
         end
     end
@@ -1279,22 +1262,31 @@ local function image_tiles(ctx, image, width, height, action)
     end
     local hashes = {}
     local stride = sample_width * 4
+    local tile_pixel_width = TILE_SAMPLE_FACTOR
+    local tile_pixel_height = TILE_SAMPLE_FACTOR
     for row = 0, TILE_ROWS - 1 do
         for column = 0, TILE_COLUMNS - 1 do
-            local parts = {}
-            for sample_row = 0, TILE_SAMPLE_FACTOR - 1 do
-                local offset = (row * TILE_SAMPLE_FACTOR + sample_row) * stride
-                    + column * TILE_SAMPLE_FACTOR * 4
-                parts[#parts + 1] = pixels:sub(
-                    offset + 1,
-                    offset + TILE_SAMPLE_FACTOR * 4
-                )
+            local r, g, b = 0, 0, 0
+            local pixel_count = 0
+            for ty = 0, tile_pixel_height - 1 do
+                for tx = 0, tile_pixel_width - 1 do
+                    local offset = ((row * tile_pixel_height + ty) * stride)
+                        + ((column * tile_pixel_width + tx) * 4)
+                        + 1
+                    r = r + pixels:byte(offset)
+                    g = g + pixels:byte(offset + 1)
+                    b = b + pixels:byte(offset + 2)
+                    pixel_count = pixel_count + 1
+                end
             end
-            hashes[#hashes + 1] = image_sha256(
-                ctx,
-                table.concat(parts),
-                action .. " target region"
-            )
+            r = math.floor(r / pixel_count + 0.5)
+            g = math.floor(g / pixel_count + 0.5)
+            b = math.floor(b / pixel_count + 0.5)
+            local qr = math.min(63, math.floor(r / 4))
+            local qg = math.min(63, math.floor(g / 4))
+            local qb = math.min(63, math.floor(b / 4))
+            local hash = string.format("%02x%02x%02x", qr, qg, qb)
+            hashes[#hashes + 1] = hash
         end
     end
     return {
@@ -1342,7 +1334,7 @@ local function validate_coordinate_freshness(params, prior, current)
             if type(prior.tile_grid.hashes[index]) ~= "string"
                 or prior.tile_grid.hashes[index] ~= current.hashes[index]
             then
-                fail(params.action .. ": pixels around the intended target changed; action was not sent. Call computer_observe again")
+                fail(params.action .. ": pixels around the intended target changed; action was not sent. " .. OBSERVE_RECOVERY)
             end
         end
     end
@@ -1554,7 +1546,6 @@ local function replay_response(entry, state)
         and outcome.operation_generation == state.operation_generation
         and type(authorization) == "table"
         and authorization.consumed ~= true
-        and type(authorization.token) == "string"
     return json.encode({
         content = json.encode({
             operation_id = entry.operation_id,
@@ -1562,20 +1553,12 @@ local function replay_response(entry, state)
             action = entry.action,
             replayed = true,
             ledger_status = entry.status,
-            screenshot_id = outcome.screenshot_id,
             input_delivery = outcome.input_delivery
                 or (entry.status == "completed" and "sent_unverified" or "not_repeated"),
             visual_change = outcome.visual_change,
             reason_code = outcome.reason_code
                 or (entry.status == "completed" and "completed_replay" or "replay_blocked"),
             retry_input = false,
-            action_token = resumable and authorization.token or nil,
-            next_call = resumable and {
-                tool = "computer",
-                screenshot_id = state.screenshot_id,
-                action_token = authorization.token,
-                required = true,
-            } or nil,
             next_action = resumable and nil or "observe",
             recovery = resumable and nil or OBSERVE_RECOVERY,
         }),
@@ -1595,11 +1578,8 @@ end
 
 local function reserve_action(ctx, state, params, operation_id, call_id, digest)
     local authorization = state.authorization
-    if type(authorization) ~= "table"
-        or authorization.consumed == true
-        or authorization.token ~= params.action_token
-    then
-        fail("action_token is stale, consumed, or unavailable; action was not sent. Call computer_observe again")
+    if type(authorization) ~= "table" or authorization.consumed == true then
+        fail("latest computer observation is unavailable or already consumed; action was not sent. " .. OBSERVE_RECOVERY)
     end
     authorization.consumed = true
     authorization.consumed_by = digest
@@ -1663,12 +1643,6 @@ local function save_response(
     local captured_at = monotonic_ms(ctx)
     local privacy_salt = prior and prior.privacy_salt
         or random_hex(ctx, 16, operation_id)
-    local action_token = "action-" .. random_hex(ctx, 24, table.concat({
-        operation_id,
-        screenshot_id,
-        image_hash,
-        tostring(captured_at),
-    }, ":"))
     local tile_grid = image_tiles(ctx, image, width, height, action)
     local state = {
         version = STATE_VERSION,
@@ -1690,7 +1664,6 @@ local function save_response(
         grid = grid,
         tile_grid = tile_grid,
         authorization = {
-            token = action_token,
             issued_monotonic_ms = captured_at,
             consumed = false,
         },
@@ -1699,7 +1672,6 @@ local function save_response(
 
     local pixel_width, pixel_height, logical_width, logical_height = monitor_dimensions(snapshot.monitor)
     local attachment_width, attachment_height = model_image_dimensions(width, height)
-    local force_attachment = action == "observe" or (prior and prior.grid ~= grid)
     local target = point_metadata(
         params, snapshot, width, height, nil, attachment_width, attachment_height
     )
@@ -1745,14 +1717,6 @@ local function save_response(
     end
 
     local content = {
-        screenshot_id = screenshot_id,
-        action_token = action_token,
-        next_call = {
-            tool = "computer",
-            screenshot_id = screenshot_id,
-            action_token = action_token,
-            required = true,
-        },
         operation_id = operation_id,
         call_id = call_id,
         action = action,
@@ -1769,10 +1733,10 @@ local function save_response(
         },
         cursor_visible = cursor_visible,
         available_monitors = snapshot.available_monitors,
-        monitor_selection = "To observe another monitor, call computer_observe with monitor set to its name or 'other'.",
-        coordinates = "Use finite normalized coordinates from 0 through 1 with this screenshot_id.",
+        monitor_selection = "To observe another monitor, call computer with action='observe' and monitor set to its name or 'other'.",
+        coordinates = "Use finite normalized coordinates from 0 through 1 with the attached screenshot.",
         screenshot_captured = true,
-        screenshot_attached = not unchanged or force_attachment,
+        screenshot_attached = true,
         visual_change = evidence,
         change_bounds = change_bounds,
         input_delivery = input_delivery,
@@ -1783,51 +1747,37 @@ local function save_response(
     if input_actions[action] then
         content.settle_ms = settle_duration(params, action)
     end
-    if unchanged then
-        content.image_reused_from = prior.screenshot_id
-    end
-
-    local response
-    if unchanged and not force_attachment then
-        content.image_instruction = input_actions[action]
-            and "Input was delivered and a fresh post-action screenshot was captured, but no visual change was detected. This does not establish whether the intended UI target was activated. Continue using the prior image and this screenshot_id."
-            or "A fresh screenshot was captured, but visual content was unchanged, so no duplicate image was attached. Continue using the prior image and this screenshot_id."
-        content.trace = trace_finish(ctx, "completed")
-        response = json.encode({ content = json.encode(content) })
+    local presentation_image = grid and render_grid(ctx, image, width, height, action) or image
+    local attached_image
+    attached_image, attachment_width, attachment_height = model_image(
+        ctx, presentation_image, width, height, action
+    )
+    local attached_hash = image_sha256(ctx, attached_image, action)
+    local encoded = ctx.codec.base64_encode(attached_image)
+    image_debug(ctx, attached_image, encoded, attached_hash)
+    local images = {
+        {
+            media_type = "image/png",
+            data = encoded,
+            width = attachment_width,
+            height = attachment_height,
+            sha256 = attached_hash,
+        },
+    }
+    if input_actions[action] then
+        content.image_instruction = "A fresh downscaled post-action PNG is attached. Input was sent but not independently verified; inspect the image to determine whether the intended UI effect occurred. The attached screenshot is the basis for the next action, and coordinates remain normalized to the full monitor."
     else
-        local presentation_image = grid and render_grid(ctx, image, width, height, action) or image
-        local attached_image
-        attached_image, attachment_width, attachment_height = model_image(
-            ctx, presentation_image, width, height, action
-        )
-        local attached_hash = image_sha256(ctx, attached_image, action)
-        local encoded = ctx.codec.base64_encode(attached_image)
-        image_debug(ctx, attached_image, encoded, attached_hash)
-        local images = {
-            {
-                media_type = "image/png",
-                data = encoded,
-                width = attachment_width,
-                height = attachment_height,
-                sha256 = attached_hash,
-            },
-        }
-        if input_actions[action] then
-            content.image_instruction = "A fresh downscaled post-action PNG is attached. Input was sent but not independently verified; inspect the image to determine whether the intended UI effect occurred. Coordinates remain normalized to the full monitor."
-        else
-            content.image_instruction = "A downscaled PNG screenshot is attached; inspect it directly before choosing normalized full-monitor coordinates."
-        end
-        content.trace = trace_finish(ctx, "completed")
-        response = json.encode({
-            content = json.encode(content),
-            images = images,
-            ephemeral_images = true,
-        })
+        content.image_instruction = "A downscaled PNG screenshot is attached; inspect it directly before choosing normalized full-monitor coordinates for the next action."
     end
+    content.trace = trace_finish(ctx, "completed")
+    local response = json.encode({
+        content = json.encode(content),
+        images = images,
+        ephemeral_images = true,
+    })
 
-    -- Prepare the complete response before rotating authorization. If image
-    -- presentation or encoding fails, the caller can safely retry with the
-    -- pair it still holds.
+    -- Prepare the complete response before rotating the implicit observation.
+    -- If image presentation or encoding fails, the prior observation remains current.
     ctx.state.set(STATE_KEY, json.encode(state))
     return response
 end
@@ -1916,7 +1866,7 @@ local function execute_inner(params, ctx)
     else
         prior = load_state(ctx)
         if not prior then
-            fail("stale screenshot_id; action was not sent. Call computer_observe again and use its new screenshot_id/action_token pair")
+            fail("no current computer observation; action was not sent. " .. OBSERVE_RECOVERY)
         end
     end
     local operation_generation = prior and (prior.operation_generation or 0) + 1 or 1
@@ -1937,25 +1887,19 @@ local function execute_inner(params, ctx)
         end
     end
     if action ~= "observe" then
-        if params.screenshot_id ~= prior.screenshot_id then
-            fail("stale screenshot_id; action was not sent. Call computer_observe again and use its new screenshot_id/action_token pair")
-        end
         if prior.blocked_reason then
-            fail("computer input authorization is blocked after "
+            fail("computer input is blocked after "
                 .. tostring(prior.blocked_reason)
-                .. "; action was not sent. Call computer_observe again")
+                .. "; action was not sent. " .. OBSERVE_RECOVERY)
         end
         if monotonic_ms(ctx) - prior.captured_monotonic_ms
             > SCREENSHOT_TTL_SECONDS * 1000
         then
-            fail("screenshot_id expired; action was not sent. Call computer_observe again and use its new screenshot_id/action_token pair")
+            fail("latest computer observation expired; action was not sent. " .. OBSERVE_RECOVERY)
         end
         local authorization = prior.authorization
-        if type(authorization) ~= "table"
-            or authorization.consumed == true
-            or authorization.token ~= params.action_token
-        then
-            fail("action_token is stale, consumed, or unavailable; action was not sent. Call computer_observe again and use its new screenshot_id/action_token pair")
+        if type(authorization) ~= "table" or authorization.consumed == true then
+            fail("latest computer observation is unavailable or already consumed; action was not sent. " .. OBSERVE_RECOVERY)
         end
     end
 
@@ -1995,7 +1939,7 @@ local function execute_inner(params, ctx)
         if signature_hash ~= prior.signature_sha256
             or current_context ~= prior.context_sha256
         then
-            fail("screen context changed; action was not sent. Call computer_observe again")
+            fail("screen context changed; action was not sent. " .. OBSERVE_RECOVERY)
         end
 
         trace_stage(ctx, "freshness_validation")
@@ -2113,11 +2057,11 @@ end
 
 local function failure_reason_code(message)
     local rules = {
-        { "stale screenshot_id", "stale_screenshot" },
-        { "screenshot_id expired", "observation_expired" },
-        { "action_token is stale", "action_token_stale" },
+        { "no current computer observation", "stale_screenshot" },
+        { "latest computer observation expired", "observation_expired" },
+        { "latest computer observation is unavailable or already consumed", "observation_consumed" },
         { "call_id was already used", "call_id_conflict" },
-        { "authorization is blocked", "authorization_blocked" },
+        { "computer input is blocked after", "authorization_blocked" },
         { "screen context changed", "context_changed" },
         { "pixels around the intended target changed", "target_pixels_changed" },
         { "DPMS off", "output_dpms_off" },
@@ -2163,46 +2107,10 @@ local function execute(params, ctx)
     fail(message)
 end
 
-local function execute_observe(params, ctx)
-    params.action = "observe"
-    return execute(params, ctx)
-end
-
-bone.tool.register({
-    name = "computer_observe",
-    description = "Start or recover computer control. Capture a stable selected Hyprland monitor observation, always attach its PNG, and return separate screenshot_id and single-use action_token values. This pair authorizes exactly one computer continuation; every successful continuation returns its replacement pair. Call this before computer and after any failed or cancelled computer operation.",
-    safety = "read_only",
-    stateful = true,
-    state_key = STATE_KEY,
-    display = {
-        template = "observing screen",
-        show_result = false,
-    },
-    parameters = {
-        type = "object",
-        properties = {
-            monitor = {
-                type = "string",
-                description = "Hyprland output name, 'focused' (default), or 'other' when exactly two monitors are enabled.",
-            },
-            grid = {
-                type = "boolean",
-                description = "Presentation only: overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot; grid itself performs no desktop action or input.",
-            },
-            trace = {
-                type = "boolean",
-                description = "Include a bounded privacy-safe stage/process timing trace.",
-            },
-        },
-        additionalProperties = false,
-    },
-    execute = execute_observe,
-})
-
 bone.tool.register({
     name = "computer",
     catalog_description = catalog_description,
-    description = "Continue from computer_observe or the immediately preceding successful computer call. Every click or type action requires the exact screenshot_id/action_token pair and returns its replacement pair after success. Click coordinates are normalized to the referenced full-monitor screenshot. Input is reserved before delivery, sent at most once, and never automatically retried.",
+    description = "Observe or control the selected Hyprland monitor. Click and type target the latest screenshot returned by the preceding successful computer call. Each call verifies the current screen context and returns a fresh screenshot. After any failed, cancelled, or ambiguous input, observe again before further input. Input is serialized, reserved before delivery, sent at most once, and never automatically retried.",
     safety = "danger",
     stateful = true,
     state_key = STATE_KEY,
@@ -2210,6 +2118,7 @@ bone.tool.register({
         template = "{action} {target_label}",
         value_labels = {
             action = {
+                observe = "observing screen",
                 click = "clicking",
                 type = "typing",
             },
@@ -2221,27 +2130,20 @@ bone.tool.register({
         properties = {
             action = {
                 type = "string",
-                description = "Action to perform on the referenced screenshot.",
-                enum = { "click", "type" },
+                description = "Action to perform. Observe starts or recovers control; click and type use the latest returned screenshot.",
+                enum = { "observe", "click", "type" },
             },
-            screenshot_id = {
+            monitor = {
                 type = "string",
-                minLength = 1,
-                description = "Required. Copy the exact screenshot_id from computer_observe or the immediately preceding successful computer call.",
-            },
-            action_token = {
-                type = "string",
-                minLength = 16,
-                maxLength = 128,
-                description = "Required. Copy the single-use action_token from computer_observe or the immediately preceding successful computer call.",
+                description = "Observe only: Hyprland output name, 'focused' (default), or 'other' when exactly two monitors are enabled.",
             },
             settle_ms = {
                 type = "integer", minimum = 0, maximum = 5000,
-                description = "Delay after input before capturing the refreshed screenshot.",
+                description = "Click/type only: delay after input before capturing the refreshed screenshot.",
             },
             grid = {
                 type = "boolean",
-                description = "Presentation only: overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot; grid itself performs no desktop action or input.",
+                description = "Presentation only: overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot.",
             },
             trace = {
                 type = "boolean",
@@ -2249,11 +2151,11 @@ bone.tool.register({
             },
             x = {
                 type = "number", minimum = 0, maximum = 1,
-                description = "Click only: normalized horizontal coordinate on the referenced full-monitor screenshot.",
+                description = "Click only: normalized horizontal coordinate on the latest full-monitor screenshot.",
             },
             y = {
                 type = "number", minimum = 0, maximum = 1,
-                description = "Click only: normalized vertical coordinate on the referenced full-monitor screenshot.",
+                description = "Click only: normalized vertical coordinate on the latest full-monitor screenshot.",
             },
             target_label = {
                 type = "string",
@@ -2268,7 +2170,7 @@ bone.tool.register({
                 description = "Type only: text to enter in the currently focused window.",
             },
         },
-        required = { "action", "screenshot_id", "action_token" },
+        required = { "action" },
         additionalProperties = false,
     },
     execute = execute,

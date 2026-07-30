@@ -29,19 +29,16 @@ bone = {
     },
 }
 assert(loadfile("tools/computer.lua"))()
-local observe = assert(registrations.computer_observe)
-assert(observe.description:find(
-    "This pair authorizes exactly one computer continuation; every successful continuation returns its replacement pair.",
+assert(registered.name == "computer")
+assert(registrations.computer == registered)
+assert(registrations.computer_observe == nil)
+assert(registered.description:find(
+    "Click and type target the latest screenshot returned by the preceding successful computer call.",
     1,
     true
 ))
-assert(observe.display.template == "observing screen")
-assert(observe.display.show_result == false)
-assert(observe.display.args == nil)
-assert(observe.display.value_labels == nil)
-assert(registered.name == "computer")
 assert(registered.description:find(
-    "Every click or type action requires the exact screenshot_id/action_token pair and returns its replacement pair after success.",
+    "Input is serialized, reserved before delivery, sent at most once, and never automatically retried.",
     1,
     true
 ))
@@ -50,6 +47,7 @@ assert(registered.display.template == "{action} {target_label}")
 assert(registered.display.show_result == false)
 assert(registered.display.args == nil)
 local expected_labels = {
+    observe = "observing screen",
     click = "clicking",
     type = "typing",
 }
@@ -62,8 +60,7 @@ assert(registered.stateful == true)
 assert(registered.parameters.additionalProperties == false)
 local expected_properties = {
     action = true,
-    screenshot_id = true,
-    action_token = true,
+    monitor = true,
     settle_ms = true,
     grid = true,
     trace = true,
@@ -77,14 +74,13 @@ for property in pairs(registered.parameters.properties) do
     expected_properties[property] = nil
 end
 assert(next(expected_properties) == nil)
-local grid_description = "Presentation only: overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot; grid itself performs no desktop action or input."
-assert(observe.parameters.properties.grid.description == grid_description)
+local grid_description = "Presentation only: overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot."
 assert(registered.parameters.properties.grid.description == grid_description)
 local target_label_schema = assert(registered.parameters.properties.target_label)
 assert(target_label_schema.type == "string")
 assert(target_label_schema.minLength == 1)
 assert(target_label_schema.maxLength == 80)
-local observe_recovery = "Call computer_observe before any further computer action; do not reuse the prior screenshot_id/action_token pair."
+local observe_recovery = "Call computer with action='observe' before any further computer action."
 local function assert_recovery(result, delivery)
     assert(result.input_delivery == delivery)
     assert(result.retry_input == false)
@@ -96,11 +92,12 @@ for _, field in ipairs(registered.parameters.required) do
     required_fields[field] = true
 end
 assert(required_fields.action)
-assert(required_fields.screenshot_id)
-assert(required_fields.action_token)
+assert(next(required_fields) == "action")
 local action_enum = registered.parameters.properties.action.enum
-assert(#action_enum == 2)
-assert(action_enum[1] == "click" and action_enum[2] == "type")
+assert(#action_enum == 3)
+assert(action_enum[1] == "observe")
+assert(action_enum[2] == "click")
+assert(action_enum[3] == "type")
 
 local function crc32(data)
     local crc = 0xffffffff
@@ -342,16 +339,18 @@ local function new_fixture()
 end
 
 local function envelope(fixture, params)
-    if params.action ~= "observe" and params.action_token == nil then
-        params.action_token = fixture.last_action_token
-    end
     fixture.call_sequence = fixture.call_sequence + 1
     fixture.ctx.call_id = fixture.next_call_id or ("call-" .. fixture.call_sequence)
     fixture.next_call_id = nil
     local result = cjson.decode(registered.execute(params, fixture.ctx))
     local decoded_content = cjson.decode(result.content)
-    if type(decoded_content.action_token) == "string" then
-        fixture.last_action_token = decoded_content.action_token
+    assert(decoded_content.screenshot_id == nil)
+    assert(decoded_content.action_token == nil)
+    assert(decoded_content.next_call == nil)
+    if decoded_content.screenshot_captured == true then
+        assert(result.ephemeral_images == true)
+        assert(#result.images == 1)
+        assert(result.images[1].media_type == "image/png")
     end
     return result
 end
@@ -361,12 +360,6 @@ local function content(fixture, params)
 end
 
 local function failure(fixture, params, needle)
-    if params.action ~= nil
-        and params.action ~= "observe"
-        and params.action_token == nil
-    then
-        params.action_token = fixture.last_action_token
-    end
     fixture.call_sequence = fixture.call_sequence + 1
     fixture.ctx.call_id = fixture.next_call_id or ("failure-call-" .. fixture.call_sequence)
     fixture.next_call_id = nil
@@ -397,7 +390,9 @@ local fixture = new_fixture()
 -- that Hyprland will leave blocked until timeout.
 local sleeping = new_fixture()
 sleeping.monitor.dpmsStatus = false
-local sleeping_ok, sleeping_problem = pcall(observe.execute, {}, sleeping.ctx)
+local sleeping_ok, sleeping_problem = pcall(registered.execute, {
+    action = "observe",
+}, sleeping.ctx)
 assert(not sleeping_ok)
 assert(tostring(sleeping_problem):find("is asleep (DPMS off)", 1, true))
 assert(#calls_for(sleeping, "grim") == 0)
@@ -406,7 +401,7 @@ assert(sleeping.state.computer == nil)
 
 reset_calls(sleeping)
 local sleeping_trace = cjson.decode(cjson.decode(
-    observe.execute({ trace = true }, sleeping.ctx)
+    registered.execute({ action = "observe", trace = true }, sleeping.ctx)
 ).content)
 assert(sleeping_trace.ok == false)
 assert(sleeping_trace.reason_code == "output_dpms_off")
@@ -456,12 +451,10 @@ assert(fallback_tile_calls[1].args[#fallback_tile_calls[1].args] == "rgba:-")
 
 local fallback_timer = new_fixture()
 fallback_timer.ctx.time = nil
-local fallback_timer_observed = content(fallback_timer, { action = "observe" })
+content(fallback_timer, { action = "observe" })
 reset_calls(fallback_timer)
 content(fallback_timer, {
     action = "click",
-    screenshot_id = fallback_timer_observed.screenshot_id,
-    action_token = fallback_timer.last_action_token,
     x = 0.5,
     y = 0.5,
     target_label = "Fallback timer target",
@@ -481,16 +474,17 @@ for _, broken_state in ipairs({
     local recovery_fixture = new_fixture()
     recovery_fixture.state.computer = broken_state
     local recovery_observed = content(recovery_fixture, { action = "observe" })
-    assert(recovery_observed.screenshot_id == "computer-1")
-    assert(cjson.decode(recovery_fixture.state.computer).version == 2)
+    assert(recovery_observed.screenshot_captured == true)
+    local recovered_state = cjson.decode(recovery_fixture.state.computer)
+    assert(recovered_state.version == 2)
+    assert(recovered_state.screenshot_id == "computer-1")
+    assert(recovered_state.authorization.consumed == false)
 end
 local corrupt_action = new_fixture()
 corrupt_action.state.computer = "not-mocked-json"
 reset_calls(corrupt_action)
 failure(corrupt_action, {
     action = "click",
-    screenshot_id = "computer-1",
-    action_token = "action-" .. string.rep("a", 48),
     x = 0,
     y = 0,
     target_label = "Corrupt-state target",
@@ -499,13 +493,12 @@ assert(#corrupt_action.calls == 0)
 
 local observed_envelope = envelope(fixture, { action = "observe" })
 local observed = cjson.decode(observed_envelope.content)
-assert(observed.screenshot_id == "computer-1")
+assert(observed.screenshot_captured == true)
 assert(observed.monitor.x == -100 and observed.monitor.y == -50)
 assert(observed.monitor.width == 200 and observed.monitor.height == 100)
 assert(observed_envelope.ephemeral_images == true)
 assert(observed_envelope.images[1].media_type == "image/png")
 assert(observed_envelope.images[1].data == "base64-png")
-assert(type(observed.action_token) == "string")
 local function recursively_contains(value, needle, seen)
     if type(value) == "string" then
         return value:find(needle, 1, true) ~= nil
@@ -528,16 +521,19 @@ local function recursively_contains(value, needle, seen)
     return false
 end
 local persisted = cjson.decode(fixture.state.computer)
+assert(persisted.screenshot_id == "computer-1")
+assert(persisted.generation == 1)
+assert(persisted.operation_generation == 1)
+assert(persisted.authorization.consumed == false)
 assert(not recursively_contains(persisted, "base64-png"))
 assert(not recursively_contains(persisted, "SECRET WINDOW TITLE"))
 assert(not recursively_contains(persisted, "fixture-app"))
-local first_id = observed.screenshot_id
 
 -- Response presentation and persistence failures after input preserve only
 -- privacy-safe observation metadata and require a fresh observation.
 do
     local presentation = new_fixture()
-    local baseline = content(presentation, { action = "observe" })
+    content(presentation, { action = "observe" })
     presentation.ctx.codec.base64_encode = function()
         error("SECRET presentation failure")
     end
@@ -549,7 +545,6 @@ do
     reset_calls(presentation)
     local failed = content(presentation, {
         action = "click",
-        screenshot_id = baseline.screenshot_id,
         x = 0.5,
         y = 0.5,
         target_label = "Presentation failure target",
@@ -562,7 +557,7 @@ do
     assert(#calls_for(presentation, "ydotool") == 1)
 
     local persistence = new_fixture()
-    baseline = content(persistence, { action = "observe" })
+    content(persistence, { action = "observe" })
     local state_set = persistence.ctx.state.set
     local set_count = 0
     persistence.ctx.state.set = function(key, value)
@@ -575,7 +570,6 @@ do
     reset_calls(persistence)
     failed = content(persistence, {
         action = "click",
-        screenshot_id = baseline.screenshot_id,
         x = 0.5,
         y = 0.5,
         target_label = "Persistence failure target",
@@ -604,19 +598,19 @@ local validation_cases = {
     { { action = 1 }, "action must" },
     { { action = "Observe" }, "action must be observe" },
     { { action = "observe", x = 0.5 }, "irrelevant field" },
-    { { action = "click", action_token = "action-" .. string.rep("a", 48), x = 0, y = 0 }, "screenshot_id is required" },
-    { { action = "click", screenshot_id = first_id, action_token = false, x = 0, y = 0 }, "action_token is required" },
-    { { action = "type", screenshot_id = first_id, action_token = false, text = "x" }, "action_token is required" },
-    { { action = "click", screenshot_id = first_id, x = 0, y = 0, text = "x" }, "irrelevant field" },
-    { { action = "type", screenshot_id = first_id, text = "x", x = 0 }, "irrelevant field" },
-    { { action = "type", screenshot_id = first_id, text = "x", target_label = "visible target" }, "irrelevant field" },
+    { { action = "click", x = 0, y = 0, screenshot_id = "computer-1" }, "irrelevant field for click: screenshot_id" },
+    { { action = "click", x = 0, y = 0, action_token = "secret" }, "irrelevant field for click: action_token" },
+    { { action = "type", text = "x", next_call = {} }, "irrelevant field for type: next_call" },
+    { { action = "click", x = 0, y = 0, text = "x" }, "irrelevant field" },
+    { { action = "type", text = "x", x = 0 }, "irrelevant field" },
+    { { action = "type", text = "x", target_label = "visible target" }, "irrelevant field" },
     { { action = "observe", grid = "yes" }, "grid must" },
     { { action = "observe", monitor = string.rep("x", 257) }, "monitor must be a bounded" },
     { { action = "observe", monitor = "DP-1\0ignored" }, "monitor must be a bounded" },
-    { { action = "click", screenshot_id = first_id, x = 0, y = 0, target_label = "" }, "target_label must" },
-    { { action = "click", screenshot_id = first_id, x = 0, y = 0, target_label = 1 }, "target_label must" },
-    { { action = "click", screenshot_id = first_id, x = 0, y = 0, target_label = string.rep("x", 81) }, "target_label must" },
-    { { action = "click", screenshot_id = first_id, x = 0, y = 0, target_label = "Submit\nbutton" }, "target_label must" },
+    { { action = "click", x = 0, y = 0, target_label = "" }, "target_label must" },
+    { { action = "click", x = 0, y = 0, target_label = 1 }, "target_label must" },
+    { { action = "click", x = 0, y = 0, target_label = string.rep("x", 81) }, "target_label must" },
+    { { action = "click", x = 0, y = 0, target_label = "Submit\nbutton" }, "target_label must" },
 }
 for _, case in ipairs(validation_cases) do
     reset_calls(fixture)
@@ -635,7 +629,7 @@ end
 fixture.next_call_id = string.rep("x", 257)
 reset_calls(fixture)
 local call_id_problem = failure(fixture, {
-    action = "click", screenshot_id = first_id, x = 0, y = 0,
+    action = "click", x = 0, y = 0,
     target_label = "Call-id target",
 }, "computer input requires a bounded host call_id")
 assert(call_id_problem == "computer input requires a bounded host call_id; action was not sent. " .. observe_recovery)
@@ -644,14 +638,13 @@ assert(#fixture.calls == 0)
 -- Reservation failures send no input and redact host state errors.
 do
     local reservation = new_fixture()
-    local baseline = content(reservation, { action = "observe" })
+    content(reservation, { action = "observe" })
     reservation.ctx.state.set = function()
         error("SECRET state failure")
     end
     reset_calls(reservation)
     local problem = failure(reservation, {
         action = "type",
-        screenshot_id = baseline.screenshot_id,
         text = "SECRET text",
         settle_ms = 0,
     }, "could not reserve single-use input authorization")
@@ -664,24 +657,27 @@ end
 for _, bad in ipairs({ -0.01, 1.01, math.huge, -math.huge, 0 / 0, "0.5" }) do
     reset_calls(fixture)
     failure(fixture, {
-        action = "click", screenshot_id = first_id, x = bad, y = 0,
+        action = "click", x = bad, y = 0,
         target_label = "Coordinate target",
     }, "x must be a finite number")
     assert(#calls_for(fixture, "ydotool") == 0)
 end
 reset_calls(fixture)
 local clicked = content(fixture, {
-    action = "click", screenshot_id = first_id, x = 0.5, y = 1, settle_ms = 0,
+    action = "click", x = 0.5, y = 1, settle_ms = 0,
     target_label = "Boundary target",
 })
-assert(clicked.screenshot_id == first_id, clicked.screenshot_id)
-assert(clicked.action_token ~= observed.action_token)
+assert(clicked.screenshot_captured == true)
+assert(clicked.input_delivery == "sent_unverified")
+local clicked_state = cjson.decode(fixture.state.computer)
+assert(clicked_state.screenshot_id == persisted.screenshot_id)
+assert(clicked_state.operation_generation == 2)
+assert(clicked_state.authorization.consumed == false)
 local move_call = assert(calls_for(fixture, "hyprctl", "dispatch")[1])
 assert(move_call.args[3] == "-20", move_call.args[3])
 assert(move_call.args[4] == "29", move_call.args[4])
 assert(#calls_for(fixture, "hyprctl", "--batch") >= 2)
 assert(#calls_for(fixture, "ydotool") == 1)
-local current_id = clicked.screenshot_id
 
 -- Failed pointer verification is ambiguous and never retries input.
 fixture.hook = function(call)
@@ -690,10 +686,14 @@ fixture.hook = function(call)
     end
 end
 reset_calls(fixture)
-local pointer_failure = content(fixture, {
-    action = "click", screenshot_id = current_id, x = 0, y = 0, settle_ms = 0,
+local pointer_params = {
+    action = "click",
+    x = 0,
+    y = 0,
     target_label = "Ambiguous pointer target",
-})
+    settle_ms = 0,
+}
+local pointer_failure = content(fixture, pointer_params)
 assert(pointer_failure.observation == "pointer_delivery_ambiguous")
 assert_recovery(pointer_failure, "sent_unverified")
 assert(pointer_failure.observation_detail == "timed_out=true, stderr_bytes=6")
@@ -704,44 +704,25 @@ fixture.hook = nil
 local ambiguous_call_id = fixture.ctx.call_id
 reset_calls(fixture)
 fixture.next_call_id = ambiguous_call_id
-local ambiguous_replay = content(fixture, {
-    action = "click",
-    screenshot_id = current_id,
-    action_token = fixture.last_action_token,
-    x = 0,
-    y = 0,
-    target_label = "Ambiguous pointer target",
-    settle_ms = 0,
-})
+local ambiguous_replay = content(fixture, pointer_params)
 assert(ambiguous_replay.replayed == true)
 assert(ambiguous_replay.ledger_status == "ambiguous")
 assert(ambiguous_replay.retry_input == false)
 assert(#calls_for(fixture, "hyprctl", "dispatch") == 0)
 reset_calls(fixture)
-failure(fixture, {
-    action = "click",
-    screenshot_id = current_id,
-    action_token = fixture.last_action_token,
-    x = 0,
-    y = 0,
-    target_label = "Ambiguous pointer target",
-    settle_ms = 0,
-}, "authorization is blocked")
+failure(fixture, pointer_params, "computer input is blocked")
 assert(#fixture.calls == 0)
 
-local recovered = content(fixture, { action = "observe" })
-current_id = recovered.screenshot_id
+content(fixture, { action = "observe" })
 
 -- A target-tile race rejects before reservation or input; the same fresh
 -- authorization remains usable once the referenced pixels are restored.
 local freshness = new_fixture()
-local freshness_observed = content(freshness, { action = "observe" })
+content(freshness, { action = "observe" })
 freshness.tile_versions[1] = 1
 reset_calls(freshness)
 local freshness_rejected = content(freshness, {
     action = "click",
-    screenshot_id = freshness_observed.screenshot_id,
-    action_token = freshness.last_action_token,
     x = 0,
     y = 0,
     target_label = "Top-left target",
@@ -760,8 +741,6 @@ freshness.tile_versions[1] = 0
 reset_calls(freshness)
 local freshness_clicked = content(freshness, {
     action = "click",
-    screenshot_id = freshness_observed.screenshot_id,
-    action_token = freshness.last_action_token,
     x = 0,
     y = 0,
     target_label = "Top-left target",
@@ -773,7 +752,7 @@ assert(#calls_for(freshness, "ydotool") == 1)
 -- Inject 1,000 perception/action races across the tile grid. Every changed
 -- target region must fail before pointer movement or input reservation.
 local race_guard = new_fixture()
-local race_baseline = content(race_guard, { action = "observe" })
+content(race_guard, { action = "observe" })
 for iteration = 1, 1000 do
     local x = ((iteration * 37) % 1000) / 999
     local y = ((iteration * 61) % 1000) / 999
@@ -784,8 +763,6 @@ for iteration = 1, 1000 do
     reset_calls(race_guard)
     failure(race_guard, {
         action = "click",
-        screenshot_id = race_baseline.screenshot_id,
-        action_token = race_guard.last_action_token,
         x = x,
         y = y,
         target_label = "Race-injected target",
@@ -811,8 +788,6 @@ assert(performance_observed.trace.subprocess_count <= 4)
 reset_calls(performance)
 local performance_clicked = content(performance, {
     action = "click",
-    screenshot_id = performance_observed.screenshot_id,
-    action_token = performance.last_action_token,
     x = 0.5,
     y = 0.5,
     target_label = "Measured target",
@@ -834,9 +809,15 @@ assert(#calls_for(performance, "magick") == 0)
 -- checks, so a successful action that changed the screenshot is never sent
 -- again and can still return its recorded result.
 local changed_replay = new_fixture()
-local changed_replay_observed = content(changed_replay, { action = "observe" })
-local changed_replay_token = changed_replay.last_action_token
+content(changed_replay, { action = "observe" })
 local changed_replay_call_id = "changed-screen-replay"
+local changed_replay_params = {
+    action = "click",
+    x = 0.5,
+    y = 0.5,
+    target_label = "Changing target",
+    settle_ms = 0,
+}
 changed_replay.hook = function(call, active)
     if call.program == "ydotool" then
         active.png = fixture_png(200, 100, "changed pixels")
@@ -844,37 +825,25 @@ changed_replay.hook = function(call, active)
 end
 changed_replay.next_call_id = changed_replay_call_id
 reset_calls(changed_replay)
-local changed_replay_clicked = content(changed_replay, {
-    action = "click",
-    screenshot_id = changed_replay_observed.screenshot_id,
-    action_token = changed_replay_token,
-    x = 0.5,
-    y = 0.5,
-    target_label = "Changing target",
-    settle_ms = 0,
-})
-assert(changed_replay_clicked.screenshot_id ~= changed_replay_observed.screenshot_id)
+local changed_replay_clicked = content(changed_replay, changed_replay_params)
+assert(changed_replay_clicked.screenshot_captured == true)
+local changed_replay_state = cjson.decode(changed_replay.state.computer)
+assert(changed_replay_state.generation == 2)
+assert(changed_replay_state.operation_generation == 2)
+assert(changed_replay_state.authorization.consumed == false)
+assert(changed_replay_state.ledger[#changed_replay_state.ledger].status == "completed")
 changed_replay.hook = nil
 changed_replay.next_call_id = changed_replay_call_id
 reset_calls(changed_replay)
-local changed_screen_replay = content(changed_replay, {
-    action = "click",
-    screenshot_id = changed_replay_observed.screenshot_id,
-    action_token = changed_replay_token,
-    x = 0.5,
-    y = 0.5,
-    target_label = "Changing target",
-    settle_ms = 0,
-})
+local changed_screen_replay = content(changed_replay, changed_replay_params)
 assert(changed_screen_replay.replayed == true)
 assert(changed_screen_replay.ledger_status == "completed")
-assert(changed_screen_replay.screenshot_id == changed_replay_clicked.screenshot_id)
-assert(changed_screen_replay.action_token == changed_replay.last_action_token)
+assert(changed_screen_replay.operation_id == changed_replay_clicked.operation_id)
 assert(#changed_replay.calls == 0)
 
 -- Cancellation before reservation preserves authorization and sends no input.
 local cancelled_pre = new_fixture()
-local cancelled_pre_observed = content(cancelled_pre, { action = "observe" })
+content(cancelled_pre, { action = "observe" })
 cancelled_pre.hook = function(call)
     if call.program == "grim" then
         return {
@@ -888,8 +857,6 @@ end
 reset_calls(cancelled_pre)
 local cancelled_problem = failure(cancelled_pre, {
     action = "click",
-    screenshot_id = cancelled_pre_observed.screenshot_id,
-    action_token = cancelled_pre.last_action_token,
     x = 0.5,
     y = 0.5,
     target_label = "Cancelled target",
@@ -902,8 +869,6 @@ cancelled_pre.hook = nil
 reset_calls(cancelled_pre)
 local cancelled_pre_retry = content(cancelled_pre, {
     action = "click",
-    screenshot_id = cancelled_pre_observed.screenshot_id,
-    action_token = cancelled_pre.last_action_token,
     x = 0.5,
     y = 0.5,
     target_label = "Cancelled target",
@@ -915,7 +880,7 @@ assert(#calls_for(cancelled_pre, "ydotool") == 1)
 -- Cancellation during post-action capture is ambiguous, never retries input,
 -- and blocks all further input until an explicit observation recovers state.
 local cancelled_post = new_fixture()
-local cancelled_post_observed = content(cancelled_post, { action = "observe" })
+content(cancelled_post, { action = "observe" })
 local cancelled_post_grims = 0
 cancelled_post.hook = function(call)
     if call.program == "grim" then
@@ -933,8 +898,6 @@ end
 reset_calls(cancelled_post)
 local cancelled_post_result = content(cancelled_post, {
     action = "click",
-    screenshot_id = cancelled_post_observed.screenshot_id,
-    action_token = cancelled_post.last_action_token,
     x = 0.5,
     y = 0.5,
     target_label = "Cancelled target",
@@ -949,13 +912,11 @@ cancelled_post.hook = nil
 reset_calls(cancelled_post)
 failure(cancelled_post, {
     action = "click",
-    screenshot_id = cancelled_post_observed.screenshot_id,
-    action_token = cancelled_post.last_action_token,
     x = 0.5,
     y = 0.5,
     target_label = "Blocked target",
     settle_ms = 0,
-}, "authorization is blocked")
+}, "computer input is blocked")
 assert(#cancelled_post.calls == 0)
 content(cancelled_post, { action = "observe" })
 
@@ -983,22 +944,22 @@ local input_cases = {
 }
 for _, case in ipairs(input_cases) do
     reset_calls(fixture)
-    local params = { action = case.action, screenshot_id = current_id, settle_ms = 0 }
+    local params = { action = case.action, settle_ms = 0 }
     for key, value in pairs(case.params) do
         params[key] = value
     end
     local result = content(fixture, params)
     assert(result.input_delivery == "sent_unverified")
-    current_id = result.screenshot_id
+    assert(result.screenshot_captured == true)
     case.check(calls_for(fixture, "ydotool"))
 end
 
 -- Invalid input is rejected before ydotool runs.
 local invalid_inputs = {
-    { { action = "type", screenshot_id = current_id, text = "" }, "text must" },
-    { { action = "click", screenshot_id = current_id, y = 0 }, "x must" },
-    { { action = "click", screenshot_id = current_id, x = 0, y = 2 }, "y must" },
-    { { action = "click", screenshot_id = current_id, x = 0, y = 0, target_label = "" }, "target_label must" },
+    { { action = "type", text = "" }, "text must" },
+    { { action = "click", y = 0 }, "x must" },
+    { { action = "click", x = 0, y = 2 }, "y must" },
+    { { action = "click", x = 0, y = 0, target_label = "" }, "target_label must" },
 }
 for _, case in ipairs(invalid_inputs) do
     reset_calls(fixture)
@@ -1014,15 +975,14 @@ fixture.hook = function(call)
 end
 reset_calls(fixture)
 local spawn_result = content(fixture, {
-    action = "type", screenshot_id = current_id,
-    action_token = fixture.last_action_token,
+    action = "type",
     text = "SECRET text",
 })
 assert(spawn_result.reason_code == "ydotool_unavailable")
 assert_recovery(spawn_result, "not_delivered")
 assert(not recursively_contains(spawn_result, "SECRET"))
 assert(#calls_for(fixture, "ydotool") == 1)
-current_id = content(fixture, { action = "observe" }).screenshot_id
+content(fixture, { action = "observe" })
 fixture.hook = function(call)
     if call.program == "ydotool" then
         return { spawned = true, timed_out = true, stdout = "SECRET", stderr = "SECRET" }
@@ -1030,14 +990,14 @@ fixture.hook = function(call)
 end
 reset_calls(fixture)
 local timeout_result = content(fixture, {
-    action = "type", screenshot_id = current_id, text = "SECRET text",
+    action = "type", text = "SECRET text",
 })
 assert(timeout_result.reason_code == "input_delivery_ambiguous")
 assert_recovery(timeout_result, "sent_unverified")
 assert(timeout_result.observation_detail == "timed_out=true, stderr_bytes=6")
 assert(not cjson.encode(timeout_result):find("SECRET", 1, true))
 assert(#calls_for(fixture, "ydotool") == 1)
-current_id = content(fixture, { action = "observe" }).screenshot_id
+content(fixture, { action = "observe" })
 fixture.hook = function(call)
     if call.program == "ydotool" then
         return { spawned = true, timed_out = true, stdout = "", stderr = "SECRET" }
@@ -1045,48 +1005,52 @@ fixture.hook = function(call)
 end
 reset_calls(fixture)
 local click_failure = content(fixture, {
-    action = "click", screenshot_id = current_id, x = 0, y = 0,
+    action = "click", x = 0, y = 0,
 })
 assert(click_failure.observation == "input_delivery_ambiguous")
 assert(click_failure.retry_input == false)
 assert(#calls_for(fixture, "ydotool") == 1)
 fixture.hook = nil
-current_id = content(fixture, { action = "observe" }).screenshot_id
+content(fixture, { action = "observe" })
 
--- Stale IDs and changed fingerprints reject before input.
-reset_calls(fixture)
-failure(fixture, {
-    action = "click", screenshot_id = "computer-old",
-    action_token = fixture.last_action_token,
-    x = 0, y = 0, target_label = "Stale target",
-}, "stale screenshot_id")
-assert(#fixture.calls == 0)
+-- Input requires a current observation, and context changes reject without
+-- consuming or advancing the internal observation generation.
+local unobserved = new_fixture()
+reset_calls(unobserved)
+failure(unobserved, {
+    action = "click", x = 0, y = 0, target_label = "Unobserved target",
+}, "no current computer observation")
+assert(#unobserved.calls == 0)
+local context_state = cjson.decode(fixture.state.computer)
 fixture.window.workspace.id = 8
 reset_calls(fixture)
 failure(fixture, {
-    action = "click", screenshot_id = current_id,
-    action_token = fixture.last_action_token,
-    x = 0, y = 0, target_label = "Changed-context target",
+    action = "click", x = 0, y = 0, target_label = "Changed-context target",
 }, "screen context changed")
 assert(#calls_for(fixture, "ydotool") == 0)
+local rejected_context_state = cjson.decode(fixture.state.computer)
+assert(rejected_context_state.generation == context_state.generation)
+assert(rejected_context_state.operation_generation == context_state.operation_generation)
+assert(rejected_context_state.authorization.consumed == false)
 fixture.window.workspace.id = 7
 
--- Observe returns fresh authorization, and grid is presentation-only.
+-- Observe refreshes internal authorization, and grid is presentation-only.
 reset_calls(fixture)
 local before_grid_ms = fixture.monotonic_ms
-local before_grid_token = fixture.last_action_token
-local grid_envelope = cjson.decode(observe.execute({ grid = true }, fixture.ctx))
+local before_grid_state = cjson.decode(fixture.state.computer)
+local grid_envelope = envelope(fixture, { action = "observe", grid = true })
 local gridded = cjson.decode(grid_envelope.content)
-fixture.last_action_token = gridded.action_token
-assert(gridded.screenshot_id == current_id)
-assert(gridded.action_token ~= before_grid_token)
+local after_grid_state = cjson.decode(fixture.state.computer)
+assert(gridded.screenshot_captured == true)
+assert(after_grid_state.screenshot_id == before_grid_state.screenshot_id)
+assert(after_grid_state.operation_generation == before_grid_state.operation_generation + 1)
+assert(after_grid_state.authorization.consumed == false)
 assert(#calls_for(fixture, "ydotool") == 0)
 assert(#calls_for(fixture, "sleep") == 0)
 assert(fixture.monotonic_ms == before_grid_ms)
 local magick = assert(calls_for(fixture, "magick")[1])
 assert(magick.options.stdin == fixture.png)
 assert(magick.options.timeout_ms == 4000)
-current_id = gridded.screenshot_id
 
 -- Invalid and boundary PNGs are rejected without leaking bytes.
 local png_cases = {
@@ -1129,7 +1093,8 @@ race.hook = function(call, state)
     end
 end
 local race_observed = content(race, { action = "observe" })
-assert(race_observed.screenshot_id == "computer-1")
+assert(race_observed.screenshot_captured == true)
+assert(cjson.decode(race.state.computer).generation == 1)
 assert(monitor_queries == 3)
 assert(#calls_for(race, "sleep") == 0)
 assert(race.monotonic_ms == 1080)

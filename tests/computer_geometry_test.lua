@@ -30,7 +30,6 @@ bone = {
 }
 
 assert(loadfile("tools/computer.lua"))()
-local observe_tool = assert(registrations.computer_observe)
 local computer_tool = assert(registrations.computer)
 
 local function check(condition, format_string, ...)
@@ -317,45 +316,22 @@ local function new_fixture(monitors, selected_name, fixture_id)
     return fixture
 end
 
-local function response_action_token(content, envelope)
-    local next_call = type(content) == "table" and content.next_call or nil
-    local authorization = type(content) == "table" and content.authorization or nil
-    return (type(content) == "table" and content.action_token)
-        or (type(next_call) == "table" and (next_call.action_token or next_call.token))
-        or (type(authorization) == "table" and authorization.action_token)
-        or (type(envelope) == "table" and envelope.action_token)
-end
-
--- Keep host call IDs and continuation authorization plumbing in one place.
-local function invoke(fixture, tool, params)
-    local request = {}
-    for key, value in pairs(params) do
-        request[key] = value
-    end
-
+local function invoke(fixture, params)
     fixture.call_sequence = fixture.call_sequence + 1
-    local call_id = string.format(
+    fixture.ctx.call_id = string.format(
         "geometry-%s-%d",
         fixture.signature,
         fixture.call_sequence
     )
-    fixture.ctx.call_id = call_id
 
-    local properties = tool.parameters and tool.parameters.properties or {}
-    if properties.call_id then
-        request.call_id = call_id
-    end
-    if properties.action_token then
-        check(
-            type(fixture.action_token) == "string" and fixture.action_token ~= "",
-            "tool requires action_token but the prior response did not provide one"
-        )
-        request.action_token = fixture.action_token
-    end
-
-    local envelope = cjson.decode(tool.execute(request, fixture.ctx))
+    local envelope = cjson.decode(computer_tool.execute(params, fixture.ctx))
     local content = cjson.decode(envelope.content)
-    fixture.action_token = response_action_token(content, envelope)
+    check(content.screenshot_id == nil, "response exposed internal screenshot ID")
+    check(content.action_token == nil, "response exposed internal authorization")
+    check(content.next_call == nil, "response exposed internal continuation state")
+    check(content.screenshot_captured == true, "successful call did not capture a screenshot")
+    check(envelope.ephemeral_images == true, "screenshot attachment was not ephemeral")
+    check(type(envelope.images) == "table" and #envelope.images == 1, "missing screenshot attachment")
     return content, envelope
 end
 
@@ -457,7 +433,10 @@ for transform = 0, 7 do
             selected_name,
             tostring(transform) .. "-" .. tostring(scale_index)
         )
-        local current = invoke(fixture, observe_tool, { monitor = selected_name })
+        local current = invoke(fixture, {
+            action = "observe",
+            monitor = selected_name,
+        })
         check(current.monitor.name == selected_name, "wrong monitor selected: %s", current.monitor.name)
 
         local geometry = oracle_geometry(selected)
@@ -478,9 +457,8 @@ for transform = 0, 7 do
 
         for point_index, point in ipairs(property_points(selected, transform, scale_index)) do
             fixture.cursor_moves = {}
-            local clicked = invoke(fixture, computer_tool, {
+            local clicked = invoke(fixture, {
                 action = "click",
-                screenshot_id = current.screenshot_id,
                 x = point[1],
                 y = point[2],
                 settle_ms = 0,
@@ -532,7 +510,6 @@ for transform = 0, 7 do
                 selected_name,
                 tostring(clicked.monitor.name)
             )
-            current = clicked
             checked_points = checked_points + 1
         end
 
