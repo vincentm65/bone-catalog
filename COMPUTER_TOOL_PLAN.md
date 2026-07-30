@@ -6,8 +6,16 @@ This roadmap covers `tools/computer.lua`, `scripts/computer_atspi.py`,
 then improve targeting and diagnostics, and optimize only after measurements
 exist.
 
-Current status: the first delivery is implemented on
-`codex/computer-tool-first-pass` and is pending review/merge.
+Current status: the reliability, semantic, tracing, and low-risk speed changes
+are implemented directly in the primary `main` checkouts, with no auxiliary
+worktree. The full Bone workspace suite, the catalog Lua/Python suites, and the
+2,160-point geometry suite are green; live desktop integration, long-running
+metrics, and rollout validation remain.
+
+In this checklist, `[x]` means the implementation exists in the primary
+checkout. Release gates remain unchecked until their complete test targets have
+passed; a checked implementation item does not by itself claim that a release
+gate is satisfied.
 
 ## 0. First delivery: AT-SPI correctness and privacy
 
@@ -22,8 +30,11 @@ Current status: the first delivery is implemented on
   value.
 - [x] Exclude disabled, insensitive, invisible, and non-showing controls from
   actionable semantic results.
-- [ ] Add privacy-safe rejected-candidate reason counters to structured tracing
-  when that tracing is implemented.
+- [x] Integrate privacy-safe rejected-candidate counters into the
+  structured trace itself.
+  - [x] Return bounded rejection counters, nodes visited/matched, and truncation
+    in `semantic_find` results.
+  - [x] Copy those semantic counters into the opt-in trace record.
 - [x] Add the Python test suite to CI alongside `tests/computer_test.lua`.
 
 Exit criteria:
@@ -35,124 +46,156 @@ Exit criteria:
 
 ## 1. Input correctness, freshness, and idempotency
 
-- [ ] Validate the entire request before capture or input: all coordinates,
+- [x] Validate the entire request before capture or input: all coordinates,
   `settle_ms`, `duration_ms`, scroll amount, text limits, keys, semantic IDs,
   target labels, and action-specific fields.
-- [ ] Split visual identity from input authorization:
-  - [ ] Keep an image/content ID for screenshot reuse.
-  - [ ] Issue a new single-use action token after every successful observation.
-  - [ ] Consume the action token before input, even when the post-action pixels
+- [x] Split visual identity from input authorization:
+  - [x] Keep an image/content ID for screenshot reuse.
+  - [x] Issue a new single-use action token after every successful observation.
+  - [x] Consume the action token before input, even when the post-action pixels
     are unchanged.
-- [ ] Add a caller-supplied `call_id` to mutating actions and record a bounded
+- [x] Use the host-supplied `call_id` for mutating actions and record a bounded
   outcome ledger in state.
-  - [ ] A repeated completed `call_id` returns the recorded outcome.
-  - [ ] A repeated in-flight or ambiguous `call_id` never sends input again.
-  - [ ] Reject reuse of a `call_id` with different parameters.
-- [ ] Invalidate action authorization after cancellation, response failure,
-  compositor instability, uncertain delivery, or a failed post-action capture;
-  require `computer_observe` to recover.
-- [ ] Reject ambiguous multiple Hyprland instances rather than choosing the first
+  - [x] A repeated completed `call_id` returns the recorded outcome.
+  - [x] A repeated in-flight or ambiguous `call_id` never sends input again.
+  - [x] Reject reuse of a `call_id` with different parameters.
+- [x] Apply conservative authorization semantics at cancellation and
+  persistence boundaries.
+  - [x] Block authorization after uncertain delivery, input execution failure,
+    failed post-action capture, or failed response persistence, and require
+    `computer_observe` to recover.
+  - [x] Verify that cancellation before reservation sends no input and preserves
+    the unused authorization, while cancellation after input blocks and requires
+    observation recovery.
+  - [x] Fail a reservation write before input and treat a post-input persistence
+    failure as ambiguous without retrying delivery.
+- [x] Reject ambiguous multiple Hyprland instances rather than choosing the first
   discovered signature.
-- [ ] Store only a minimal hashed window/context fingerprint in state; never
+- [x] Store only a minimal hashed window/context fingerprint in state; never
   persist raw titles, classes, typed text, or accessibility names.
-- [ ] Use monotonic elapsed time for screenshot/action TTL checks.
-- [ ] Preserve the contract that an input command is sent at most once and is
+- [x] Use monotonic elapsed time for screenshot/action TTL checks.
+- [x] Preserve the contract that an input command is sent at most once and is
   never automatically retried.
 
 Exit criteria:
 
-- [ ] Replay tests produce zero duplicate input events.
-- [ ] Identical post-action screenshots still receive a fresh, single-use action
+- [x] Covered completed and ambiguous `call_id` replay tests produce zero
+  duplicate input events.
+- [x] Identical post-action screenshots still receive a fresh, single-use action
   token.
-- [ ] Every ambiguous delivery path blocks further input until a new observation.
+- [x] Every tested ambiguous delivery path blocks further input until a new
+  observation, while proven-not-delivered spawn failures remain separately
+  classified and never replay input.
 
 ## 2. Stable observation and race-resistant actions
 
-- [ ] Implement one stable-observation helper in `tools/computer.lua`:
+- [x] Implement one stable-observation helper in `tools/computer.lua`:
   1. Read monitor, workspace, focused-window, and Hyprland-instance metadata.
   2. Capture pixels.
   3. Read the same metadata again.
   4. Accept only when identity, workspace, focus, geometry, transform, and scale
      match before and after capture.
-- [ ] Use that helper for `computer_observe`, pre-action capture, and post-action
+- [x] Use that helper for `computer_observe`, pre-action capture, and post-action
   capture.
-- [ ] Immediately before coordinate input, compare a target-region/tile
+- [x] Immediately before coordinate input, compare a target-region/tile
   fingerprint against the referenced observation.
-- [ ] Extend fresh-pixel checks from `click_locked` to ordinary click,
+- [x] Extend fresh-pixel checks from `click_locked` to ordinary click,
   double-click, right-click, drag endpoints, scroll anchors, move, and
-  coordinate-derived typing focus.
-- [ ] Make target-region comparison tolerant of unrelated animation elsewhere on
-  the monitor while remaining strict at the intended target.
-- [ ] After `ydotool mousemove`, read back the actual pointer position and verify
+  coordinate actions; typing uses a separate accessible-focus check.
+- [x] Make target-region comparison tolerant of unrelated animation elsewhere on
+  the monitor while remaining strict at the intended target tile.
+- [x] After `ydotool mousemove`, read back the actual pointer position and verify
   it is within the logical-pixel tolerance before clicking.
-- [ ] After input, perform a stable observation but never retry input because
+- [x] After input, perform a stable observation but never retry input because
   observation or verification failed.
 - [ ] Add action-specific verification where observable:
-  - [ ] Pointer position after move.
-  - [ ] Accessible focus before typing.
+  - [x] Pointer position after move.
+  - [x] Accessible focus before typing.
   - [ ] Accessible state transition after semantic activation.
   - [ ] Scroll displacement or changed target-region evidence.
-- [ ] Treat compositor restarts, focus changes, workspace switches, output
+- [x] Treat compositor restarts, focus changes, workspace switches, output
   hotplug, and monitor geometry changes as explicit freshness failures.
 
 Exit criteria:
 
-- [ ] Zero input events cross 1,000 injected perception/action races.
-- [ ] Coordinate conversion is within one logical pixel for every supported
-  transform, fractional scale, and monitor origin.
-- [ ] A failed or unstable post-action observation never causes a second input.
+- [x] Zero pointer or input events cross 1,000 injected target-tile
+  perception/action races.
+- [x] Coordinate conversion is within one logical pixel across 2,160 checked
+  points covering every supported transform, fractional scale, and monitor
+  origin.
+- [x] A failed or unstable post-action observation never causes a second input
+  in the expanded Lua regression suite.
 
 ## 3. Semantic targeting accuracy
 
-- [ ] Replace fragile child-index-only resolution with a stable semantic
-  fingerprint containing role, protected name digest, bounds, action metadata,
-  application/window identity, and nearby hierarchy.
-- [ ] Re-resolve candidates immediately before activation and use screen-space
-  intersection/hit testing to reject ambiguous matches.
-- [ ] Invoke the verified AT-SPI action for semantic activation when available;
+- [x] Replace fragile child-index-only resolution with an opaque semantic
+  fingerprint containing role, protected name digest, action metadata,
+  application/window identity, and nearby hierarchy. Bounds remain live
+  verification data rather than fingerprint identity so layout changes do not
+  make a control stale.
+- [ ] Complete screen-space intersection/hit testing for semantic fallback.
+  - [x] Re-resolve by fingerprint immediately before activation, validate live
+    bounds against the focused window, and reject fingerprint collisions.
+  - [ ] Add explicit overlapping-control/hit-test rejection for coordinate
+    fallback.
+- [x] Invoke the verified AT-SPI action for semantic activation when available;
   retain coordinate clicking as an explicit fallback.
-- [ ] Stop requiring exact equality for transient semantic states that do not
+- [x] Stop requiring exact equality for transient semantic states that do not
   affect identity or actionability.
-- [ ] Extend `semantic_find` with bounded filters:
-  - [ ] `query`
-  - [ ] `roles`
-  - [ ] `near`
-  - [ ] `max_results`
-- [ ] Rank enabled, visible, named, actionable controls ahead of structural or
+- [x] Extend `semantic_find` with bounded filters:
+  - [x] `query`
+  - [x] `roles`
+  - [x] `near`
+  - [x] `max_results`
+- [x] Rank enabled, visible, named, actionable controls ahead of structural or
   unnamed nodes and report truncation.
-- [ ] Verify the focused accessible control before sensitive typing.
-- [ ] Return stable reason codes for rejected, ambiguous, stale, protected, and
+- [x] Verify the focused accessible control before sensitive typing.
+- [x] Return stable reason codes for rejected, ambiguous, stale, protected, and
   unavailable targets.
 
 Exit criteria:
 
 - [ ] Deterministic GTK and browser fixtures select the intended control across
   layout changes that preserve semantic identity.
-- [ ] Ambiguous semantic matches send no input.
-- [ ] Coordinate fallback remains available and clearly identified when AT-SPI is
-  unavailable.
+- [x] Ambiguous semantic matches send no input in deterministic helper fixtures.
+- [x] The separate coordinate-action path remains available when AT-SPI is
+  unavailable, and AT-SPI-capable controls explicitly report whether semantic
+  activation or freshly resolved coordinate fallback was used.
 
 ## 4. Structured debugging and `computer_doctor`
 
-- [ ] Add opt-in structured tracing keyed by `operation_id` and `call_id`.
-- [ ] Record stage start/end, elapsed time, reason/error code, subprocess count,
-  dependency exit category, monitor/context fingerprint, requested versus actual
-  pointer coordinates, capture dimensions/bytes/hashes, diff regions, and AT-SPI
-  nodes visited/matched/truncated/rejected.
-- [ ] Keep trace records privacy-safe by default: no raw titles, typed text,
+- [x] Add opt-in structured tracing keyed by `operation_id` and `call_id`.
+- [ ] Finish the complete trace field set.
+  - [x] Record stages, elapsed time, terminal reason code, subprocess count,
+    dependency exit category, and requested versus actual pointer coordinates.
+  - [x] Add monitor/context fingerprint, capture dimensions/bytes/hashes, diff
+    regions, and AT-SPI traversal counters to the trace object.
+  - [x] Return a privacy-safe terminal trace for runtime rejections after trace
+    initialization.
+  - [ ] Initialize tracing early enough to cover malformed-request and stale-ID
+    failures that currently reject before operation setup.
+- [x] Keep trace records privacy-safe by default: no raw titles, typed text,
   command arguments, accessibility names/values, or screenshots.
 - [ ] Support an explicit local trace bundle with `0600` permissions, bounded
   size, automatic expiry, and a manifest of sanitized environment/dependency
   versions.
-- [ ] Add a read-only `computer_doctor` action/tool that checks:
-  - [ ] Hyprland discovery and ambiguity.
-  - [ ] `hyprctl` monitor/workspace/client queries.
-  - [ ] `grim` geometry and PNG validity.
-  - [ ] Output transforms, scale, and cursor calibration.
-  - [ ] ImageMagick availability while it remains required.
-  - [ ] `ydotool`/`ydotoold` socket connectivity without emitting input.
-  - [ ] Python, GI, and AT-SPI availability and versions.
-- [ ] Document stable reason codes and a minimal bug-report workflow.
+- [x] Add a registered read-only `computer_doctor` action/tool.
+  - [x] Implement the bounded, privacy-safe AT-SPI binding/bus/window diagnostic
+    in the Python helper.
+  - [x] Expose the tool with read-only checks for:
+    - [x] Hyprland discovery and ambiguity.
+    - [x] `hyprctl` monitor/workspace/client queries.
+    - [x] `grim` geometry and PNG validity.
+    - [x] Output transforms, scale, and cursor calibration.
+    - [x] ImageMagick availability while it remains required.
+    - [x] `ydotool`/`ydotoold` socket connectivity without emitting input,
+      including distinct permission, missing socket, daemon, and timeout codes.
+    - [x] Python, GI, and AT-SPI availability and versions.
+    - [x] Native timer, secure-random, PNG resize/tile/region/diff primitives and
+      separate coordinate, presentation, target-lock, grid, and semantic
+      readiness summaries.
+- [x] Document stable reason-code categories and a minimal privacy-safe
+  bug-report workflow.
 
 Exit criteria:
 
@@ -160,22 +203,29 @@ Exit criteria:
   tracing is enabled.
 - [ ] A trace can explain stale/ambiguous failures without exposing protected
   user content.
-- [ ] `computer_doctor` distinguishes missing dependency, permission, session,
+- [x] `computer_doctor` distinguishes missing dependency, permission, session,
   geometry, and daemon/socket failures.
 
 ## 5. Performance and native-backend path
 
 Instrument first; optimize against P50/P95 data rather than estimates.
 
-- [ ] Establish per-stage baselines for observe, click, semantic find, and type,
+- [ ] Complete per-stage baselines for observe, click, semantic find, and type,
   including process count, capture size, copied bytes, and encoded bytes.
-- [ ] Cache a confirmed Hyprland instance signature and rediscover only after IPC
+  - [x] Assert the native cached-observe and stable-click process counts and
+    record capture byte/hash metadata in traces.
+  - [ ] Add dedicated semantic-find/type latency and byte baselines.
+- [x] Cache a confirmed Hyprland instance signature and rediscover only after IPC
   failure or an explicit instance-change signal.
-- [ ] Replace external `sleep` invocations with a native cancellable timer.
-- [ ] Capture or encode the model-sized overview directly when a native-resolution
-  image is not required for target validation.
-- [ ] Replace disk-backed two-pass ImageMagick diffs with one binary-safe
-  in-memory target-region/tile diff.
+- [x] Use the Bone native cancellable timer when available, with a bounded
+  compatibility fallback.
+- [x] Resize the model-sized overview in-process with native bounded PNG resize,
+  while retaining an ImageMagick fallback for older Bone builds. The full clean
+  capture remains available for validation.
+- [x] Replace disk-backed two-pass ImageMagick differences with a binary-safe
+  in-memory PNG difference plus native tile fingerprints.
+- [x] Hash exact target-lock regions in-process with native
+  `png_region_sha256`, retaining the older-Bone ImageMagick crop/hash fallback.
 - [ ] Keep the AT-SPI bridge persistent so Python/GI startup is not paid on every
   semantic call.
 - [ ] Compact repeated response instructions and avoid serializing unchanged
@@ -186,24 +236,37 @@ Instrument first; optimize against P50/P95 data rather than estimates.
 - [ ] Move capture, diff, coordinate mapping, stable observation, and input
   authorization into a native backend; keep `tools/computer.lua` as the catalog
   schema/orchestration layer.
-- [ ] Track cross-repository runtime work separately when it belongs in Bone core
+- [x] Track cross-repository runtime work separately when it belongs in Bone core
   (for example binary-safe process output and blob handles) rather than hiding it
   in catalog code.
 
 Performance targets:
 
-- [ ] Interim Lua implementation: no more than 6 subprocesses for a normal click.
+- [x] Current measured native fast path: at most 4 subprocesses for a cached
+  observation and 10 for a stable coordinate click (9 when the inherited
+  Hyprland signature matches the cache), with no external `sleep` or
+  ImageMagick process.
+- [ ] Original interim goal: reduce a stable normal click from the current
+  tested ceiling of 10 to no more than 6 subprocesses without weakening the two
+  stable captures or pointer verification.
 - [ ] Native backend: no more than 2 subprocesses for a normal click.
 - [ ] Set observe/click P50 and P95 latency budgets after the first instrumented
   baseline, then fail performance regression checks above an agreed tolerance.
 
 ## 6. Tests, documentation, and rollout
 
-- [ ] Expand `tests/computer_test.lua` with valid PNG fixtures, realistic JSON,
-  state corruption, single-use tokens, `call_id` replay, unchanged pixels,
-  ambiguity, cancellation, privacy, cleanup, resize, lock, and diff cases.
-- [ ] Add Python tests for fake AT-SPI trees and real GI enum behavior.
-- [ ] Add property tests for all Hyprland transforms (`0`–`7`), fractional scales,
+- [ ] Finish the full `tests/computer_test.lua` matrix.
+  - [x] Add coverage for single-use tokens, `call_id` replay, unchanged pixels,
+    ambiguity/not-delivered classification and recovery, state privacy, target
+    locks, doctor read-only behavior, trace fields, 1,000 target-tile races, and
+    native fast-path process ceilings.
+  - [x] Add pre/post-reservation cancellation, native resize/region hashing, and
+    older-Bone compatibility fallback coverage.
+  - [x] Keep the expanded Lua suite green.
+  - [ ] Complete remaining cleanup, state-write failure, realistic-PNG, and
+    broader compositor/input fault-injection cases.
+- [x] Add Python tests for fake AT-SPI trees and real GI enum behavior.
+- [x] Add property tests for all Hyprland transforms (`0`–`7`), fractional scales,
   negative origins, monitor edges, mixed-DPI layouts, and workspace transitions.
 - [ ] Add a nested headless Hyprland integration environment with deterministic
   GTK and browser fixtures.
@@ -212,38 +275,69 @@ Performance targets:
   concurrent sessions.
 - [ ] Add a nightly model-in-the-loop task corpus with exact success, duplicate
   input, stale action, latency, and process-count metrics.
-- [ ] Correct `README.md` to describe PNG output, normalized `0`–`1` coordinates,
-  the split `computer_observe`/`computer` API, action-token freshness, semantic
-  behavior, recovery rules, and `computer_doctor`.
-- [ ] Roll out safety changes behind a compatibility/version boundary if state or
-  schema changes would make existing callers unsafe.
-- [ ] Require a fresh `computer_observe` when migrating old state to the new
+- [x] Finish the current README rollout documentation.
+  - [x] Document PNG output, normalized `0`–`1` coordinates, the split
+    `computer_observe`/`computer` API, action-token freshness, semantic behavior,
+    recovery rules, sanitized tracing, and native-helper feature detection.
+  - [x] Document `computer_doctor` usage, output, privacy contract, and
+    non-emitting socket check.
+  - [x] Distinguish `not_sent`, proven `not_delivered`, and
+    `sent_unverified`/ambiguous recovery.
+- [x] Roll out state safety changes behind an explicit state-version boundary
+  when the schema changes.
+- [x] Require a fresh `computer_observe` when migrating old state to the new
   authorization format.
 
 Release gates:
 
-- [ ] Zero duplicated inputs in replay/idempotency tests.
-- [ ] Zero stale inputs across 1,000 injected race iterations.
-- [ ] At most one logical-pixel coordinate error across transform/scale tests.
-- [ ] Complete password-name/value redaction.
+- [x] Zero duplicated inputs in replay/idempotency tests.
+- [x] Zero stale inputs across 1,000 injected target-tile race iterations.
+- [x] At most one logical-pixel coordinate error across 2,160 transform/scale
+  test points.
+- [x] Complete password-name/value redaction.
 - [ ] 100% Unicode typing fidelity for the supported input path.
-- [ ] No sensitive values in default state, logs, errors, or traces.
+- [x] No sensitive values in default state, logs, errors, or traces in the
+  privacy regression coverage.
 - [ ] Observe and click P50/P95 stay within the budgets established from the
   instrumented baseline.
 
 ## Delivery sequence
 
-- [ ] PR 1 — AT-SPI enum correctness, password redaction, actionability filtering,
-  Python tests, and CI.
-- [ ] PR 2 — Single-use action tokens, `call_id` idempotency, complete preflight
-  validation, ambiguous-delivery invalidation, and tests.
-- [ ] PR 3 — Stable observation transaction, target-region freshness, cursor
+Delivery now uses the primary `main` checkouts directly; these are implementation
+slices, not worktree or PR branches.
+
+- [x] Slice 1 — AT-SPI enum correctness, password redaction, actionability
+  filtering, Python tests, and CI.
+- [x] Slice 2 — Single-use action tokens, host `call_id` idempotency, complete
+  preflight validation, and ambiguous-delivery blocking.
+  - [x] Implementation is present.
+  - [x] Expanded Lua replay, ambiguity, not-delivered, and pre/post-cancellation
+    tests are green.
+- [ ] Slice 3 — Stable observation transaction, target-region freshness, cursor
   readback, transform property tests, and race fault injection.
-- [ ] PR 4 — Semantic fingerprints, AT-SPI invocation, filtered/ranked discovery,
-  and deterministic UI fixtures.
-- [ ] PR 5 — Structured traces, stable reason codes, `computer_doctor`, and
+  - [x] Runtime path, 2,160-point geometry suite, and 1,000 target-tile race
+    suite are green.
+  - [ ] Broader compositor/output/focus fault-injection infrastructure remains.
+- [ ] Slice 4 — Semantic fingerprints, direct AT-SPI invocation,
+  filtered/ranked discovery, and deterministic UI fixtures.
+  - [x] Runtime and Python unit-test implementation is present.
+  - [ ] Deterministic GTK/browser integration fixtures remain.
+- [ ] Slice 5 — Structured traces, stable reason codes, `computer_doctor`, and
   debugging documentation.
-- [ ] PR 6 — Instrumented process/latency baseline and low-risk process/capture
-  optimizations.
-- [ ] PR 7 — Bone-core binary/blob support and the native computer backend,
-  delivered behind compatibility tests and the measurable release gates above.
+  - [x] Privacy-safe in-memory tracing, expanded evidence fields, runtime
+    rejection traces, reason categories, registered read-only doctor, and
+    README workflow are present.
+  - [ ] Earlier validation-error tracing and the persistent trace bundle remain.
+- [ ] Slice 6 — Instrumented process/latency baseline and low-risk
+  process/capture optimizations.
+  - [x] Signature caching, native wait feature detection, and in-memory native
+    PNG resize/tile/region/diff paths are present with compatibility fallbacks.
+  - [x] Cached observe `<=4` and stable coordinate click `<=10` (`9` with a
+    matching inherited signature) subprocess regression ceilings are asserted
+    without external sleep/ImageMagick.
+  - [ ] Semantic/type baselines, latency budgets, the original click `<=6`
+    optimization goal, and direct model-sized capture remain.
+- [ ] Slice 7 — Bone-core binary/blob support and the native computer backend.
+  - [x] Native time/random/PNG resize/tile/region/diff helper work is tracked
+    and feature-detected.
+  - [ ] Blob handles, a persistent AT-SPI service, and the native backend remain.

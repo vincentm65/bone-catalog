@@ -1,6 +1,7 @@
 local catalog_description = "Control Hyprland with hardened screenshots, AT-SPI semantic targets, freshness checks, and direct input execution."
 
 local STATE_KEY = "computer"
+local STATE_VERSION = 2
 local EXEC_TIMEOUT_MS = 4000
 local SLEEP_TIMEOUT_MARGIN_MS = 1000
 local CAPTURE_TIMEOUT_MS = 15000
@@ -10,18 +11,23 @@ local MODEL_IMAGE_MAX_WIDTH = 1920
 local MODEL_IMAGE_MAX_HEIGHT = 1080
 local DEFAULT_SETTLE_MS = 80
 local CLICK_SETTLE_MS = 120
-local PRE_CLICK_SETTLE_MS = 50
 local CLICK_HOLD_MS = 30
 local INSPECT_RADIUS = 96
 local INSPECT_SIZE = 768
 local TARGET_PATCH_RADIUS = 24
 local TARGET_LOCK_TTL_SECONDS = 60
 local SCREENSHOT_TTL_SECONDS = 120
+local MAX_LEDGER_ENTRIES = 32
+local TILE_COLUMNS = 32
+local TILE_ROWS = 18
+local TILE_SAMPLE_FACTOR = 3
+local POINTER_TOLERANCE = 1
 local MAX_TEXT_BYTES = 10000
 local MAX_DIAGNOSTIC_BYTES = 1024
 local MAX_SEMANTIC_BYTES = 256 * 1024
 local MAX_SEMANTIC_TARGETS = 64
 local SEMANTIC_TIMEOUT_MS = 2500
+local TRACE_VERSION = 1
 
 local function fail(message)
     error(message, 0)
@@ -41,17 +47,18 @@ end
 local function exec_diagnostic(result, call_error)
     result = type(result) == "table" and result or {}
     local details = {}
-    local function add(name, value)
-        value = bounded_diagnostic(value)
-        if value and value ~= "" then
-            details[#details + 1] = name .. "=" .. value
-        end
+    if call_error ~= nil or result.error ~= nil then
+        details[#details + 1] = "runtime_error=true"
     end
-
-    add("error", call_error or result.error)
-    add("stderr", result.stderr)
-    add("exit_code", result.exit_code)
-    add("signal", result.signal)
+    if type(result.stderr) == "string" and #result.stderr > 0 then
+        details[#details + 1] = "stderr_bytes=" .. tostring(#result.stderr)
+    end
+    if result.exit_code ~= nil then
+        details[#details + 1] = "exit_code=" .. tostring(result.exit_code)
+    end
+    if result.signal ~= nil then
+        details[#details + 1] = "signal=" .. tostring(result.signal)
+    end
     if result.timed_out then
         details[#details + 1] = "timed_out=true"
     end
@@ -72,6 +79,89 @@ local function finite(value)
         and value == value
         and value ~= math.huge
         and value ~= -math.huge
+end
+
+local function monotonic_ms(ctx)
+    if type(ctx.time) == "table" and type(ctx.time.monotonic_ms) == "function" then
+        local ok, value = pcall(ctx.time.monotonic_ms)
+        if ok and finite(value) and value >= 0 then
+            return math.floor(value)
+        end
+    end
+    return math.floor(os.clock() * 1000)
+end
+
+local function random_hex(ctx, bytes, seed)
+    if type(ctx.codec) == "table" and type(ctx.codec.random_hex) == "function" then
+        local ok, value = pcall(ctx.codec.random_hex, bytes)
+        if ok and type(value) == "string" and #value == bytes * 2
+            and value:match("^[0-9a-f]+$")
+        then
+            return value
+        end
+    end
+    local value = table.concat({
+        tostring(seed or ""),
+        tostring(monotonic_ms(ctx)),
+        tostring(os.time()),
+        tostring(os.clock()),
+        tostring({}),
+    }, ":")
+    local ok, hash = pcall(ctx.codec.sha256, value)
+    if not ok or type(hash) ~= "string" or #hash ~= 64 then
+        fail("secure token generation failed")
+    end
+    return hash:sub(1, bytes * 2)
+end
+
+local function trace_begin(ctx, enabled, operation_id, call_id, action)
+    ctx.__computer_trace = {
+        enabled = enabled == true,
+        version = TRACE_VERSION,
+        operation_id = operation_id,
+        call_id = call_id,
+        action = action,
+        started_ms = monotonic_ms(ctx),
+        subprocess_count = 0,
+        subprocesses = {},
+        stages = {},
+    }
+end
+
+local function trace_stage(ctx, name)
+    local trace = ctx.__computer_trace
+    if type(trace) ~= "table" then
+        return
+    end
+    local now = monotonic_ms(ctx)
+    local previous = trace.current_stage
+    if previous then
+        previous.elapsed_ms = math.max(0, now - previous.started_ms)
+        previous.started_ms = nil
+    end
+    local stage = { name = name, started_ms = now }
+    trace.stages[#trace.stages + 1] = stage
+    trace.current_stage = stage
+end
+
+local function trace_finish(ctx, reason_code)
+    local trace = ctx.__computer_trace
+    if type(trace) ~= "table" then
+        return nil
+    end
+    local now = monotonic_ms(ctx)
+    if trace.current_stage then
+        trace.current_stage.elapsed_ms = math.max(0, now - trace.current_stage.started_ms)
+        trace.current_stage.started_ms = nil
+        trace.current_stage = nil
+    end
+    trace.total_elapsed_ms = math.max(0, now - trace.started_ms)
+    trace.started_ms = nil
+    trace.reason_code = reason_code
+    if not trace.enabled then
+        return nil
+    end
+    return trace
 end
 
 local function integer(value, name, minimum, maximum)
@@ -106,38 +196,70 @@ local function exec_result(ctx, program, args, options)
         end
     end
 
+    local trace = ctx.__computer_trace
+    local started_ms = monotonic_ms(ctx)
+    if type(trace) == "table" then
+        trace.subprocess_count = trace.subprocess_count + 1
+    end
+    local function record(category, result)
+        if type(trace) ~= "table" then
+            return
+        end
+        result = type(result) == "table" and result or {}
+        trace.subprocesses[#trace.subprocesses + 1] = {
+            dependency = program,
+            category = category,
+            elapsed_ms = math.max(0, monotonic_ms(ctx) - started_ms),
+            stdin_bytes = type(opts.stdin) == "string" and #opts.stdin or 0,
+            stdout_bytes = type(result.stdout) == "string" and #result.stdout or 0,
+            stderr_bytes = type(result.stderr) == "string" and #result.stderr or 0,
+        }
+    end
+
     local ok, result = pcall(ctx.exec, program, args, opts)
     if not ok then
+        record("runtime_error")
         return nil, "post", exec_diagnostic(nil, result)
     end
     if type(result) ~= "table" then
+        record("invalid_result")
         return nil, "post", "invalid execution result"
     end
     if result.spawned == false then
+        record("spawn", result)
         return nil, "spawn", exec_diagnostic(result)
     end
     if result.spawned ~= true then
+        record("invalid_result", result)
         return nil, "post", exec_diagnostic(result)
     end
     if result.cancelled then
+        record("cancelled", result)
         return nil, "cancelled", exec_diagnostic(result)
     end
     if result.timed_out or result.output_limit_exceeded or result.error then
+        record(result.timed_out and "timeout"
+            or (result.output_limit_exceeded and "output_limit" or "runtime_error"), result)
         return nil, "post", exec_diagnostic(result)
     end
     if result.signal ~= nil then
+        record("signal", result)
         return nil, "post", exec_diagnostic(result)
     end
     if result.exit_code ~= 0 then
+        record("nonzero_exit", result)
         return nil, "exit", exec_diagnostic(result)
     end
     if type(result.stdout) ~= "string" then
+        record("invalid_result", result)
         return nil, "post", exec_diagnostic(result)
     end
+    record("ok", result)
     return result.stdout
 end
 
 local instance_displays = {}
+local cached_signature
 
 local function instance_environment(signature)
     local env = {}
@@ -153,6 +275,13 @@ end
 
 local function discover_signature(ctx, action, rediscover)
     local inherited = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+    if not rediscover
+        and type(cached_signature) == "string"
+        and cached_signature ~= ""
+        and (not inherited or inherited == "" or inherited == cached_signature)
+    then
+        return cached_signature
+    end
 
     local raw, kind, detail = exec_result(
         ctx,
@@ -169,6 +298,7 @@ local function discover_signature(ctx, action, rediscover)
 
     local instances = decode_json(raw, action .. ": invalid Hyprland instance data")
     local selected
+    local candidates = {}
     for _, instance in ipairs(instances) do
         if type(instance) == "table" then
             local signature = instance.signature or instance.instance
@@ -176,16 +306,23 @@ local function discover_signature(ctx, action, rediscover)
                 if type(instance.wl_socket) == "string" and instance.wl_socket ~= "" then
                     instance_displays[signature] = instance.wl_socket
                 end
+                candidates[#candidates + 1] = signature
                 if inherited and signature == inherited then
-                    return signature
+                    selected = signature
                 end
-                selected = selected or signature
             end
         end
     end
-    if not selected then
+    if #candidates == 0 then
         fail(action .. ": no Hyprland instance was found")
     end
+    if not selected then
+        if #candidates ~= 1 then
+            fail(action .. ": multiple Hyprland instances are available and none is explicitly selected")
+        end
+        selected = candidates[1]
+    end
+    cached_signature = selected
     return selected
 end
 
@@ -412,11 +549,19 @@ local function snapshot_with_race(ctx, action, requested_monitor)
 
     local replacement = discover_signature(ctx, action, true)
     if replacement == signature then
+        cached_signature = nil
         fail(action .. ": Hyprland query failed; action was not sent")
     end
-    local _, sleep_kind = exec_result(ctx, "sleep", { "0.080" })
-    if sleep_kind then
-        fail(action .. ": Hyprland instance stabilization failed; action was not sent")
+    if type(ctx.time) == "table" and type(ctx.time.sleep_ms) == "function" then
+        local slept = pcall(ctx.time.sleep_ms, 80)
+        if not slept then
+            fail(action .. ": Hyprland instance stabilization failed; action was not sent")
+        end
+    else
+        local _, sleep_kind = exec_result(ctx, "sleep", { "0.080" })
+        if sleep_kind then
+            fail(action .. ": Hyprland instance stabilization failed; action was not sent")
+        end
     end
 
     local retry, retry_kind = snapshot_once(ctx, replacement, action, requested_monitor)
@@ -425,6 +570,7 @@ local function snapshot_with_race(ctx, action, requested_monitor)
         if confirmed ~= replacement then
             fail("Hyprland instance changed again; action was not sent")
         end
+        cached_signature = replacement
         return replacement, retry
     end
 
@@ -434,6 +580,7 @@ local function snapshot_with_race(ctx, action, requested_monitor)
             fail("Hyprland instance changed again; action was not sent")
         end
     end
+    cached_signature = nil
     fail(action .. ": Hyprland query failed after instance change; action was not sent")
 end
 
@@ -441,8 +588,19 @@ local function same_snapshot(left, right)
     if type(left) ~= "table" or type(right) ~= "table" then
         return false
     end
-    for _, key in ipairs({ "name", "x", "y", "width", "height", "scale", "transform" }) do
+    for _, key in ipairs({
+        "name", "x", "y", "width", "height", "scale", "transform",
+        "workspace", "focused",
+    }) do
         if left.monitor[key] ~= right.monitor[key] then
+            return false
+        end
+    end
+    if #left.available_monitors ~= #right.available_monitors then
+        return false
+    end
+    for index, name in ipairs(left.available_monitors) do
+        if right.available_monitors[index] ~= name then
             return false
         end
     end
@@ -454,65 +612,218 @@ local function same_snapshot(left, right)
     return true
 end
 
+local function digest_fields(ctx, action, fields)
+    local encoded = {}
+    for index, value in ipairs(fields) do
+        local text = tostring(value)
+        encoded[index] = tostring(#text) .. ":" .. text
+    end
+    local ok, hash = pcall(ctx.codec.sha256, table.concat(encoded, "|"))
+    if not ok or type(hash) ~= "string" or #hash ~= 64 then
+        fail(action .. ": fingerprinting failed")
+    end
+    return hash
+end
+
+local function context_fingerprint(ctx, action, salt, signature, snapshot)
+    local monitor = snapshot.monitor
+    local window = snapshot.window
+    local fields = {
+        salt,
+        signature,
+        monitor.name,
+        monitor.x, monitor.y, monitor.width, monitor.height,
+        string.format("%.9f", monitor.scale),
+        monitor.transform,
+        monitor.workspace or "none",
+        monitor.focused,
+        table.concat(snapshot.available_monitors, "\0"),
+        window.address,
+        window.workspace,
+        window.monitor,
+        window.pid or 0,
+        window.title or "",
+        window.class or "",
+        window.stable_id or "",
+        window.x or 0,
+        window.y or 0,
+        window.width or 0,
+        window.height or 0,
+    }
+    return digest_fields(ctx, action, fields)
+end
+
+local function stored_monitor(snapshot)
+    local monitor = snapshot.monitor
+    return {
+        name = monitor.name,
+        x = monitor.x,
+        y = monitor.y,
+        width = monitor.width,
+        height = monitor.height,
+        scale = monitor.scale,
+        transform = monitor.transform,
+        workspace = monitor.workspace,
+        focused = monitor.focused,
+    }
+end
+
 local function load_state(ctx)
     local raw = ctx.state.get(STATE_KEY)
     if raw == nil or raw == "" then
         return nil
     end
     local state = decode_json(raw, "invalid computer state; call observe again")
+    if state.version ~= STATE_VERSION then
+        fail("computer state uses an obsolete authorization format; call observe again")
+    end
     if type(state.screenshot_id) ~= "string"
-        or type(state.signature) ~= "string"
+        or type(state.signature_sha256) ~= "string"
+        or #state.signature_sha256 ~= 64
+        or type(state.context_sha256) ~= "string"
+        or #state.context_sha256 ~= 64
+        or type(state.privacy_salt) ~= "string"
+        or #state.privacy_salt < 16
         or not finite(state.generation)
         or state.generation % 1 ~= 0
-        or type(state.snapshot) ~= "table"
-        or type(state.snapshot.monitor) ~= "table"
-        or type(state.snapshot.window) ~= "table"
+        or type(state.monitor) ~= "table"
+        or type(state.ledger) ~= "table"
+        or not finite(state.captured_monotonic_ms)
+        or state.captured_monotonic_ms < 0
     then
         fail("invalid computer state; call observe again")
     end
     return state
 end
 
-local allowed_fields = {
-    observe = { action = true, screenshot_id = true, monitor = true, grid = true },
-    inspect = { action = true, screenshot_id = true, x = true, y = true, radius = true, grid = true },
-    semantic_find = { action = true, screenshot_id = true, grid = true },
-    semantic_click = {
-        action = true, screenshot_id = true, semantic_id = true,
-        target_label = true, settle_ms = true, grid = true,
-    },
-    move = { action = true, screenshot_id = true, x = true, y = true, settle_ms = true, grid = true },
-    click = {
-        action = true, screenshot_id = true, x = true, y = true,
-        target_label = true, settle_ms = true, grid = true,
-    },
-    click_locked = {
-        action = true, screenshot_id = true, target_token = true,
-        target_label = true, settle_ms = true, grid = true,
-    },
-    double_click = {
-        action = true, screenshot_id = true, x = true, y = true,
-        target_label = true, settle_ms = true, grid = true,
-    },
-    right_click = {
-        action = true, screenshot_id = true, x = true, y = true,
-        target_label = true, settle_ms = true, grid = true,
-    },
-    drag = {
-        action = true, screenshot_id = true,
-        start_x = true, start_y = true, end_x = true, end_y = true,
-        settle_ms = true, grid = true,
-    },
-    scroll = {
-        action = true, screenshot_id = true, x = true, y = true,
-        amount = true, settle_ms = true, grid = true,
-    },
-    type = { action = true, screenshot_id = true, text = true, settle_ms = true, grid = true },
-    key = { action = true, screenshot_id = true, keys = true, settle_ms = true, grid = true },
-    wait = { action = true, screenshot_id = true, duration_ms = true, grid = true },
+local mutating_actions = {
+    move = true, click = true, click_locked = true, semantic_click = true,
+    double_click = true, right_click = true, drag = true, scroll = true,
+    type = true, key = true,
 }
 
-local function validate_common(params)
+local allowed_fields = {
+    observe = { action = true, monitor = true, grid = true, trace = true },
+    inspect = {
+        action = true, screenshot_id = true, x = true, y = true,
+        radius = true, grid = true, trace = true,
+    },
+    semantic_find = {
+        action = true, screenshot_id = true, grid = true, trace = true,
+        query = true, roles = true, near = true, max_results = true,
+    },
+    semantic_click = {
+        action = true, screenshot_id = true, semantic_id = true,
+        action_token = true, target_label = true, settle_ms = true,
+        grid = true, trace = true,
+    },
+    move = {
+        action = true, screenshot_id = true, action_token = true,
+        x = true, y = true, settle_ms = true, grid = true, trace = true,
+    },
+    click = {
+        action = true, screenshot_id = true, action_token = true,
+        x = true, y = true, target_label = true, settle_ms = true,
+        grid = true, trace = true,
+    },
+    click_locked = {
+        action = true, screenshot_id = true, action_token = true,
+        target_token = true, target_label = true, settle_ms = true,
+        grid = true, trace = true,
+    },
+    double_click = {
+        action = true, screenshot_id = true, action_token = true,
+        x = true, y = true, target_label = true, settle_ms = true,
+        grid = true, trace = true,
+    },
+    right_click = {
+        action = true, screenshot_id = true, action_token = true,
+        x = true, y = true, target_label = true, settle_ms = true,
+        grid = true, trace = true,
+    },
+    drag = {
+        action = true, screenshot_id = true, action_token = true,
+        start_x = true, start_y = true, end_x = true, end_y = true,
+        settle_ms = true, grid = true, trace = true,
+    },
+    scroll = {
+        action = true, screenshot_id = true, action_token = true,
+        x = true, y = true, amount = true, settle_ms = true,
+        grid = true, trace = true,
+    },
+    type = {
+        action = true, screenshot_id = true, action_token = true,
+        text = true, settle_ms = true, grid = true, trace = true,
+    },
+    key = {
+        action = true, screenshot_id = true, action_token = true,
+        keys = true, settle_ms = true, grid = true, trace = true,
+    },
+    wait = {
+        action = true, screenshot_id = true, duration_ms = true,
+        grid = true, trace = true,
+    },
+}
+
+local key_args
+local settle_duration
+
+local function validate_normalized(value, name)
+    if not finite(value) or value < 0 or value > 1 then
+        fail(name .. " must be a finite number from 0 through 1")
+    end
+end
+
+local function validate_semantic_filters(params)
+    if params.query ~= nil
+        and (type(params.query) ~= "string"
+            or #params.query == 0
+            or #params.query > 160
+            or params.query:find("[%z\1-\31\127]"))
+    then
+        fail("query must be non-empty printable text of at most 160 bytes")
+    end
+    if params.roles ~= nil then
+        if type(params.roles) ~= "table" or #params.roles == 0 or #params.roles > 16 then
+            fail("roles must contain from 1 through 16 semantic role names")
+        end
+        local seen = {}
+        for _, role in ipairs(params.roles) do
+            if type(role) ~= "string"
+                or #role == 0
+                or #role > 40
+                or not role:match("^[a-z_]+$")
+                or seen[role]
+            then
+                fail("roles must contain unique lowercase semantic role names")
+            end
+            seen[role] = true
+        end
+    end
+    if params.near ~= nil then
+        if type(params.near) ~= "table" then
+            fail("near must contain normalized x and y coordinates")
+        end
+        for key in pairs(params.near) do
+            if key ~= "x" and key ~= "y" and key ~= "radius" then
+                fail("near contains an irrelevant field")
+            end
+        end
+        validate_normalized(params.near.x, "near.x")
+        validate_normalized(params.near.y, "near.y")
+        if params.near.radius ~= nil then
+            validate_normalized(params.near.radius, "near.radius")
+            if params.near.radius == 0 then
+                fail("near.radius must be greater than zero")
+            end
+        end
+    end
+    if params.max_results ~= nil then
+        integer(params.max_results, "max_results", 1, MAX_SEMANTIC_TARGETS)
+    end
+end
+
+local function validate_request(params)
     if type(params) ~= "table" or type(params.action) ~= "string" then
         fail("action must be an exact supported string")
     end
@@ -528,6 +839,9 @@ local function validate_common(params)
     if params.grid ~= nil and type(params.grid) ~= "boolean" then
         fail("grid must be a boolean")
     end
+    if params.trace ~= nil and type(params.trace) ~= "boolean" then
+        fail("trace must be a boolean")
+    end
     if params.target_label ~= nil
         and (type(params.target_label) ~= "string"
             or #params.target_label == 0
@@ -538,13 +852,18 @@ local function validate_common(params)
     end
     if params.action == "observe"
         and params.monitor ~= nil
-        and (type(params.monitor) ~= "string" or params.monitor == "")
+        and (type(params.monitor) ~= "string"
+            or params.monitor == ""
+            or #params.monitor > 256
+            or params.monitor:find("\0", 1, true))
     then
-        fail("monitor must be a non-empty output name, 'focused', or 'other'")
+        fail("monitor must be a bounded non-empty output name, 'focused', or 'other'")
     end
     local requires_screenshot = params.action ~= "observe"
     if requires_screenshot
-        and (type(params.screenshot_id) ~= "string" or params.screenshot_id == "")
+        and (type(params.screenshot_id) ~= "string"
+            or #params.screenshot_id == 0
+            or #params.screenshot_id > 128)
     then
         fail("screenshot_id is required for every non-observe action; call computer_observe first and copy its exact screenshot_id")
     end
@@ -557,9 +876,54 @@ local function validate_common(params)
         fail("semantic_id is required for semantic_click; call semantic_find first")
     end
     if params.action == "click_locked"
-        and (type(params.target_token) ~= "string" or params.target_token == "")
+        and (type(params.target_token) ~= "string"
+            or #params.target_token == 0
+            or #params.target_token > 128)
     then
         fail("target_token is required for click_locked; call inspect first")
+    end
+    local action = params.action
+    if action == "inspect" or action == "move" or action == "click"
+        or action == "double_click" or action == "right_click" or action == "scroll"
+    then
+        validate_normalized(params.x, "x")
+        validate_normalized(params.y, "y")
+    elseif action == "drag" then
+        validate_normalized(params.start_x, "start_x")
+        validate_normalized(params.start_y, "start_y")
+        validate_normalized(params.end_x, "end_x")
+        validate_normalized(params.end_y, "end_y")
+    end
+    if action == "inspect" and params.radius ~= nil then
+        integer(params.radius, "radius", 32, 256)
+    elseif action == "scroll" then
+        local amount = integer(params.amount, "amount", -20, 20)
+        if amount == 0 then
+            fail("amount must not be zero")
+        end
+    elseif action == "type" then
+        if type(params.text) ~= "string"
+            or #params.text == 0
+            or #params.text > MAX_TEXT_BYTES
+            or params.text:find("\0", 1, true)
+        then
+            fail("text must be a non-empty string of at most 10000 bytes without NUL")
+        end
+    elseif action == "key" then
+        key_args(params.keys)
+    elseif action == "wait" then
+        integer(params.duration_ms or 1000, "duration_ms", 0, 10000)
+    elseif action == "semantic_find" then
+        validate_semantic_filters(params)
+    end
+    if mutating_actions[action] then
+        settle_duration(params, action)
+        if type(params.action_token) ~= "string"
+            or #params.action_token < 16
+            or #params.action_token > 128
+        then
+            fail("action_token is required for input actions; copy it from the immediately preceding successful observation")
+        end
     end
 end
 
@@ -653,7 +1017,7 @@ local key_codes = {
     F7 = 65, F8 = 66, F9 = 67, F10 = 68, F11 = 87, F12 = 88,
 }
 
-local function key_args(value)
+key_args = function(value)
     if type(value) ~= "string"
         or value == ""
         or #value > 128
@@ -685,15 +1049,23 @@ local function key_args(value)
 end
 
 local POST_INPUT_FAILURE = {}
+local INPUT_NOT_DELIVERED = {}
 
 local function post_input_failure(reason, detail)
     error({ marker = POST_INPUT_FAILURE, reason = reason, detail = detail }, 0)
 end
 
+local function input_not_delivered(reason, detail)
+    error({ marker = INPUT_NOT_DELIVERED, reason = reason, detail = detail }, 0)
+end
+
 local function run_delivery(ctx, action, args)
     local _, kind, detail = exec_result(ctx, "ydotool", args)
     if kind == "spawn" then
-        fail(action .. ": ydotool is unavailable; configure a user ydotoold service")
+        input_not_delivered(
+            "ydotool_unavailable",
+            action .. ": ydotool is unavailable; configure a user ydotoold service"
+        )
     end
     if kind then
         post_input_failure("input_delivery_ambiguous", detail)
@@ -707,23 +1079,72 @@ local function move_and_verify(ctx, signature, action, x, y)
         env = instance_environment(signature),
     })
     if kind then
+        if kind == "spawn" then
+            input_not_delivered(
+                "hyprctl_unavailable",
+                action .. ": hyprctl could not be started"
+            )
+        end
         post_input_failure("pointer_delivery_ambiguous", detail)
     end
+    local position, query_kind = query_json(
+        ctx,
+        signature,
+        { "-j", "cursorpos" },
+        action,
+        "invalid cursor position"
+    )
+    if not position then
+        post_input_failure("pointer_verification_unavailable", query_kind)
+    end
+    if not finite(position.x) or not finite(position.y) then
+        post_input_failure("pointer_verification_invalid", "cursor position was malformed")
+    end
+    local actual_x = math.floor(position.x + 0.5)
+    local actual_y = math.floor(position.y + 0.5)
+    local trace = ctx.__computer_trace
+    if type(trace) == "table" then
+        trace.pointer = {
+            requested_x = x,
+            requested_y = y,
+            actual_x = actual_x,
+            actual_y = actual_y,
+        }
+    end
+    if math.abs(actual_x - x) > POINTER_TOLERANCE
+        or math.abs(actual_y - y) > POINTER_TOLERANCE
+    then
+        post_input_failure(
+            "pointer_position_mismatch",
+            string.format("requested=(%d,%d), actual=(%d,%d)", x, y, actual_x, actual_y)
+        )
+    end
+    return actual_x, actual_y
 end
 
 local function settle(ctx, action, duration)
     if duration == 0 then
         return
     end
-    local _, kind, detail = exec_result(ctx, "sleep", { string.format("%.3f", duration / 1000) }, {
-        timeout_ms = math.max(EXEC_TIMEOUT_MS, duration + SLEEP_TIMEOUT_MARGIN_MS),
-    })
+    if type(ctx.time) == "table" and type(ctx.time.sleep_ms) == "function" then
+        local ok, problem = pcall(ctx.time.sleep_ms, duration)
+        if not ok then
+            post_input_failure("input_settle_failed", bounded_diagnostic(problem))
+        end
+        return
+    end
+    local _, kind, detail = exec_result(
+        ctx,
+        "sleep",
+        { string.format("%.3f", duration / 1000) },
+        { timeout_ms = math.max(EXEC_TIMEOUT_MS, duration + SLEEP_TIMEOUT_MARGIN_MS) }
+    )
     if kind then
         post_input_failure("input_settle_failed", detail)
     end
 end
 
-local function settle_duration(params, action)
+settle_duration = function(params, action)
     local default = (action == "click" or action == "click_locked" or action == "semantic_click" or action == "double_click" or action == "right_click")
         and CLICK_SETTLE_MS
         or DEFAULT_SETTLE_MS
@@ -742,6 +1163,38 @@ local semantic_state_keys = {
     "pressed", "selected", "sensitive", "showing", "visible",
 }
 
+local function sanitized_count(value, maximum)
+    if finite(value)
+        and value % 1 == 0
+        and value >= 0
+        and value <= maximum
+    then
+        return value
+    end
+    return nil
+end
+
+local function sanitized_numeric_map(value, maximum)
+    local result = {}
+    if type(value) ~= "table" then
+        return result
+    end
+    for key, count in pairs(value) do
+        if type(key) == "string"
+            and #key > 0
+            and #key <= 48
+            and key:match("^[a-z0-9_]+$")
+            and finite(count)
+            and count % 1 == 0
+            and count >= 0
+            and count <= maximum
+        then
+            result[key] = count
+        end
+    end
+    return result
+end
+
 local function semantic_point_on_monitor(monitor, x, y)
     local _, _, width, height = monitor_dimensions(monitor)
     return x >= monitor.x and x < monitor.x + width
@@ -753,6 +1206,9 @@ local function validate_semantic_target(target, snapshot, action)
         or type(target.id) ~= "string"
         or #target.id > 160
         or not target.id:match("^atspi:%d+[%d%.]*$")
+        or type(target.fingerprint) ~= "string"
+        or not target.fingerprint:match("^atspi%-fp:v1:[0-9a-f]+$")
+        or #target.fingerprint ~= 76
         or type(target.role) ~= "string"
         or #target.role == 0 or #target.role > 64
         or type(target.name) ~= "string"
@@ -760,6 +1216,8 @@ local function validate_semantic_target(target, snapshot, action)
         or type(target.states) ~= "table"
         or type(target.bounds) ~= "table"
         or type(target.center) ~= "table"
+        or type(target.actions) ~= "table"
+        or type(target.direct_activation) ~= "boolean"
     then
         fail(action .. ": invalid semantic helper result")
     end
@@ -794,6 +1252,18 @@ local function validate_semantic_target(target, snapshot, action)
     then
         fail(action .. ": semantic target is not safely actionable")
     end
+    local seen_actions = {}
+    for _, name in ipairs(target.actions) do
+        if type(name) ~= "string"
+            or #name == 0
+            or #name > 40
+            or not name:match("^[a-z_]+$")
+            or seen_actions[name]
+        then
+            fail(action .. ": invalid semantic helper result")
+        end
+        seen_actions[name] = true
+    end
     return target
 end
 
@@ -807,7 +1277,7 @@ local function semantic_helper_path(ctx)
     return ctx.config_dir .. "/lua/scripts/computer_atspi.py"
 end
 
-local function semantic_call(ctx, operation, snapshot, expected)
+local function semantic_call(ctx, operation, snapshot, expected, params)
     local helper = semantic_helper_path(ctx)
     if not helper then
         return nil, "semantic helper location is unavailable"
@@ -815,7 +1285,26 @@ local function semantic_call(ctx, operation, snapshot, expected)
     local request = { window = snapshot.window }
     if expected then
         request.target_id = expected.id
+        request.fingerprint = expected.fingerprint
         request.expected = expected
+    end
+    if operation == "discover" and params then
+        request.query = params.query
+        request.roles = params.roles
+        request.max_results = params.max_results
+        if params.near then
+            local x, y = normalized_point(params.near, snapshot.monitor)
+            local _, _, logical_width, logical_height = monitor_dimensions(snapshot.monitor)
+            request.near = {
+                x = x,
+                y = y,
+                radius = params.near.radius
+                    and math.max(1, math.floor(
+                        params.near.radius * math.min(logical_width, logical_height) + 0.5
+                    ))
+                    or nil,
+            }
+        end
     end
     local raw, kind, detail = exec_result(ctx, "python3", { helper, operation }, {
         stdin = json.encode(request),
@@ -825,29 +1314,37 @@ local function semantic_call(ctx, operation, snapshot, expected)
     })
     if not raw then
         if kind == "spawn" then
-            return nil, "Python 3 is unavailable"
+            return nil, "Python 3 is unavailable", "python_unavailable"
         end
-        return nil, "AT-SPI helper failed (" .. bounded_diagnostic(detail or kind) .. ")"
+        return nil, "AT-SPI helper failed safely", "helper_execution_failed"
     end
     local ok, result = pcall(decode_json, raw, "invalid semantic helper output")
     if not ok or type(result) ~= "table" then
-        return nil, "invalid semantic helper output"
+        return nil, "invalid semantic helper output", "helper_output_invalid"
     end
     if result.ok ~= true then
-        return nil, bounded_diagnostic(result.reason) or "semantic target verification failed"
+        return nil,
+            bounded_diagnostic(result.reason) or "semantic target verification failed",
+            bounded_diagnostic(result.reason_code) or "semantic_failure"
     end
     return result
 end
 
-local function semantic_discover(ctx, snapshot)
-    local result, reason = semantic_call(ctx, "discover", snapshot)
+local function semantic_discover(ctx, snapshot, params)
+    local result, reason, reason_code = semantic_call(ctx, "discover", snapshot, nil, params)
     if not result then
-        return { available = false, reason = reason, targets = {} }
+        return {
+            available = false,
+            reason = reason,
+            reason_code = reason_code,
+            targets = {},
+        }
     end
     if result.available ~= true then
         return {
             available = false,
             reason = bounded_diagnostic(result.reason) or "focused application is not accessible",
+            reason_code = bounded_diagnostic(result.reason_code) or "semantic_unavailable",
             targets = {},
         }
     end
@@ -861,15 +1358,31 @@ local function semantic_discover(ctx, snapshot)
             fail("semantic_find: duplicate semantic target id")
         end
         seen[target.id] = true
+        if seen[target.fingerprint] then
+            fail("semantic_find: duplicate semantic target fingerprint")
+        end
+        seen[target.fingerprint] = true
     end
-    return {
+    local semantic = {
         available = true,
         targets = result.targets,
         truncated = result.truncated == true,
-        visited = finite(result.visited) and result.visited or nil,
-        limits = result.limits,
-        window = result.window,
+        visited = sanitized_count(result.visited, 100000),
+        matched = sanitized_count(result.matched, 100000),
+        rejections = sanitized_numeric_map(result.rejections, 100000),
+        limits = sanitized_numeric_map(result.limits, 100000),
     }
+    local trace = ctx.__computer_trace
+    if type(trace) == "table" then
+        trace.semantic = {
+            visited = semantic.visited,
+            matched = semantic.matched,
+            returned = #semantic.targets,
+            truncated = semantic.truncated,
+            rejections = semantic.rejections,
+        }
+    end
+    return semantic
 end
 
 local function stored_semantic_target(prior, semantic_id)
@@ -893,29 +1406,49 @@ local function stored_semantic_target(prior, semantic_id)
 end
 
 local function semantic_resolve(ctx, snapshot, expected)
-    validate_semantic_target(expected, snapshot, "semantic_click")
     local result, reason = semantic_call(ctx, "resolve", snapshot, expected)
     if not result then
         fail("semantic_click: " .. reason .. "; action was not sent")
     end
     local current = validate_semantic_target(result.target, snapshot, "semantic_click")
-    if current.id ~= expected.id
+    if current.fingerprint ~= expected.fingerprint
         or current.role ~= expected.role
-        or current.name ~= expected.name
     then
         fail("semantic_click: semantic target identity changed; action was not sent")
     end
-    for _, key in ipairs(semantic_state_keys) do
-        if current.states[key] ~= expected.states[key] then
-            fail("semantic_click: semantic target states changed; action was not sent")
-        end
-    end
-    for _, key in ipairs({ "x", "y", "width", "height" }) do
-        if current.bounds[key] ~= expected.bounds[key] then
-            fail("semantic_click: semantic target bounds changed; action was not sent")
-        end
-    end
     return current
+end
+
+local function semantic_activate(ctx, snapshot, expected)
+    local result, reason, reason_code = semantic_call(ctx, "activate", snapshot, expected)
+    if not result then
+        post_input_failure(reason_code or "activation_delivery_ambiguous", reason)
+    end
+    if result.activated ~= true or result.delivery ~= "delivered" then
+        post_input_failure("activation_delivery_ambiguous", "invalid activation result")
+    end
+    local current = validate_semantic_target(result.target, snapshot, "semantic_click")
+    if current.fingerprint ~= expected.fingerprint or current.role ~= expected.role then
+        post_input_failure("activation_identity_mismatch", "activated target identity changed")
+    end
+    current.delivery = "delivered"
+    current.activation_action = result.action
+    current.state_changed = result.state_changed
+    current.direct = true
+    return current
+end
+
+local function semantic_focus_for_typing(ctx, snapshot)
+    local result, reason, reason_code = semantic_call(ctx, "focused", snapshot)
+    if not result
+        or result.available ~= true
+        or result.typing_safe ~= true
+        or type(result.target) ~= "table"
+    then
+        fail("type: accessible focus could not be verified ("
+            .. tostring(reason_code or (result and result.reason_code) or reason) .. "); action was not sent")
+    end
+    return validate_semantic_target(result.target, snapshot, "type")
 end
 
 local function perform_action(params, ctx, signature, snapshot, target_lock, semantic_target)
@@ -938,6 +1471,10 @@ local function perform_action(params, ctx, signature, snapshot, target_lock, sem
             if type(semantic_target) ~= "table" then
                 fail("semantic_click: verified semantic target is unavailable; action was not sent")
             end
+            if semantic_target.direct == true then
+                settle(ctx, action, settle_duration(params, action))
+                return
+            end
             x = semantic_target.center.x
             y = semantic_target.center.y
             accuracy_log(ctx, string.format(
@@ -959,7 +1496,6 @@ local function perform_action(params, ctx, signature, snapshot, target_lock, sem
             log_target(ctx, action, params.x, params.y, x, y)
         end
         move_and_verify(ctx, signature, action, x, y)
-        settle(ctx, action, PRE_CLICK_SETTLE_MS)
         if action == "double_click" then
             run_delivery(ctx, action, { "click", "--repeat", "2", "--next-delay", "100", "0xC0" })
         elseif action == "right_click" then
@@ -1019,11 +1555,21 @@ local function perform_action(params, ctx, signature, snapshot, target_lock, sem
     if action == "wait" then
         local duration = integer(params.duration_ms or 1000, "duration_ms", 0, 10000)
         if duration > 0 then
-            local _, kind, detail = exec_result(ctx, "sleep", { string.format("%.3f", duration / 1000) }, {
-                timeout_ms = duration + SLEEP_TIMEOUT_MARGIN_MS,
-            })
-            if kind then
-                fail("wait failed (" .. detail .. ")")
+            if type(ctx.time) == "table" and type(ctx.time.sleep_ms) == "function" then
+                local ok, problem = pcall(ctx.time.sleep_ms, duration)
+                if not ok then
+                    fail("wait failed (" .. bounded_diagnostic(problem) .. ")")
+                end
+            else
+                local _, kind, detail = exec_result(
+                    ctx,
+                    "sleep",
+                    { string.format("%.3f", duration / 1000) },
+                    { timeout_ms = duration + SLEEP_TIMEOUT_MARGIN_MS }
+                )
+                if kind then
+                    fail("wait failed (" .. detail .. ")")
+                end
             end
         end
         return
@@ -1088,7 +1634,7 @@ local function image_sha256(ctx, image, action)
     return hash
 end
 
-local function capture(ctx, signature, monitor, grid, action)
+local function capture(ctx, signature, monitor, _grid, action)
     local cursor_visible = action == "move"
     local _, _, logical_width, logical_height = monitor_dimensions(monitor)
     local grim_args = { "-t", "png", "-s", tostring(monitor.scale) }
@@ -1131,35 +1677,199 @@ local function capture(ctx, signature, monitor, grid, action)
         ))
     end
 
-    if grid then
-        local point_size = math.min(24, math.max(12, math.floor(math.min(width, height) / 80)))
-        local rendered, render_kind, render_detail = exec_result(ctx, "magick", {
-            "png:-",
-            "-stroke", "rgba(255,255,255,0.14)", "-strokewidth", "1", "-fill", "none",
-            "-draw", grid_lines(width, height, 20, true),
-            "-stroke", "rgba(255,255,255,0.35)", "-draw", grid_lines(width, height, 10, false),
-            "-font", "DejaVu-Sans", "-pointsize", tostring(point_size),
-            "-stroke", "rgba(0,0,0,0.85)", "-strokewidth", "2",
-            "-fill", "rgba(255,255,255,0.92)", "-draw", grid_labels(width, height, point_size),
-            "png:-",
-        }, {
-            stdin = image,
-            max_output_bytes = MAX_IMAGE_BYTES,
-        })
-        if not rendered then
-            if render_kind == "spawn" then
-                fail(action .. ": ImageMagick is unavailable; install ImageMagick (" .. render_detail .. ")")
-            end
-            fail(action .. ": grid rendering failed (" .. render_detail .. ")")
+    local image_hash = image_sha256(ctx, image, action)
+    local trace = ctx.__computer_trace
+    if type(trace) == "table" then
+        trace.captures = type(trace.captures) == "table" and trace.captures or {}
+        trace.captures[#trace.captures + 1] = {
+            width = width,
+            height = height,
+            bytes = #image,
+            sha256 = image_hash,
+            cursor_visible = cursor_visible,
+        }
+    end
+    return image, image_hash, width, height, cursor_visible
+end
+
+local function render_grid(ctx, image, width, height, action)
+    local point_size = math.min(24, math.max(12, math.floor(math.min(width, height) / 80)))
+    local rendered, render_kind, render_detail = exec_result(ctx, "magick", {
+        "png:-",
+        "-stroke", "rgba(255,255,255,0.14)", "-strokewidth", "1", "-fill", "none",
+        "-draw", grid_lines(width, height, 20, true),
+        "-stroke", "rgba(255,255,255,0.35)", "-draw", grid_lines(width, height, 10, false),
+        "-font", "DejaVu-Sans", "-pointsize", tostring(point_size),
+        "-stroke", "rgba(0,0,0,0.85)", "-strokewidth", "2",
+        "-fill", "rgba(255,255,255,0.92)", "-draw", grid_labels(width, height, point_size),
+        "png:-",
+    }, {
+        stdin = image,
+        max_output_bytes = MAX_IMAGE_BYTES,
+    })
+    if not rendered then
+        if render_kind == "spawn" then
+            fail(action .. ": ImageMagick is unavailable; install ImageMagick (" .. render_detail .. ")")
         end
-        local rendered_width
-        local rendered_height
-        image, rendered_width, rendered_height = validate_png(rendered, action)
-        if rendered_width ~= width or rendered_height ~= height then
-            fail(action .. ": grid rendering changed screenshot geometry")
+        fail(action .. ": grid rendering failed (" .. render_detail .. ")")
+    end
+    local rendered_width
+    local rendered_height
+    rendered, rendered_width, rendered_height = validate_png(rendered, action)
+    if rendered_width ~= width or rendered_height ~= height then
+        fail(action .. ": grid rendering changed screenshot geometry")
+    end
+    return rendered
+end
+
+local function stable_observation(ctx, action, requested_monitor, signature, capture_action)
+    local before
+    if signature then
+        local kind
+        before, kind = snapshot_once(ctx, signature, action, requested_monitor)
+        if not before then
+            fail(action .. ": stable observation metadata failed before capture (" .. tostring(kind) .. ")")
+        end
+    else
+        signature, before = snapshot_with_race(ctx, action, requested_monitor)
+    end
+
+    local image, image_hash, width, height, cursor_visible = capture(
+        ctx,
+        signature,
+        before.monitor,
+        false,
+        capture_action or action
+    )
+    local after, kind = snapshot_once(ctx, signature, action, before.monitor.name)
+    if not after then
+        fail(action .. ": stable observation metadata failed after capture (" .. tostring(kind) .. ")")
+    end
+    if not same_snapshot(before, after) then
+        fail(action .. ": screen context changed during capture; action was not sent")
+    end
+    return signature, after, image, image_hash, width, height, cursor_visible
+end
+
+local function image_tiles(ctx, image, width, height, action)
+    if type(ctx.codec.png_tiles) == "function" then
+        local ok, result = pcall(ctx.codec.png_tiles, image, TILE_COLUMNS, TILE_ROWS)
+        if ok and type(result) == "table"
+            and result.width == width
+            and result.height == height
+            and result.columns == TILE_COLUMNS
+            and result.rows == TILE_ROWS
+            and type(result.hashes) == "table"
+            and #result.hashes == TILE_COLUMNS * TILE_ROWS
+        then
+            for _, hash in ipairs(result.hashes) do
+                if type(hash) ~= "string" or #hash ~= 64 then
+                    fail(action .. ": native PNG tile fingerprinting returned invalid data")
+                end
+            end
+            return result
+        elseif ok then
+            fail(action .. ": native PNG tile fingerprinting returned invalid data")
+        else
+            fail(action .. ": native PNG tile fingerprinting failed ("
+                .. (bounded_diagnostic(result) or "native codec failure") .. ")")
         end
     end
-    return image, image_sha256(ctx, image, action), width, height, cursor_visible
+
+    local sample_width = TILE_COLUMNS * TILE_SAMPLE_FACTOR
+    local sample_height = TILE_ROWS * TILE_SAMPLE_FACTOR
+    local pixels, kind, detail = exec_result(ctx, "magick", {
+        "png:-",
+        "-filter", "box",
+        "-resize", string.format("%dx%d!", sample_width, sample_height),
+        "-depth", "8",
+        "rgba:-",
+    }, {
+        stdin = image,
+        max_output_bytes = sample_width * sample_height * 4,
+    })
+    if not pixels or #pixels ~= sample_width * sample_height * 4 then
+        fail(action .. ": target-region fingerprinting failed ("
+            .. (bounded_diagnostic(detail or kind) or "invalid pixel data") .. ")")
+    end
+    local hashes = {}
+    local stride = sample_width * 4
+    for row = 0, TILE_ROWS - 1 do
+        for column = 0, TILE_COLUMNS - 1 do
+            local parts = {}
+            for sample_row = 0, TILE_SAMPLE_FACTOR - 1 do
+                local offset = (row * TILE_SAMPLE_FACTOR + sample_row) * stride
+                    + column * TILE_SAMPLE_FACTOR * 4
+                parts[#parts + 1] = pixels:sub(
+                    offset + 1,
+                    offset + TILE_SAMPLE_FACTOR * 4
+                )
+            end
+            hashes[#hashes + 1] = image_sha256(
+                ctx,
+                table.concat(parts),
+                action .. " target region"
+            )
+        end
+    end
+    return {
+        width = width,
+        height = height,
+        columns = TILE_COLUMNS,
+        rows = TILE_ROWS,
+        hashes = hashes,
+    }
+end
+
+local function tile_index(grid, normalized_x, normalized_y)
+    local column = math.min(
+        grid.columns - 1,
+        math.floor(normalized_x * grid.columns)
+    )
+    local row = math.min(
+        grid.rows - 1,
+        math.floor(normalized_y * grid.rows)
+    )
+    return row * grid.columns + column + 1
+end
+
+local function coordinate_tiles(params, prior)
+    local action = params.action
+    if action == "drag" then
+        return {
+            tile_index(prior.tile_grid, params.start_x, params.start_y),
+            tile_index(prior.tile_grid, params.end_x, params.end_y),
+        }
+    end
+    if action == "move" or action == "click" or action == "double_click"
+        or action == "right_click" or action == "scroll"
+    then
+        return { tile_index(prior.tile_grid, params.x, params.y) }
+    end
+    return {}
+end
+
+local function validate_coordinate_freshness(params, prior, current)
+    if type(prior.tile_grid) ~= "table"
+        or type(prior.tile_grid.hashes) ~= "table"
+        or prior.tile_grid.columns ~= current.columns
+        or prior.tile_grid.rows ~= current.rows
+        or prior.tile_grid.width ~= current.width
+        or prior.tile_grid.height ~= current.height
+    then
+        fail(params.action .. ": referenced target-region fingerprints are unavailable; call computer_observe again")
+    end
+    local seen = {}
+    for _, index in ipairs(coordinate_tiles(params, prior)) do
+        if not seen[index] then
+            seen[index] = true
+            if type(prior.tile_grid.hashes[index]) ~= "string"
+                or prior.tile_grid.hashes[index] ~= current.hashes[index]
+            then
+                fail(params.action .. ": pixels around the intended target changed; action was not sent. Call computer_observe again")
+            end
+        end
+    end
 end
 
 local function target_patch_hash(ctx, image, width, height, center_x, center_y, action)
@@ -1169,6 +1879,35 @@ local function target_patch_hash(ctx, image, width, height, center_x, center_y, 
     local patch_bottom = math.min(height - 1, center_y + TARGET_PATCH_RADIUS)
     local patch_width = patch_right - patch_left + 1
     local patch_height = patch_bottom - patch_top + 1
+    if type(ctx.codec.png_region_sha256) == "function" then
+        local ok, result = pcall(
+            ctx.codec.png_region_sha256,
+            image,
+            patch_left,
+            patch_top,
+            patch_width,
+            patch_height
+        )
+        if not ok then
+            fail(action .. ": native target patch hashing failed ("
+                .. (bounded_diagnostic(result) or "native codec failure") .. ")")
+        end
+        if type(result) ~= "table"
+            or result.width ~= patch_width
+            or result.height ~= patch_height
+            or type(result.sha256) ~= "string"
+            or #result.sha256 ~= 64
+            or not result.sha256:match("^[0-9a-f]+$")
+        then
+            fail(action .. ": native target patch hashing returned invalid data")
+        end
+        return result.sha256, {
+            x = patch_left,
+            y = patch_top,
+            width = patch_width,
+            height = patch_height,
+        }
+    end
     local patch, kind, detail = exec_result(ctx, "magick", {
         "png:-",
         "-crop", string.format("%dx%d+%d+%d", patch_width, patch_height, patch_left, patch_top),
@@ -1290,6 +2029,34 @@ local function model_image(ctx, image, width, height, action)
     if target_width == width and target_height == height then
         return image, width, height
     end
+    if type(ctx.codec.png_resize) == "function" then
+        local ok, result = pcall(
+            ctx.codec.png_resize,
+            image,
+            MODEL_IMAGE_MAX_WIDTH,
+            MODEL_IMAGE_MAX_HEIGHT
+        )
+        if not ok then
+            fail(action .. ": native model screenshot resize failed ("
+                .. (bounded_diagnostic(result) or "native codec failure") .. ")")
+        end
+        if type(result) ~= "table"
+            or type(result.png) ~= "string"
+            or result.width ~= target_width
+            or result.height ~= target_height
+            or result.resized ~= true
+        then
+            fail(action .. ": native model screenshot resize returned invalid data")
+        end
+        local resized
+        local resized_width
+        local resized_height
+        resized, resized_width, resized_height = validate_png(result.png, action)
+        if resized_width ~= target_width or resized_height ~= target_height then
+            fail(action .. ": native model screenshot resize produced invalid geometry")
+        end
+        return resized, resized_width, resized_height
+    end
     local resized, kind, detail = exec_result(ctx, "magick", {
         "png:-", "-filter", "Lanczos",
         "-resize", string.format("%dx%d!", target_width, target_height),
@@ -1327,11 +2094,7 @@ local function image_debug(ctx, image, encoded, hash)
     ))
 end
 
-local input_actions = {
-    move = true, click = true, click_locked = true, semantic_click = true,
-    double_click = true, right_click = true,
-    drag = true, scroll = true, type = true, key = true,
-}
+local input_actions = mutating_actions
 
 local function point_metadata(params, snapshot, width, height, prefix, attachment_width, attachment_height)
     prefix = prefix or ""
@@ -1360,15 +2123,14 @@ local function target_lock_for_inspection(
     local logical_x, logical_y = source_point(
         snapshot.monitor, width, height, geometry.source_x, geometry.source_y
     )
-    local created_at = os.time()
-    local token = "target-" .. image_sha256(ctx, table.concat({
+    local created_at = monotonic_ms(ctx)
+    local token = "target-" .. random_hex(ctx, 16, table.concat({
         screenshot_id,
         operation_id,
         image_hash,
         tostring(geometry.source_x),
         tostring(geometry.source_y),
-        tostring(created_at),
-    }, ":"), "inspect"):sub(1, 24)
+    }, ":"))
     return {
         token = token,
         screenshot_id = screenshot_id,
@@ -1385,8 +2147,8 @@ local function target_lock_for_inspection(
         radius = geometry.radius,
         patch_bounds = geometry.patch_bounds,
         patch_sha256 = geometry.patch_sha256,
-        created_at = created_at,
-        expires_at = created_at + TARGET_LOCK_TTL_SECONDS,
+        created_monotonic_ms = created_at,
+        expires_monotonic_ms = created_at + TARGET_LOCK_TTL_SECONDS * 1000,
     }
 end
 
@@ -1404,11 +2166,11 @@ local function validate_target_lock(ctx, params, prior, snapshot, image, width, 
         or not finite(lock.source_y)
         or not finite(lock.logical_x)
         or not finite(lock.logical_y)
-        or not finite(lock.expires_at)
+        or not finite(lock.expires_monotonic_ms)
     then
         fail("click_locked: target lock geometry is invalid; action was not sent. Call inspect again")
     end
-    if os.time() > lock.expires_at then
+    if monotonic_ms(ctx) > lock.expires_monotonic_ms then
         fail("click_locked: target lock expired; action was not sent. Call inspect again")
     end
     local current_hash, current_bounds = target_patch_hash(
@@ -1427,66 +2189,28 @@ local function validate_target_lock(ctx, params, prior, snapshot, image, width, 
     return lock
 end
 
-local function cleanup_files(ctx, paths)
-    exec_result(ctx, "rm", { "-f", "--", paths[1], paths[2] }, {
-        timeout_ms = EXEC_TIMEOUT_MS,
-        max_output_bytes = MAX_DIAGNOSTIC_BYTES,
-    })
-end
-
-local function changed_bounds(ctx, before_image, after_image, width, height, operation_id)
-    if type(ctx.write_file) ~= "function" or before_image == nil or after_image == nil then
+local function changed_bounds(ctx, before_image, after_image, width, height, _operation_id)
+    if before_image == nil
+        or after_image == nil
+        or type(ctx.codec.png_diff) ~= "function"
+    then
         return nil
     end
-    local suffix = image_sha256(ctx, table.concat({
-        tostring(operation_id),
-        image_sha256(ctx, before_image, "change detection"),
-        image_sha256(ctx, after_image, "change detection"),
-        tostring(os.time()),
-        tostring(os.clock()),
-    }, ":"), "change detection"):sub(1, 20)
-    local paths = {
-        "/tmp/bone-computer-" .. suffix .. "-before.png",
-        "/tmp/bone-computer-" .. suffix .. "-after.png",
-    }
-    local first_ok = pcall(ctx.write_file, paths[1], before_image)
-    local second_ok = first_ok and pcall(ctx.write_file, paths[2], after_image)
-    if not first_ok or not second_ok then
-        cleanup_files(ctx, paths)
+    local ok, result = pcall(ctx.codec.png_diff, before_image, after_image)
+    if not ok or type(result) ~= "table" then
         return nil
     end
-    local mean_raw = exec_result(ctx, "magick", {
-        paths[1], paths[2],
-        "-compose", "difference", "-composite",
-        "-format", "%[fx:mean]", "info:",
-    }, {
-        max_output_bytes = MAX_DIAGNOSTIC_BYTES,
-    })
-    local mean = mean_raw and tonumber(mean_raw)
-    if not mean then
-        cleanup_files(ctx, paths)
-        return nil
-    end
-    if mean == 0 then
-        cleanup_files(ctx, paths)
+    if result.equal == true then
         return false
     end
-    local raw = exec_result(ctx, "magick", {
-        paths[1], paths[2],
-        "-compose", "difference", "-composite", "-threshold", "0", "-trim",
-        "-format", "%@", "info:",
-    }, {
-        max_output_bytes = MAX_DIAGNOSTIC_BYTES,
-    })
-    cleanup_files(ctx, paths)
-    if not raw then
+    local bounds = result.bounds
+    if type(bounds) ~= "table" then
         return nil
     end
-    local box_width, box_height, x, y = raw:match("^(%d+)x(%d+)%+(%d+)%+(%d+)")
-    box_width = tonumber(box_width)
-    box_height = tonumber(box_height)
-    x = tonumber(x)
-    y = tonumber(y)
+    local x = bounds.x
+    local y = bounds.y
+    local box_width = bounds.width
+    local box_height = bounds.height
     if not box_width or not box_height or not x or not y
         or box_width < 1 or box_height < 1
         or x + box_width > width or y + box_height > height
@@ -1516,8 +2240,198 @@ local function classify_change(bounds, target, width, height)
     return "changed_elsewhere"
 end
 
+local function canonical_value(value)
+    local kind = type(value)
+    if kind == "string" then
+        return "s" .. tostring(#value) .. ":" .. value
+    elseif kind == "number" then
+        return "n" .. string.format("%.17g", value)
+    elseif kind == "boolean" then
+        return value and "b1" or "b0"
+    elseif kind == "nil" then
+        return "z"
+    elseif kind ~= "table" then
+        fail("request contains an unsupported value")
+    end
+    local keys = {}
+    for key in pairs(value) do
+        keys[#keys + 1] = key
+    end
+    table.sort(keys, function(left, right)
+        return tostring(left) < tostring(right)
+    end)
+    local encoded = { "t" }
+    for _, key in ipairs(keys) do
+        encoded[#encoded + 1] = canonical_value(key)
+        encoded[#encoded + 1] = canonical_value(value[key])
+    end
+    return table.concat(encoded)
+end
+
+local function request_digest(ctx, params)
+    return digest_fields(ctx, params.action, { canonical_value(params) })
+end
+
+local function ledger_entry(state, call_id)
+    for _, entry in ipairs(state.ledger or {}) do
+        if type(entry) == "table" and entry.call_id == call_id then
+            return entry
+        end
+    end
+    return nil
+end
+
+local function append_ledger(state, entry)
+    state.ledger = type(state.ledger) == "table" and state.ledger or {}
+    state.ledger[#state.ledger + 1] = entry
+    while #state.ledger > MAX_LEDGER_ENTRIES do
+        table.remove(state.ledger, 1)
+    end
+end
+
+local function replay_response(entry, state)
+    local outcome = type(entry.outcome) == "table" and entry.outcome or {}
+    local authorization = type(state) == "table" and state.authorization or nil
+    local resumable = type(state) == "table"
+        and entry.status == "completed"
+        and outcome.screenshot_id == state.screenshot_id
+        and type(authorization) == "table"
+        and authorization.consumed ~= true
+        and type(authorization.token) == "string"
+    return json.encode({
+        content = json.encode({
+            operation_id = entry.operation_id,
+            call_id = entry.call_id,
+            action = entry.action,
+            replayed = true,
+            ledger_status = entry.status,
+            screenshot_id = outcome.screenshot_id,
+            input_delivery = outcome.input_delivery
+                or (entry.status == "completed" and "sent_unverified" or "not_repeated"),
+            visual_change = outcome.visual_change,
+            reason_code = outcome.reason_code
+                or (entry.status == "completed" and "completed_replay" or "replay_blocked"),
+            retry_input = false,
+            action_token = resumable and authorization.token or nil,
+            next_call = resumable and {
+                tool = "computer",
+                screenshot_id = state.screenshot_id,
+                action_token = authorization.token,
+                required = true,
+            } or nil,
+            next_action = resumable and nil or "observe",
+        }),
+    })
+end
+
+local function check_call_replay(state, call_id, digest)
+    local entry = ledger_entry(state, call_id)
+    if not entry then
+        return nil
+    end
+    if entry.params_sha256 ~= digest then
+        fail("call_id was already used with different parameters; action was not sent")
+    end
+    return replay_response(entry, state)
+end
+
+local function reserve_action(ctx, state, params, operation_id, call_id, digest)
+    local authorization = state.authorization
+    if type(authorization) ~= "table"
+        or authorization.consumed == true
+        or authorization.token ~= params.action_token
+    then
+        fail("action_token is stale, consumed, or unavailable; action was not sent. Call computer_observe again")
+    end
+    authorization.consumed = true
+    authorization.consumed_by = digest
+    authorization.consumed_monotonic_ms = monotonic_ms(ctx)
+    state.blocked_reason = nil
+    if params.action == "click_locked" then
+        state.target_lock = nil
+    elseif params.action == "semantic_click" then
+        state.semantic = nil
+    end
+    append_ledger(state, {
+        call_id = call_id,
+        operation_id = operation_id,
+        action = params.action,
+        params_sha256 = digest,
+        status = "in_flight",
+        started_monotonic_ms = monotonic_ms(ctx),
+    })
+    local ok, problem = pcall(ctx.state.set, STATE_KEY, json.encode(state))
+    if not ok then
+        fail(params.action .. ": could not reserve single-use input authorization; action was not sent ("
+            .. bounded_diagnostic(problem) .. ")")
+    end
+end
+
+local function finish_ledger(state, call_id, status, outcome)
+    local entry = ledger_entry(state, call_id)
+    if not entry then
+        return
+    end
+    entry.status = status
+    entry.finished_monotonic_ms = outcome.finished_monotonic_ms
+    entry.outcome = {
+        screenshot_id = outcome.screenshot_id,
+        input_delivery = outcome.input_delivery,
+        visual_change = outcome.visual_change,
+        reason_code = outcome.reason_code,
+    }
+end
+
+local function block_after_input(ctx, state, call_id, reason_code)
+    state.authorization = nil
+    state.blocked_reason = reason_code
+    finish_ledger(state, call_id, "ambiguous", {
+        input_delivery = "sent_unverified",
+        reason_code = reason_code,
+        finished_monotonic_ms = monotonic_ms(ctx),
+    })
+    pcall(ctx.state.set, STATE_KEY, json.encode(state))
+end
+
+local function semantic_state_for_storage(ctx, salt, semantic)
+    if type(semantic) ~= "table" then
+        return nil
+    end
+    local stored = {
+        available = semantic.available == true,
+        reason = bounded_diagnostic(semantic.reason),
+        truncated = semantic.truncated == true,
+        visited = semantic.visited,
+        matched = semantic.matched,
+        rejections = semantic.rejections,
+        targets = {},
+    }
+    for _, target in ipairs(semantic.targets or {}) do
+        stored.targets[#stored.targets + 1] = {
+            id = target.id,
+            fingerprint = target.fingerprint,
+            role = target.role,
+            name_sha256 = digest_fields(ctx, "semantic target", {
+                salt,
+                target.name or "",
+            }),
+            states = {
+                enabled = target.states and target.states.enabled == true,
+                sensitive = target.states and target.states.sensitive == true,
+                showing = target.states and target.states.showing == true,
+                visible = target.states and target.states.visible == true,
+            },
+            bounds = target.bounds,
+            center = target.center,
+            actions = target.actions,
+            direct_activation = target.direct_activation == true,
+        }
+    end
+    return stored
+end
+
 local function save_response(
-    ctx, prior, signature, snapshot, params, grid, operation_id,
+    ctx, prior, signature, snapshot, params, grid, operation_id, call_id,
     image, image_hash, width, height, cursor_visible,
     inspection_image, inspection_geometry, before_image, before_hash, locked_target,
     semantic, semantic_target
@@ -1525,8 +2439,6 @@ local function save_response(
     local action = params.action
     local exact_unchanged = prior and prior.image_sha256 == image_hash
     local unchanged = prior
-        and prior.grid == grid
-        and prior.cursor_visible == cursor_visible
         and prior.image_width == width
         and prior.image_height == height
         and exact_unchanged
@@ -1540,27 +2452,50 @@ local function save_response(
             inspection_geometry, width, height
         )
     end
-    local captured_at = os.time()
-    ctx.state.set(STATE_KEY, json.encode({
+    local captured_at = monotonic_ms(ctx)
+    local privacy_salt = prior and prior.privacy_salt
+        or random_hex(ctx, 16, operation_id)
+    local action_token = "action-" .. random_hex(ctx, 24, table.concat({
+        operation_id,
+        screenshot_id,
+        image_hash,
+        tostring(captured_at),
+    }, ":"))
+    local tile_grid = image_tiles(ctx, image, width, height, action)
+    local state = {
+        version = STATE_VERSION,
         screenshot_id = screenshot_id,
         generation = generation,
         operation_generation = operation_generation,
-        signature = signature,
-        snapshot = snapshot,
+        privacy_salt = privacy_salt,
+        signature_sha256 = digest_fields(ctx, action, { privacy_salt, signature }),
+        context_sha256 = context_fingerprint(
+            ctx, action, privacy_salt, signature, snapshot
+        ),
+        monitor = stored_monitor(snapshot),
         image_sha256 = image_hash,
         image_width = width,
         image_height = height,
         geometry_fingerprint = geometry_fingerprint(ctx, snapshot.monitor, width, height, action),
-        captured_at = captured_at,
+        captured_monotonic_ms = captured_at,
         cursor_visible = cursor_visible,
         grid = grid,
+        tile_grid = tile_grid,
+        authorization = {
+            token = action_token,
+            issued_monotonic_ms = captured_at,
+            consumed = false,
+        },
+        ledger = prior and prior.ledger or {},
         target_lock = target_lock,
-        semantic = semantic,
-    }))
+        semantic = semantic_state_for_storage(ctx, privacy_salt, semantic),
+    }
 
     local pixel_width, pixel_height, logical_width, logical_height = monitor_dimensions(snapshot.monitor)
     local attachment_width, attachment_height = model_image_dimensions(width, height)
-    local force_attachment = action == "observe" or action == "inspect"
+    local force_attachment = action == "observe"
+        or action == "inspect"
+        or (prior and prior.grid ~= grid)
     local target = point_metadata(
         params, snapshot, width, height, nil, attachment_width, attachment_height
     )
@@ -1606,14 +2541,41 @@ local function save_response(
     else
         evidence = exact_unchanged and "unchanged" or "changed_elsewhere"
     end
+    local input_delivery = input_actions[action]
+        and (semantic_target and semantic_target.delivery or "sent_unverified")
+        or "not_applicable"
+    local trace = ctx.__computer_trace
+    if type(trace) == "table" then
+        trace.context_sha256 = state.context_sha256
+        trace.instance_sha256 = state.signature_sha256
+        trace.visual = {
+            evidence = evidence,
+            bounds = change_bounds,
+            image_reused = unchanged == true,
+        }
+    end
+    if input_actions[action] then
+        finish_ledger(state, call_id, "completed", {
+            screenshot_id = screenshot_id,
+            input_delivery = input_delivery,
+            visual_change = evidence,
+            reason_code = "completed",
+            finished_monotonic_ms = captured_at,
+        })
+    end
+    ctx.state.set(STATE_KEY, json.encode(state))
+
     local content = {
         screenshot_id = screenshot_id,
+        action_token = action_token,
         next_call = {
             tool = "computer",
             screenshot_id = screenshot_id,
+            action_token = action_token,
             required = true,
         },
         operation_id = operation_id,
+        call_id = call_id,
         action = action,
         monitor = snapshot.monitor,
         screenshot_geometry = {
@@ -1634,9 +2596,10 @@ local function save_response(
         screenshot_attached = not unchanged or force_attachment,
         visual_change = evidence,
         change_bounds = change_bounds,
-        input_delivery = input_actions[action] and "sent_unverified" or "not_applicable",
+        input_delivery = input_delivery,
         semantic_target = semantic_target and "verified" or (input_actions[action] and "unknown" or "not_applicable"),
         grid = grid,
+        reason_code = "completed",
     }
     if semantic then
         content.semantic = semantic
@@ -1670,8 +2633,11 @@ local function save_response(
         content.inspection_geometry = inspection_geometry
         content.target_lock = {
             target_token = target_lock.token,
-            expires_at = target_lock.expires_at,
             ttl_seconds = TARGET_LOCK_TTL_SECONDS,
+            expires_in_ms = math.max(
+                0,
+                target_lock.expires_monotonic_ms - monotonic_ms(ctx)
+            ),
             screenshot_id = target_lock.screenshot_id,
             monitor = target_lock.monitor,
             geometry_fingerprint = target_lock.geometry_fingerprint,
@@ -1695,12 +2661,14 @@ local function save_response(
         content.image_instruction = input_actions[action]
             and "Input was delivered and a fresh post-action screenshot was captured, but no visual change was detected. This does not establish whether the intended UI target was activated. Continue using the prior image and this screenshot_id."
             or "A fresh screenshot was captured, but visual content was unchanged, so no duplicate image was attached. Continue using the prior image and this screenshot_id."
+        content.trace = trace_finish(ctx, "completed")
         return json.encode({ content = json.encode(content) })
     end
 
+    local presentation_image = grid and render_grid(ctx, image, width, height, action) or image
     local attached_image
     attached_image, attachment_width, attachment_height = model_image(
-        ctx, image, width, height, action
+        ctx, presentation_image, width, height, action
     )
     local attached_hash = image_sha256(ctx, attached_image, action)
     local encoded = ctx.codec.base64_encode(attached_image)
@@ -1730,6 +2698,7 @@ local function save_response(
     else
         content.image_instruction = "A downscaled PNG screenshot is attached; inspect it directly before choosing normalized full-monitor coordinates."
     end
+    content.trace = trace_finish(ctx, "completed")
     return json.encode({
         content = json.encode(content),
         images = images,
@@ -1757,18 +2726,50 @@ local function status(ctx, message)
     ctx.ui.status("computer - " .. message)
 end
 
-local function input_observation_failure(action, operation_id, reason, detail)
+local function input_observation_failure(
+    ctx, state, action, operation_id, call_id, reason, _detail
+)
+    block_after_input(ctx, state, call_id, reason)
     return json.encode({
         content = json.encode({
             operation_id = operation_id,
+            call_id = call_id,
             action = action,
             input_delivery = "sent_unverified",
             semantic_target = "unknown",
             screenshot_captured = false,
             observation = reason,
-            detail = bounded_diagnostic(detail),
+            reason_code = reason,
             retry_input = false,
             next_action = "observe",
+            trace = trace_finish(ctx, reason),
+        }),
+    })
+end
+
+local function input_not_delivered_response(
+    ctx, state, action, operation_id, call_id, reason
+)
+    state.blocked_reason = nil
+    finish_ledger(state, call_id, "not_delivered", {
+        input_delivery = "not_delivered",
+        reason_code = reason,
+        finished_monotonic_ms = monotonic_ms(ctx),
+    })
+    pcall(ctx.state.set, STATE_KEY, json.encode(state))
+    return json.encode({
+        content = json.encode({
+            operation_id = operation_id,
+            call_id = call_id,
+            action = action,
+            input_delivery = "not_delivered",
+            semantic_target = "unknown",
+            screenshot_captured = false,
+            observation = reason,
+            reason_code = reason,
+            retry_input = false,
+            next_action = "observe",
+            trace = trace_finish(ctx, reason),
         }),
     })
 end
@@ -1784,172 +2785,322 @@ local function execute_inner(params, ctx)
     then
         fail("computer requires a newer Bone build with ctx.exec and ctx.codec support; rebuild or update Bone")
     end
-    validate_common(params)
+    validate_request(params)
     local action = params.action
-    local prior = load_state(ctx)
-    if action ~= "observe" then
+    local call_id = type(ctx.call_id) == "string" and ctx.call_id ~= ""
+        and ctx.call_id
+        or nil
+    if input_actions[action] and (not call_id or #call_id > 256) then
+        fail("computer input requires a bounded host call_id; action was not sent")
+    end
+    local prior
+    if action == "observe" then
+        local loaded, value = pcall(load_state, ctx)
+        prior = loaded and value or nil
+    else
+        prior = load_state(ctx)
         if not prior or params.screenshot_id ~= prior.screenshot_id then
             fail("stale screenshot_id; call computer_observe and copy its fresh screenshot_id")
         end
-        if not finite(prior.captured_at)
-            or os.time() - prior.captured_at > SCREENSHOT_TTL_SECONDS
+    end
+    local operation_generation = prior and (prior.operation_generation or 0) + 1 or 1
+    local operation_id = "computer-op-" .. random_hex(
+        ctx,
+        12,
+        tostring(call_id or "") .. ":" .. tostring(operation_generation)
+    )
+    trace_begin(ctx, params.trace, operation_id, call_id, action)
+
+    local digest
+    if input_actions[action] then
+        digest = request_digest(ctx, params)
+        local replay = check_call_replay(prior, call_id, digest)
+        if replay then
+            trace_finish(ctx, "call_replay")
+            return replay
+        end
+    end
+    if action ~= "observe" then
+        if prior.blocked_reason then
+            fail("computer input authorization is blocked after "
+                .. tostring(prior.blocked_reason) .. "; call computer_observe again")
+        end
+        if monotonic_ms(ctx) - prior.captured_monotonic_ms
+            > SCREENSHOT_TTL_SECONDS * 1000
         then
             fail("screenshot_id expired; action was not sent. Call computer_observe again")
         end
+        if input_actions[action] then
+            local authorization = prior.authorization
+            if type(authorization) ~= "table"
+                or authorization.consumed == true
+                or authorization.token ~= params.action_token
+            then
+                fail("action_token is stale, consumed, or unavailable; action was not sent. Call computer_observe again")
+            end
+        end
     end
-    local operation_generation = prior and (prior.operation_generation or 0) + 1 or 1
-    local operation_id = type(ctx.call_id) == "string" and ctx.call_id ~= ""
-        and ctx.call_id
-        or "computer-op-" .. tostring(operation_generation)
 
-    status(ctx, "checking screen context")
-    local requested_monitor
-    if action == "observe" then
-        requested_monitor = params.monitor
-    else
-        requested_monitor = prior.snapshot.monitor.name
-    end
-    local signature, before = snapshot_with_race(ctx, action, requested_monitor)
+    local signature
+    local before
     local before_image
     local before_hash
+    local before_width
+    local before_height
     local locked_target
     local semantic
     local semantic_target
-    if action ~= "observe" then
-        if signature ~= prior.signature or not same_snapshot(before, prior.snapshot) then
+    local final_snapshot
+    local final_image
+    local final_hash
+    local final_width
+    local final_height
+    local final_cursor_visible
+
+    if action == "observe" then
+        trace_stage(ctx, "stable_observation")
+        status(ctx, "taking stable screenshot")
+        signature, final_snapshot, final_image, final_hash,
+            final_width, final_height, final_cursor_visible = stable_observation(
+                ctx, action, params.monitor, nil, action
+            )
+    elseif action == "wait" then
+        trace_stage(ctx, "context_preflight")
+        status(ctx, "checking screen context")
+        signature, before = snapshot_with_race(ctx, action, prior.monitor.name)
+        local signature_hash = digest_fields(
+            ctx, action, { prior.privacy_salt, signature }
+        )
+        local current_context = context_fingerprint(
+            ctx, action, prior.privacy_salt, signature, before
+        )
+        if signature_hash ~= prior.signature_sha256
+            or current_context ~= prior.context_sha256
+        then
             fail("screen context changed; action was not sent")
         end
+        trace_stage(ctx, "wait")
+        perform_action(params, ctx, signature, before)
+        trace_stage(ctx, "stable_observation")
+        status(ctx, "taking stable screenshot")
+        signature, final_snapshot, final_image, final_hash,
+            final_width, final_height, final_cursor_visible = stable_observation(
+                ctx, action, prior.monitor.name, signature, action
+            )
+    else
+        trace_stage(ctx, "stable_pre_action_observation")
+        status(ctx, "checking stable screen context")
+        signature, before, before_image, before_hash,
+            before_width, before_height = stable_observation(
+                ctx, action, prior.monitor.name, nil, "validation"
+            )
+        local signature_hash = digest_fields(
+            ctx, action, { prior.privacy_salt, signature }
+        )
+        local current_context = context_fingerprint(
+            ctx, action, prior.privacy_salt, signature, before
+        )
+        if signature_hash ~= prior.signature_sha256
+            or current_context ~= prior.context_sha256
+        then
+            fail("screen context changed; action was not sent")
+        end
+
         status(ctx, action_status[action])
         if action == "inspect" then
-            normalized_point(params, before.monitor)
-        elseif action == "semantic_find" then
-            semantic = semantic_discover(ctx, before)
-        else
-            if input_actions[action] then
-                if action == "click_locked" and (params.grid == true) ~= (prior.grid == true) then
-                    fail("click_locked: grid mode differs from the inspected screenshot; action was not sent. Call inspect again")
-                end
-                status(ctx, "validating fresh pixels")
-                local captured, fresh_image, fresh_hash, fresh_width, fresh_height = pcall(
-                    capture, ctx, signature, before.monitor, params.grid == true, "validation"
-                )
-                if not captured then
-                    fail(action .. ": pre-action screenshot failed; action was not sent (" .. bounded_diagnostic(fresh_image) .. ")")
-                end
-                before_image = fresh_image
-                before_hash = fresh_hash
-                if action == "click_locked" then
-                    locked_target = validate_target_lock(
-                        ctx, params, prior, before, fresh_image, fresh_width, fresh_height
-                    )
-                    prior.target_lock = nil
-                    local consumed, consume_error = pcall(ctx.state.set, STATE_KEY, json.encode(prior))
-                    if not consumed then
-                        fail("click_locked: could not consume target lock; action was not sent (" .. bounded_diagnostic(consume_error) .. ")")
-                    end
-                elseif action == "semantic_click" then
-                    local expected = stored_semantic_target(prior, params.semantic_id)
-                    semantic_target = semantic_resolve(ctx, before, expected)
-                    prior.semantic = nil
-                    local consumed, consume_error = pcall(ctx.state.set, STATE_KEY, json.encode(prior))
-                    if not consumed then
-                        fail("semantic_click: could not consume semantic target; action was not sent (" .. bounded_diagnostic(consume_error) .. ")")
-                    end
-                end
-            end
-            local performed, perform_error = pcall(
-                perform_action, params, ctx, signature, before, locked_target, semantic_target
+            trace_stage(ctx, "inspect")
+            local inspected_ok
+            inspected_ok, final_image, final_snapshot = pcall(
+                inspect_image,
+                ctx,
+                before_image,
+                before_width,
+                before_height,
+                params
             )
+            if not inspected_ok then
+                fail(final_image)
+            end
+            local inspection_image = final_image
+            local inspection_geometry = final_snapshot
+            final_snapshot = before
+            final_image = before_image
+            final_hash = before_hash
+            final_width = before_width
+            final_height = before_height
+            final_cursor_visible = false
+            trace_stage(ctx, "persist_response")
+            return save_response(
+                ctx,
+                prior,
+                signature,
+                final_snapshot,
+                params,
+                params.grid == true,
+                operation_id,
+                call_id,
+                final_image,
+                final_hash,
+                final_width,
+                final_height,
+                final_cursor_visible,
+                inspection_image,
+                inspection_geometry,
+                nil,
+                nil,
+                nil,
+                nil,
+                nil
+            )
+        elseif action == "semantic_find" then
+            trace_stage(ctx, "semantic_discovery")
+            semantic = semantic_discover(ctx, before, params)
+            final_snapshot = before
+            final_image = before_image
+            final_hash = before_hash
+            final_width = before_width
+            final_height = before_height
+            final_cursor_visible = false
+        else
+            trace_stage(ctx, "freshness_validation")
+            status(ctx, "validating target freshness")
+            local current_tiles = image_tiles(
+                ctx, before_image, before_width, before_height, action
+            )
+            validate_coordinate_freshness(params, prior, current_tiles)
+            if action == "click_locked" then
+                locked_target = validate_target_lock(
+                    ctx,
+                    params,
+                    prior,
+                    before,
+                    before_image,
+                    before_width,
+                    before_height
+                )
+            elseif action == "semantic_click" then
+                local expected = stored_semantic_target(prior, params.semantic_id)
+                if expected.direct_activation == true then
+                    semantic_target = expected
+                else
+                    trace_stage(ctx, "semantic_resolution")
+                    semantic_target = semantic_resolve(ctx, before, expected)
+                end
+            elseif action == "type" then
+                trace_stage(ctx, "typing_focus_verification")
+                semantic_focus_for_typing(ctx, before)
+            end
+
+            trace_stage(ctx, "reserve_input")
+            reserve_action(ctx, prior, params, operation_id, call_id, digest)
+            trace_stage(ctx, "input")
+            local performed
+            local perform_error
+            if action == "semantic_click" and semantic_target.direct_activation == true then
+                performed, perform_error = pcall(function()
+                    semantic_target = semantic_activate(
+                        ctx, before, semantic_target
+                    )
+                    perform_action(
+                        params,
+                        ctx,
+                        signature,
+                        before,
+                        locked_target,
+                        semantic_target
+                    )
+                end)
+            else
+                performed, perform_error = pcall(
+                    perform_action,
+                    params,
+                    ctx,
+                    signature,
+                    before,
+                    locked_target,
+                    semantic_target
+                )
+            end
             if not performed then
-                if type(perform_error) == "table" and perform_error.marker == POST_INPUT_FAILURE then
-                    return input_observation_failure(
+                if type(perform_error) == "table"
+                    and perform_error.marker == INPUT_NOT_DELIVERED
+                then
+                    return input_not_delivered_response(
+                        ctx,
+                        prior,
                         action,
                         operation_id,
+                        call_id,
+                        perform_error.reason
+                    )
+                end
+                if type(perform_error) == "table" and perform_error.marker == POST_INPUT_FAILURE then
+                    return input_observation_failure(
+                        ctx,
+                        prior,
+                        action,
+                        operation_id,
+                        call_id,
                         perform_error.reason,
                         perform_error.detail
                     )
                 end
-                fail(perform_error)
+                return input_observation_failure(
+                    ctx,
+                    prior,
+                    action,
+                    operation_id,
+                    call_id,
+                    "input_execution_failed",
+                    perform_error
+                )
+            end
+
+            trace_stage(ctx, "stable_post_action_observation")
+            status(ctx, "taking stable post-action screenshot")
+            local observed
+            observed, signature, final_snapshot, final_image, final_hash,
+                final_width, final_height, final_cursor_visible = pcall(
+                    stable_observation,
+                    ctx,
+                    action,
+                    before.monitor.name,
+                    signature,
+                    action
+                )
+            if not observed then
+                return input_observation_failure(
+                    ctx,
+                    prior,
+                    action,
+                    operation_id,
+                    call_id,
+                    "post_action_observation_failed",
+                    signature
+                )
             end
         end
     end
 
-    local after = before
-    if action ~= "observe" and action ~= "inspect" and action ~= "semantic_find" then
-        status(ctx, "refreshing screen context")
-        local ok, next_signature, next_snapshot = pcall(
-            snapshot_with_race,
-            ctx,
-            action,
-            before.monitor.name
-        )
-        if not ok or next_signature ~= signature then
-            if action == "wait" then
-                fail("wait: screen refresh failed")
-            end
-            return input_observation_failure(
-                action,
-                operation_id,
-                "screen_refresh_failed",
-                not ok and next_signature or "Hyprland instance changed"
-            )
-        end
-        after = next_snapshot
-    end
-
-    status(ctx, "taking screenshot")
-    local ok, image, image_hash, width, height, cursor_visible = pcall(
-        capture,
-        ctx,
-        signature,
-        after.monitor,
-        params.grid == true,
-        action
-    )
-    if not ok then
-        if action == "observe" or action == "inspect" or action == "semantic_find" or action == "wait" then
-            fail(image)
-        end
-        return input_observation_failure(
-            action,
-            operation_id,
-            "screenshot_capture_failed",
-            image
-        )
-    end
-    local inspection_image
-    local inspection_geometry
-    if action == "inspect" then
-        local inspected_ok
-        inspected_ok, inspection_image, inspection_geometry = pcall(
-            inspect_image,
-            ctx,
-            image,
-            width,
-            height,
-            params
-        )
-        if not inspected_ok then
-            fail(inspection_image)
-        end
-    end
+    trace_stage(ctx, "persist_response")
     status(ctx, "screenshot ready")
     local saved, response = pcall(
         save_response,
         ctx,
         prior,
         signature,
-        after,
+        final_snapshot,
         params,
         params.grid == true,
         operation_id,
-        image,
-        image_hash,
-        width,
-        height,
-        cursor_visible,
-        inspection_image,
-        inspection_geometry,
+        call_id,
+        final_image,
+        final_hash,
+        final_width,
+        final_height,
+        final_cursor_visible,
+        nil,
+        nil,
         before_image,
         before_hash,
         locked_target,
@@ -1961,8 +3112,11 @@ local function execute_inner(params, ctx)
     end
     if input_actions[action] then
         return input_observation_failure(
+            ctx,
+            prior,
             action,
             operation_id,
+            call_id,
             "response_persistence_failed",
             response
         )
@@ -1970,12 +3124,55 @@ local function execute_inner(params, ctx)
     fail(response)
 end
 
+local function failure_reason_code(message)
+    local rules = {
+        { "stale screenshot_id", "stale_screenshot" },
+        { "screenshot_id expired", "observation_expired" },
+        { "action_token is stale", "action_token_stale" },
+        { "call_id was already used", "call_id_conflict" },
+        { "authorization is blocked", "authorization_blocked" },
+        { "screen context changed", "context_changed" },
+        { "pixels around the intended target changed", "target_pixels_changed" },
+        { "target token is stale", "target_lock_stale" },
+        { "semantic_", "semantic_rejected" },
+        { "AT-SPI", "semantic_unavailable" },
+        { "Hyprland", "hyprland_unavailable" },
+        { "hyprctl", "hyprctl_unavailable" },
+        { "grim", "screenshot_unavailable" },
+        { "ImageMagick", "imagemagick_unavailable" },
+        { "ydotool", "ydotool_unavailable" },
+        { "cancelled", "cancelled" },
+    }
+    for _, rule in ipairs(rules) do
+        if message:find(rule[1], 1, true) then
+            return rule[2]
+        end
+    end
+    return "request_rejected"
+end
+
 local function execute(params, ctx)
+    ctx.__computer_trace = nil
     local ok, result = pcall(execute_inner, params, ctx)
     if ok then
         return result
     end
     local message = tostring(result)
+    local reason_code = failure_reason_code(message)
+    local trace = trace_finish(ctx, reason_code)
+    if trace and type(params) == "table" and params.trace == true then
+        return json.encode({
+            content = json.encode({
+                ok = false,
+                action = params.action,
+                input_delivery = "not_sent",
+                reason_code = reason_code,
+                retry_input = false,
+                next_action = "observe",
+                trace = trace,
+            }),
+        })
+    end
     ctx.ui.notify("computer - failed: " .. message, "error")
     fail(message)
 end
@@ -1985,9 +3182,382 @@ local function execute_observe(params, ctx)
     return execute(params, ctx)
 end
 
+local function doctor_check(ok, reason_code, details)
+    local check = {
+        ok = ok == true,
+        reason_code = reason_code,
+    }
+    if type(details) == "table" then
+        for key, value in pairs(details) do
+            check[key] = value
+        end
+    end
+    return check
+end
+
+local function doctor_atspi_details(result)
+    local details = {
+        available = result.available == true,
+        reason_code = bounded_diagnostic(result.reason_code),
+        checks = {},
+    }
+    local allowed = {
+        python = { "ok", "version" },
+        gi = { "ok", "version" },
+        atspi_bindings = { "ok", "api", "version" },
+        session_bus = { "ok" },
+        desktop = { "ok", "applications" },
+        focused_application = { "ok" },
+        window_calibration = { "ok" },
+    }
+    for name, fields in pairs(allowed) do
+        local source = type(result.checks) == "table" and result.checks[name] or nil
+        if type(source) == "table" then
+            local target = {}
+            for _, field in ipairs(fields) do
+                local value = source[field]
+                if field == "ok" and type(value) == "boolean" then
+                    target.ok = value
+                elseif field == "applications"
+                    and finite(value) and value >= 0 and value <= 100000
+                then
+                    target.applications = math.floor(value)
+                elseif type(value) == "string" then
+                    target[field] = bounded_diagnostic(value)
+                end
+            end
+            details.checks[name] = target
+        end
+    end
+    return details
+end
+
+local function doctor_atspi(ctx, snapshot)
+    local helper = semantic_helper_path(ctx)
+    if not helper then
+        return doctor_check(false, "semantic_helper_unavailable")
+    end
+    local request = {}
+    if type(snapshot) == "table" then
+        request.window = snapshot.window
+    end
+    local raw, kind = exec_result(ctx, "python3", { helper, "doctor" }, {
+        stdin = json.encode(request),
+        timeout_ms = SEMANTIC_TIMEOUT_MS,
+        max_output_bytes = MAX_SEMANTIC_BYTES,
+        env = instance_environment(),
+    })
+    if not raw then
+        return doctor_check(
+            false,
+            kind == "spawn" and "python_unavailable" or "atspi_doctor_failed"
+        )
+    end
+    local decoded, result = pcall(decode_json, raw, "invalid AT-SPI doctor output")
+    if not decoded or type(result) ~= "table" or result.ok ~= true then
+        return doctor_check(false, "atspi_doctor_output_invalid")
+    end
+    local details = doctor_atspi_details(result)
+    return doctor_check(
+        result.available == true,
+        details.reason_code or (result.available == true and "ready" or "atspi_unavailable"),
+        details
+    )
+end
+
+local YDOTOOL_SOCKET_PROBE = [[
+import errno
+import socket
+import sys
+
+probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+probe.settimeout(0.5)
+try:
+    probe.connect(sys.argv[1])
+except OSError as error:
+    if error.errno in (errno.EACCES, errno.EPERM):
+        raise SystemExit(3)
+    if error.errno == errno.ENOENT:
+        raise SystemExit(4)
+    if error.errno == errno.ECONNREFUSED:
+        raise SystemExit(5)
+    if error.errno == errno.ETIMEDOUT:
+        raise SystemExit(6)
+    raise SystemExit(7)
+finally:
+    probe.close()
+]]
+
+local function doctor_hyprland_reason(problem)
+    local message = tostring(problem)
+    if message:find("multiple Hyprland instances", 1, true) then
+        return "hyprland_instance_ambiguous"
+    elseif message:find("no Hyprland instance", 1, true) then
+        return "hyprland_instance_unavailable"
+    elseif message:find("hyprctl is unavailable", 1, true) then
+        return "hyprctl_missing_or_not_executable"
+    end
+    return "hyprland_discovery_failed"
+end
+
+local function doctor_capture_reason(problem)
+    local message = tostring(problem)
+    if message:find("grim is unavailable", 1, true) then
+        return "grim_missing_or_not_executable"
+    elseif message:find("geometry mismatch", 1, true)
+        or message:find("invalid monitor geometry", 1, true)
+    then
+        return "screenshot_geometry_invalid"
+    elseif message:find("screen context changed", 1, true) then
+        return "screen_context_unstable"
+    elseif message:find("hyprctl is unavailable", 1, true) then
+        return "hyprctl_missing_or_not_executable"
+    end
+    return "stable_capture_failed"
+end
+
+local function doctor_socket_reason(kind, detail)
+    if kind == nil then
+        return "ready"
+    elseif kind == "spawn" then
+        return "python_unavailable"
+    end
+    local diagnostic = tostring(detail)
+    if diagnostic:find("exit_code=3", 1, true) then
+        return "ydotool_socket_permission_denied"
+    elseif diagnostic:find("exit_code=4", 1, true) then
+        return "ydotool_socket_missing"
+    elseif diagnostic:find("exit_code=5", 1, true) then
+        return "ydotool_daemon_unavailable"
+    elseif diagnostic:find("exit_code=6", 1, true) then
+        return "ydotool_socket_timeout"
+    end
+    return "ydotool_socket_unreachable"
+end
+
+local function doctor_socket_path()
+    local configured = os.getenv("YDOTOOL_SOCKET")
+    if type(configured) == "string" and configured ~= "" then
+        return configured
+    end
+    local runtime = os.getenv("XDG_RUNTIME_DIR")
+    if type(runtime) == "string" and runtime ~= "" then
+        return runtime .. "/.ydotool_socket"
+    end
+    return nil
+end
+
+local function execute_doctor(params, ctx)
+    if type(params) ~= "table" then
+        fail("computer_doctor parameters must be an object")
+    end
+    for key in pairs(params) do
+        if key ~= "monitor" and key ~= "trace" then
+            fail("computer_doctor received an unsupported field")
+        end
+    end
+    if params.monitor ~= nil
+        and (type(params.monitor) ~= "string"
+            or params.monitor == ""
+            or #params.monitor > 256
+            or params.monitor:find("\0", 1, true))
+    then
+        fail("monitor must be a bounded non-empty output name, 'focused', or 'other'")
+    end
+    if params.trace ~= nil and type(params.trace) ~= "boolean" then
+        fail("trace must be boolean")
+    end
+    if type(ctx.exec) ~= "function"
+        or type(ctx.codec) ~= "table"
+        or type(ctx.codec.sha256) ~= "function"
+    then
+        fail("computer_doctor requires a newer Bone build with ctx.exec and ctx.codec support")
+    end
+
+    local operation_id = "computer-doctor-" .. random_hex(
+        ctx, 12, tostring(monotonic_ms(ctx))
+    )
+    trace_begin(ctx, params.trace, operation_id, ctx.call_id, "doctor")
+    local checks = {}
+    checks.runtime = doctor_check(
+        type(ctx.time) == "table"
+            and type(ctx.time.monotonic_ms) == "function"
+            and type(ctx.time.sleep_ms) == "function"
+            and type(ctx.codec.random_hex) == "function"
+            and type(ctx.codec.png_tiles) == "function"
+            and type(ctx.codec.png_resize) == "function"
+            and type(ctx.codec.png_region_sha256) == "function"
+            and type(ctx.codec.png_diff) == "function",
+        "native_runtime_primitives",
+        {
+            native_timer = type(ctx.time) == "table"
+                and type(ctx.time.sleep_ms) == "function",
+            secure_random = type(ctx.codec.random_hex) == "function",
+            native_png_tiles = type(ctx.codec.png_tiles) == "function",
+            native_png_resize = type(ctx.codec.png_resize) == "function",
+            native_png_region = type(ctx.codec.png_region_sha256) == "function",
+            native_png_diff = type(ctx.codec.png_diff) == "function",
+        }
+    )
+
+    trace_stage(ctx, "hyprland_discovery")
+    local discovered, signature = pcall(
+        discover_signature, ctx, "computer_doctor", true
+    )
+    checks.hyprland_discovery = doctor_check(
+        discovered,
+        discovered and "ready" or doctor_hyprland_reason(signature)
+    )
+
+    local snapshot
+    if discovered then
+        trace_stage(ctx, "stable_capture")
+        local captured
+        local image
+        local image_hash
+        local width
+        local height
+        captured, signature, snapshot, image, image_hash, width, height = pcall(
+            stable_observation,
+            ctx,
+            "computer_doctor",
+            params.monitor,
+            signature,
+            "computer_doctor"
+        )
+        local capture_reason = captured and "ready"
+            or doctor_capture_reason(signature)
+        checks.hyprland_queries = doctor_check(
+            captured,
+            capture_reason
+        )
+        checks.screenshot = doctor_check(
+            captured,
+            capture_reason,
+            captured and {
+                width = width,
+                height = height,
+                bytes = #image,
+                sha256 = image_hash,
+            } or nil
+        )
+        if captured then
+            trace_stage(ctx, "cursor_calibration")
+            local cursor_ok, cursor = pcall(
+                query_json,
+                ctx,
+                signature,
+                { "-j", "cursorpos" },
+                "computer_doctor",
+                "invalid cursor position"
+            )
+            cursor_ok = cursor_ok and type(cursor) == "table"
+                and finite(cursor.x) and finite(cursor.y)
+            local monitor = snapshot.monitor
+            local _, _, logical_width, logical_height =
+                monitor_dimensions(monitor)
+            checks.cursor_calibration = doctor_check(
+                cursor_ok,
+                cursor_ok and "ready" or "cursor_query_failed",
+                cursor_ok and {
+                    on_selected_monitor = cursor.x >= monitor.x
+                        and cursor.x < monitor.x + logical_width
+                        and cursor.y >= monitor.y
+                        and cursor.y < monitor.y + logical_height,
+                    transform = monitor.transform,
+                    scale = monitor.scale,
+                } or nil
+            )
+        else
+            snapshot = nil
+            checks.cursor_calibration = doctor_check(false, "stable_capture_unavailable")
+        end
+    else
+        checks.hyprland_queries = doctor_check(false, "hyprland_discovery_unavailable")
+        checks.screenshot = doctor_check(false, "hyprland_discovery_unavailable")
+        checks.cursor_calibration = doctor_check(false, "hyprland_discovery_unavailable")
+    end
+
+    trace_stage(ctx, "dependency_checks")
+    local _, magick_kind = exec_result(ctx, "magick", { "-version" }, {
+        timeout_ms = EXEC_TIMEOUT_MS,
+        max_output_bytes = 16 * 1024,
+    })
+    checks.image_magick = doctor_check(
+        magick_kind == nil,
+        magick_kind == nil and "ready"
+            or (magick_kind == "spawn" and "imagemagick_missing" or "imagemagick_failed")
+    )
+
+    local _, ydotool_kind = exec_result(ctx, "ydotool", { "--help" }, {
+        timeout_ms = EXEC_TIMEOUT_MS,
+        max_output_bytes = 64 * 1024,
+    })
+    checks.ydotool_binary = doctor_check(
+        ydotool_kind ~= "spawn",
+        ydotool_kind == "spawn" and "ydotool_missing"
+            or (ydotool_kind == nil and "ready" or "ydotool_help_failed")
+    )
+
+    local socket_path = doctor_socket_path()
+    if type(socket_path) ~= "string"
+        or socket_path == ""
+        or #socket_path > 4096
+        or socket_path:find("\0", 1, true)
+    then
+        checks.ydotool_socket = doctor_check(false, "ydotool_socket_path_unavailable")
+    else
+        local _, socket_kind, socket_detail = exec_result(
+            ctx,
+            "python3",
+            { "-c", YDOTOOL_SOCKET_PROBE, socket_path },
+            {
+                timeout_ms = EXEC_TIMEOUT_MS,
+                max_output_bytes = 4096,
+            }
+        )
+        checks.ydotool_socket = doctor_check(
+            socket_kind == nil,
+            doctor_socket_reason(socket_kind, socket_detail)
+        )
+    end
+
+    trace_stage(ctx, "atspi")
+    checks.atspi = doctor_atspi(ctx, snapshot)
+
+    local coordinate_ready = checks.hyprland_discovery.ok
+        and checks.hyprland_queries.ok
+        and checks.screenshot.ok
+        and checks.cursor_calibration.ok
+        and checks.ydotool_binary.ok
+        and checks.ydotool_socket.ok
+    local presentation_ready = checks.image_magick.ok
+        or checks.runtime.native_png_resize == true
+    local target_lock_ready = checks.image_magick.ok
+        or checks.runtime.native_png_region == true
+    local grid_ready = checks.image_magick.ok
+    local full_ready = coordinate_ready and presentation_ready
+    local reason_code = full_ready and "ready" or "computer_dependencies_unavailable"
+    return json.encode({
+        content = json.encode({
+            operation_id = operation_id,
+            ok = full_ready,
+            coordinate_ready = coordinate_ready,
+            presentation_ready = presentation_ready,
+            target_lock_ready = target_lock_ready,
+            grid_ready = grid_ready,
+            semantic_ready = checks.atspi.ok,
+            reason_code = reason_code,
+            checks = checks,
+            privacy = "No screenshot pixels, window titles, typed text, command arguments, or accessibility names are included.",
+            trace = trace_finish(ctx, reason_code),
+        }),
+    })
+end
+
 bone.tool.register({
     name = "computer_observe",
-    description = "Start or recover computer control. Capture the selected Hyprland monitor, always attach its PNG, and return screenshot_id. Call this before computer and again after any failed or cancelled computer operation.",
+    description = "Start or recover computer control. Capture a stable selected Hyprland monitor observation, always attach its PNG, and return separate screenshot_id and single-use action_token values. Call this before computer and again after any failed or cancelled computer operation.",
     safety = "read_only",
     stateful = true,
     state_key = STATE_KEY,
@@ -2006,6 +3576,10 @@ bone.tool.register({
                 type = "boolean",
                 description = "Overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions.",
             },
+            trace = {
+                type = "boolean",
+                description = "Include a bounded privacy-safe stage/process timing trace.",
+            },
         },
         additionalProperties = false,
     },
@@ -2013,9 +3587,34 @@ bone.tool.register({
 })
 
 bone.tool.register({
+    name = "computer_doctor",
+    description = "Run read-only, privacy-safe diagnostics for the Hyprland computer tool. Checks compositor selection, stable PNG capture and geometry, cursor calibration, ImageMagick, ydotool and its socket, Python/GI/AT-SPI, and Bone native timer/image primitives without emitting input.",
+    safety = "read_only",
+    display = {
+        template = "checking computer control",
+        show_result = true,
+    },
+    parameters = {
+        type = "object",
+        properties = {
+            monitor = {
+                type = "string",
+                description = "Hyprland output name, 'focused' (default), or 'other' when exactly two monitors are enabled.",
+            },
+            trace = {
+                type = "boolean",
+                description = "Include a bounded privacy-safe stage/process timing trace.",
+            },
+        },
+        additionalProperties = false,
+    },
+    execute = execute_doctor,
+})
+
+bone.tool.register({
     name = "computer",
     catalog_description = catalog_description,
-    description = "Act on the screenshot returned by computer_observe or the immediately preceding successful computer call. Use semantic_find to list verified AT-SPI controls in the focused window and semantic_click to click one after fresh re-resolution. Screenshot coordinates remain available for inaccessible applications. screenshot_id is always required: copy it exactly from the prior result. For click actions, supply a concise non-sensitive target_label for the transcript. Input is sent once and never retried automatically.",
+    description = "Act on a stable observation returned by computer_observe or the immediately preceding successful computer call. Every input action requires both screenshot_id and its single-use action_token. Semantic controls are re-resolved by fingerprint and directly activated through AT-SPI when supported. Input is reserved before delivery, sent at most once, and never automatically retried.",
     safety = "danger",
     stateful = true,
     state_key = STATE_KEY,
@@ -2053,12 +3652,61 @@ bone.tool.register({
                 minLength = 1,
                 description = "Required. Copy the exact screenshot_id from computer_observe or the immediately preceding successful computer call.",
             },
+            action_token = {
+                type = "string",
+                minLength = 16,
+                maxLength = 128,
+                description = "Input actions only. Copy the single-use action_token from the immediately preceding successful observation.",
+            },
             semantic_id = {
                 type = "string",
                 minLength = 7,
                 maxLength = 160,
                 pattern = "^atspi:[0-9]+([.][0-9]+)*$",
                 description = "semantic_click only: exact target id returned by the preceding semantic_find.",
+            },
+            query = {
+                type = "string",
+                minLength = 1,
+                maxLength = 160,
+                description = "semantic_find only: bounded case-insensitive accessible-name query.",
+            },
+            roles = {
+                type = "array",
+                minItems = 1,
+                maxItems = 16,
+                uniqueItems = true,
+                items = {
+                    type = "string",
+                    enum = {
+                        "button", "check_box", "combo_box", "entry",
+                        "password_text", "link", "list_item", "menu_item",
+                        "page_tab", "radio_button", "slider", "spin_button",
+                        "toggle_button", "tree_item",
+                    },
+                },
+                description = "semantic_find only: include only these canonical roles.",
+            },
+            near = {
+                type = "object",
+                properties = {
+                    x = { type = "number", minimum = 0, maximum = 1 },
+                    y = { type = "number", minimum = 0, maximum = 1 },
+                    radius = {
+                        type = "number",
+                        exclusiveMinimum = 0,
+                        maximum = 1,
+                    },
+                },
+                required = { "x", "y" },
+                additionalProperties = false,
+                description = "semantic_find only: rank/filter near a normalized monitor coordinate.",
+            },
+            max_results = {
+                type = "integer",
+                minimum = 1,
+                maximum = MAX_SEMANTIC_TARGETS,
+                description = "semantic_find only: maximum ranked targets to return.",
             },
             target_label = {
                 type = "string",
@@ -2102,6 +3750,10 @@ bone.tool.register({
                 description = "Input actions, including scroll: delay after input before refreshing the screenshot.",
             },
             grid = { type = "boolean", description = "Overlay labeled 0.1 coordinate lines with finer 0.05 subdivisions on the returned screenshot." },
+            trace = {
+                type = "boolean",
+                description = "Include a bounded privacy-safe stage/process timing trace.",
+            },
         },
         required = { "action", "screenshot_id" },
         additionalProperties = false,

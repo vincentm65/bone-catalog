@@ -2,44 +2,261 @@
 
 ## Hyprland computer tool
 
-The `computer` tool observes and controls the focused monitor in a running Hyprland session. It returns JPEG screenshots and uses normalized `0`–`1000` coordinates. It intentionally does not launch applications or perform system setup; use Bone's existing `shell` tool to launch applications.
+The catalog exposes two state-sharing tools:
+
+- `computer_observe` is read-only. It captures a stable Hyprland monitor
+  observation and returns a `screenshot_id` plus a single-use `action_token`.
+- `computer` inspects that observation, discovers semantic controls, waits for
+  UI changes, or sends input. Input actions require both values from the most
+  recent successfully persisted observation.
+
+Screenshots are PNG images. Coordinates are finite normalized values from `0`
+through `1` relative to the full selected monitor; they are not percentages or
+`0`–`1000` values. The tool does not launch applications, install packages,
+start daemons, or alter device permissions. Use Bone's `shell` tool for
+application launch and system inspection.
 
 ### Requirements and setup
 
-Run Bone as the desktop user inside the Hyprland session that will be controlled. The process must inherit a valid `HYPRLAND_INSTANCE_SIGNATURE` and be able to run `hyprctl monitors -j`.
+Run Bone as the desktop user in the Hyprland session to be controlled. The
+process needs access to the Hyprland IPC socket. A valid
+`HYPRLAND_INSTANCE_SIGNATURE` is preferred; the tool can discover the current
+user's instance when the variable is absent, but it rejects ambiguous multiple
+instances instead of guessing.
 
-Install these dependencies using your operating system's normal package-management process:
+Install these dependencies through the operating system:
 
 - Hyprland tools, including `hyprctl`
 - `grim`
 - ImageMagick with the `magick` command
-- `ydotool`
+- `ydotool`, with `ydotoold` already running and authorized
+- Python 3, PyGObject/GI, and AT-SPI bindings for semantic targeting and safe
+  typing-focus verification
 
-`ydotoold` must already be running with permission to create input events. Start and configure it yourself according to your distribution's security model. If it uses a non-default socket, export `YDOTOOL_SOCKET` in Bone's environment. Bone and the catalog tool never install packages, start `ydotoold`, alter device permissions, or attempt privileged setup.
+ImageMagick remains required for magnified target inspection and optional
+grids. On older Bone builds it is also the compatibility path for overview
+resizing, tile/region hashing, and image differences. A current Bone build
+provides native monotonic timers, cancellable waits, random token generation,
+PNG resizing, tile hashing, exact region hashing, and in-memory PNG
+differences. The catalog feature-detects each helper independently and keeps
+bounded ImageMagick or timer fallbacks where available.
 
-Before use, verify from the same environment that runs Bone:
+If `ydotoold` uses a non-default socket, export `YDOTOOL_SOCKET` in Bone's
+environment. Use the read-only `computer_doctor` tool to probe the binary and
+daemon socket without emitting a test input into the live desktop.
+
+Safe checks from the same environment that runs Bone include:
 
 ```sh
+hyprctl instances -j
 hyprctl monitors -j
 grim /tmp/bone-grim-check.png
 magick identify /tmp/bone-grim-check.png
-ydotool mousemove --absolute 0 0
+python3 -c 'import gi; gi.require_version("Atspi", "2.0"); from gi.repository import Atspi'
 ```
 
-Remove the temporary screenshot after checking it. The `ydotool` command should connect to the intended daemon socket; a missing-socket or permission error must be resolved outside Bone.
+Remove the temporary screenshot after checking it. Missing sockets,
+permissions, session-bus access, or AT-SPI exposure must be fixed outside the
+computer tool.
+
+### Read-only diagnostics
+
+Call `computer_doctor` before the first live workflow or when dependencies
+change:
+
+```text
+computer_doctor(monitor="focused", trace=true)
+```
+
+`monitor` accepts the same output name, `focused`, or two-monitor `other`
+selection as `computer_observe`. The result contains:
+
+- top-level `coordinate_ready`, `presentation_ready`, `target_lock_ready`,
+  `grid_ready`, and independently evaluated `semantic_ready` booleans, plus an
+  overall `ok` and stable `reason_code`;
+- Bone runtime flags for native timing, secure random tokens, PNG resize, tile
+  hashes, exact region hashes, and in-memory PNG differences;
+- Hyprland discovery/query status and stable `grim` PNG dimensions, byte count,
+  and hash;
+- cursor calibration status, selected-output transform and scale, and whether
+  the current cursor is on that output;
+- separate ImageMagick and `ydotool` binary checks, plus `ydotoold` socket
+  categories for a missing path/socket, permission denial, unavailable daemon,
+  timeout, or another connection failure; and
+- privacy-safe Python, GI, AT-SPI binding, session-bus, desktop,
+  focused-application, and window-calibration checks.
+
+`ok` requires the coordinate and presentation paths; target locks, grids, and
+semantic support are reported separately so callers can see which narrower
+features remain usable. Inspect the individual `checks` entries as well as the
+summary booleans because native fast paths and their compatibility dependencies
+are also reported independently. The
+doctor may capture a screen internally to verify PNG geometry, but it returns
+no image pixels, creates no computer state, moves no pointer, and emits no input
+event. Its socket probe only connects and closes. With `trace=true`, it also
+returns the same bounded stage/process diagnostic used by the computer tools.
+
+### Authorization and recovery
+
+Every successfully captured and persisted observation returns a pair:
+
+- `screenshot_id` identifies the clean captured pixels. It can remain unchanged
+  when a later capture has identical pixels.
+- `action_token` authorizes exactly one input action. A fresh token is issued
+  after every newly persisted observation, even when `screenshot_id` is reused.
+
+Always copy both values from the immediately preceding observation response.
+`inspect`, `semantic_find`, and `wait` do not send input, but their successful
+responses still rotate the token, so older tokens must not be reused. Bone
+supplies a bounded host `call_id` for each mutating tool call; it is not a
+`computer` parameter.
+
+Before input, the tool consumes the token and persists a bounded `call_id`
+outcome ledger. Replaying the same completed call returns its recorded outcome
+without sending input again. Replaying an in-flight or ambiguous call also
+sends no input, and reusing a `call_id` with different parameters is rejected.
+Input is never automatically retried.
+
+Structured failure results distinguish three delivery states:
+
+- `input_delivery="not_sent"` means request, context, or freshness validation
+  rejected the action before an input program was attempted.
+- `input_delivery="not_delivered"` means reservation occurred, but the input
+  executable was proven not to have started. Fix the dependency, call
+  `computer_observe`, and decide whether to create a new action from that fresh
+  screen. Replaying the old `call_id` only returns its ledger outcome.
+- `input_delivery="sent_unverified"` means delivery or post-action observation
+  is ambiguous. The effect may already have happened. Do not repeat the action;
+  call `computer_observe` and inspect the current UI before making any new
+  decision.
+
+When these fields are returned, all three use `retry_input=false` and direct
+recovery through `computer_observe`; only the ambiguous case blocks
+authorization because input may have crossed the boundary. A fresh observation
+rotates authorization in every case. Old or corrupt state versions likewise
+require a fresh observation.
+
+### Reliability checks
+
+An accepted observation is a transaction: the tool reads output, workspace,
+focused-window, geometry, scale, transform, and Hyprland-instance metadata,
+captures pixels, then verifies the same metadata again. Pre-input and
+post-input screenshots use the same stable-observation path.
+
+Immediately before coordinate input, the tool compares the intended target
+tile (both endpoint tiles for a drag) with the referenced observation. Changes
+elsewhere on the monitor do not invalidate that local check. `click_locked`
+adds a short-lived exact patch lock created by `inspect`. Coordinate pointer
+moves are read back through Hyprland and must be within one logical pixel before
+a click, drag, or scroll proceeds.
+
+Semantic targeting uses AT-SPI controls scoped to the focused window:
+
+1. Call `computer` with `action="semantic_find"` and the current
+   `screenshot_id`. Optional bounded filters are `query`, `roles`, `near`, and
+   `max_results`.
+2. Select an exact returned `semantic_id`. Results are ranked toward named,
+   enabled, visible, actionable controls and report traversal, truncation, and
+   privacy-safe rejection counts.
+3. Call `semantic_click` with that ID plus the latest `screenshot_id` and
+   `action_token`. The helper re-resolves an opaque semantic fingerprint just
+   before delivery. It invokes a verified AT-SPI action directly when one is
+   available, otherwise it uses the freshly resolved center as the explicit
+   coordinate fallback.
+
+Ambiguous fingerprints or changed controls are rejected without input.
+Password controls are returned as `[protected]`, and their names and values are
+not read. Before `type`, the helper requires exactly one focused, safely
+editable AT-SPI control; typing is rejected when that cannot be verified.
+
+Persisted tool state contains salted context and semantic-name digests rather
+than window titles, window classes, typed text, accessibility names, or
+screenshots. Human-readable semantic names can still appear in the immediate
+`semantic_find` response so a caller can choose a target; protected names
+remain redacted.
+
+### Tracing and performance
+
+Set `trace=true` on any of the three tools to include a bounded, in-memory
+diagnostic with
+stage timings, subprocess counts, dependency exit categories, the
+`operation_id`, the host `call_id`, a terminal reason code, hashed
+instance/context identity, capture dimensions/byte counts/hashes, visual-change
+evidence and bounds, requested versus actual pointer position, and bounded
+semantic traversal/match/truncation/rejection counters. Runtime rejections after
+trace initialization return the trace with a stable terminal category. Default
+traces exclude command arguments, subprocess output, titles, typed text,
+accessibility names and values, and screenshot pixels. A persistent local trace
+bundle remains planned and is not yet exposed.
+
+For a minimal bug report:
+
+1. Run `computer_doctor(trace=true)` and retain its reason codes and sanitized
+   checks.
+2. Start with `computer_observe(trace=true)`.
+3. Reproduce the problem once with the latest IDs and `trace=true`.
+4. Record the `operation_id`, `call_id`, `reason_code`, delivery state, stage
+   timings, and subprocess categories. Do not add titles, typed text, or
+   screenshot content.
+5. If the response says delivery is ambiguous, do not retry; recover with
+   `computer_observe`.
+
+Common terminal categories include `completed`, `input_delivery_ambiguous`,
+`pointer_position_mismatch`,
+`post_action_observation_failed`, and `response_persistence_failed`. Semantic
+failures use stable helper categories such as `target_stale`,
+`target_ambiguous`, `activation_rejected`, and
+`focused_control_not_editable`. Ledger replays set `replayed=true`, include a
+`ledger_status`, and never repeat input. Validation failures occur before input
+and include an actionable recovery message.
+
+The low-risk speed path caches a confirmed Hyprland instance signature, uses
+native cancellable waits when the Bone runtime provides them, and uses native
+in-memory PNG resize, tile, exact-region, and difference helpers instead of
+ImageMagick subprocesses. Native resize removes the large-overview resize
+process; native region hashing removes the former `click_locked` crop/hash
+process. Each has an older-Bone ImageMagick fallback.
+
+Regression tests currently bound the native fast path to at most four
+subprocesses for a cached observation and ten for a stable coordinate click
+(two transactional captures plus verified input and, when needed, one
+defensive instance rediscovery). A click is nine when the cached signature
+matches the inherited Hyprland signature. These paths use no external `sleep`
+or ImageMagick process. Identical captures reuse the prior screenshot
+attachment while still rotating authorization. Per-call Python/GI startup,
+direct model-sized capture, binary blob handles, a persistent semantic bridge,
+and a fully native backend remain future work.
 
 ### Manual Firefox workflow
 
-This workflow is a manual end-to-end check. Coordinate values are examples; choose targets from each returned screenshot.
+This is a manual end-to-end check. Coordinates below are selected from each
+returned screenshot.
 
-1. Launch Firefox with Bone's `shell` tool, for example `firefox`, and wait for its window to become focused. Do not add launching behavior to `computer`.
-2. Call `computer` with `action="observe"`. Confirm the focused monitor is shown and save the returned `screenshot_id`.
-3. Call `computer` with `action="click"`, normalized `x`/`y` coordinates for Firefox's address bar, and that exact `screenshot_id`.
-4. Use the new screenshot ID returned by the click for `action="type"` with a URL such as `https://example.com`.
-5. Use the new screenshot ID returned by typing for `action="key", keys="ENTER"`.
-6. Use each newly returned screenshot ID for the next operation. Call `action="wait", duration_ms=1000` if the page needs time to render, then verify the page in its returned screenshot.
-7. Call `action="scroll"` with normalized coordinates over the page and a nonzero `amount`; verify the returned screenshot moved through the page.
-8. Retry any action with an older screenshot ID and verify that it is rejected as stale before input is emitted. Changing focused-monitor geometry between observation and action should likewise require a new observation.
-9. Optionally call `observe` with `grid=true` and verify the faint 10×10 overlay. A normal `observe` should remain clean.
+1. Call `computer_doctor` and inspect every failed check without allowing it to
+   make system changes.
+2. Launch Firefox with Bone's `shell` tool and focus its window.
+3. Call `computer_observe`. Confirm that a PNG of the intended monitor is
+   attached, then save both `screenshot_id` and `action_token`.
+4. Call `computer(action="click", x=..., y=..., screenshot_id=...,
+   action_token=...)` on Firefox's address bar.
+5. Copy the fresh pair from the click response and call `type` with the URL.
+   The tool proceeds only if AT-SPI verifies that exactly one safely editable
+   control has focus.
+6. Copy the next fresh pair and call `key` with `keys="ENTER"`.
+7. Use `wait` if the page needs time to render. Copy the fresh pair from every
+   successful response; do not assume an unchanged `screenshot_id` means the
+   token is unchanged.
+8. Call `scroll` with normalized coordinates over a visible scrollable region
+   and a nonzero `amount`, then inspect the post-action PNG.
+9. Reuse an older token and confirm it is rejected before input. If a response
+   reports uncertain delivery, do not repeat it; recover with
+   `computer_observe`. The automated idempotency harness, rather than a live
+   manual retry, verifies that replaying the same host `call_id` emits no input.
+10. Optionally use `computer_observe(grid=true)`. The overlay is
+   presentation-only; the captured state and freshness hashes remain based on
+   the clean screenshot.
 
-If `ydotoold` is unavailable, observation can still be checked, but the input portion of this workflow is blocked until the user provides a working daemon and socket. Do not start or reconfigure it automatically.
+If `ydotoold` is unavailable, observation and semantic discovery can still be
+tested, but coordinate input is blocked. `computer_doctor` reports that
+condition without sending input; do not let the tool start or reconfigure the
+daemon automatically.
