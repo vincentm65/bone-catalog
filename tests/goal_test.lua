@@ -66,7 +66,7 @@ local function ctx(id)
       assert(files[path] ~= nil, "missing file " .. path)
       return files[path]
     end,
-    write_file = function(path, content)
+    create_file = function(path, content)
       assert(files[path] == nil)
       files[path] = content
       return true

@@ -154,7 +154,7 @@ local function write_goal(ctx, path, content)
     end
 
     if ctx.fs.exists(path) ~= true then
-        local ok, err = pcall(ctx.write_file, path, content)
+        local ok, err = pcall(ctx.create_file, path, content)
         if not ok then return false, tostring(err) end
         return true
     end

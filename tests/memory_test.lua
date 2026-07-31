@@ -81,8 +81,8 @@ local ctx = {
       assert(files[path] ~= nil, "missing file: " .. path)
       return files[path]
    end,
-   write_file = function(path, content)
-      assert(files[path] == nil, "write_file must not overwrite: " .. path)
+   create_file = function(path, content)
+      assert(files[path] == nil, "create_file must not overwrite: " .. path)
       files[path] = content
    end,
    tools = {

@@ -170,7 +170,7 @@ local function write_or_rewrite(ctx, path, content, expected_old)
         if expected_old ~= nil and expected_old ~= "" then
             return false, "file changed while memory was being updated", "conflict"
         end
-        local ok, err = pcall(ctx.write_file, path, content)
+        local ok, err = pcall(ctx.create_file, path, content)
         if not ok and ctx.fs.is_file(path) then
             return false, "file changed while memory was being updated", "conflict"
         end
