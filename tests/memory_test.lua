@@ -326,6 +326,51 @@ files["/config/memory.md"] = "- preserved legacy preference"
 action = before_turn(nil, ctx)
 assert(action.system_prompt_append:find("preserved legacy preference", 1, true))
 
+-- Legacy oversized records are skipped, preserved in order, and never force an unsafe rewrite.
+local oversize_state_path = "/config/memory/state.json"
+local oversize_inbox_path = "/config/memory/inbox.jsonl"
+local editable_legacy = encode({
+   ts = "2026-07-17T00:00:00Z", cwd = "/work/project",
+   content = "legacy editable " .. string.rep("e", 1800), scope = "global", source = "before_turn",
+})
+assert(utf8.len(editable_legacy) > 1900 and utf8.len(editable_legacy) <= 2000)
+local editable_safe = encode({
+   ts = "2026-07-17T00:00:01Z", cwd = "/work/project",
+   content = "Prefer safe inbox handling", scope = "global", source = "manual",
+})
+files[oversize_state_path] = '{"last_conversation_id":12}\n'
+files[oversize_inbox_path] = editable_legacy .. "\n" .. editable_safe .. "\n"
+local editable_state_before = files[oversize_state_path]
+result = command.handler("", ctx)
+assert(result.display == "Memory updated.", result.display)
+assert(files[oversize_inbox_path] == editable_legacy .. "\n")
+assert(files[oversize_state_path] ~= editable_state_before)
+assert(not agent_prompts[#agent_prompts]:find("legacy editable", 1, true))
+
+local uneditable_legacy = encode({
+   ts = "2026-07-17T00:00:02Z", cwd = "/work/project",
+   content = "legacy uneditable " .. string.rep("u", 2000), scope = "global", source = "before_turn",
+})
+assert(utf8.len(uneditable_legacy) > 2000)
+local uneditable_safe = encode({
+   ts = "2026-07-17T00:00:03Z", cwd = "/work/project",
+   content = "Prefer safe records", scope = "global", source = "manual",
+})
+files[oversize_state_path] = '{"last_conversation_id":13}\n'
+files[oversize_inbox_path] = uneditable_legacy .. "\n" .. uneditable_safe .. "\n"
+local uneditable_state_before = files[oversize_state_path]
+local uneditable_inbox_before = files[oversize_inbox_path]
+result = command.handler("", ctx)
+assert(result.display:find("inbox checkpoint failed", 1, true), result.display)
+assert(files[oversize_state_path] == uneditable_state_before)
+assert(files[oversize_inbox_path] == uneditable_inbox_before)
+assert(agent_prompts[#agent_prompts]:find("Prefer safe records", 1, true))
+assert(not agent_prompts[#agent_prompts]:find("legacy uneditable", 1, true))
+result = command.handler("remember --global Another safe preference", ctx)
+assert(result.display:find("line too long", 1, true), result.display)
+assert(files[oversize_state_path] == uneditable_state_before)
+assert(files[oversize_inbox_path] == uneditable_inbox_before)
+
 -- Extraction failures preserve the checkpoint and inbox so the batch can retry.
 local state_path = "/config/memory/state.json"
 local inbox_path = "/config/memory/inbox.jsonl"

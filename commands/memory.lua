@@ -451,20 +451,25 @@ local function read_inbox_records(ctx, p)
         return nil, nil, "inbox exceeds size limit; reduce or archive it before retrying"
     end
     local records = jsonl_records(raw)
-    for _, line in ipairs(records) do
+    local oversized = {}
+    local has_uneditable = false
+    for index, line in ipairs(records) do
         local ok, chars = pcall(utf8.len, line)
         if not ok or not chars then
             return nil, nil, "inbox contains invalid UTF-8"
         end
         if chars > MAX_INBOX_RECORD_CHARS then
-            return nil, nil, "inbox contains a record too large to update safely"
+            oversized[index] = true
+        end
+        if chars > MAX_EDIT_LINE_CHARS then
+            has_uneditable = true
         end
     end
-    return raw, records, nil
+    return raw, records, nil, oversized, has_uneditable
 end
 
 local function load_inbox(ctx, p)
-    local _, records, read_err = read_inbox_records(ctx, p)
+    local _, records, read_err, oversized = read_inbox_records(ctx, p)
     if not records then return nil, read_err end
 
     local selected = {}
@@ -474,22 +479,26 @@ local function load_inbox(ctx, p)
         has_project = false,
     }
     local cwd = tostring(ctx.cwd or bone.cwd or "")
-    for _, line in ipairs(records) do
-        local ok, entry = pcall(cjson.decode, line)
-        if not ok or type(entry) ~= "table" then
-            ctx.log.warn("memory: retaining invalid inbox record")
-        elseif entry.scope == "project" then
-            if tostring(entry.cwd or "") == cwd then
+    for index, line in ipairs(records) do
+        if oversized[index] then
+            ctx.log.warn("memory: retaining oversized inbox record")
+        else
+            local ok, entry = pcall(cjson.decode, line)
+            if not ok or type(entry) ~= "table" then
+                ctx.log.warn("memory: retaining invalid inbox record")
+            elseif entry.scope == "project" then
+                if tostring(entry.cwd or "") == cwd then
+                    selected[#selected + 1] = line
+                    batch.consume[#batch.consume + 1] = line
+                    batch.has_project = true
+                end
+            elseif entry.scope == nil or entry.scope == "" or entry.scope == "global" then
                 selected[#selected + 1] = line
                 batch.consume[#batch.consume + 1] = line
-                batch.has_project = true
+                batch.has_global = true
+            else
+                ctx.log.warn("memory: retaining inbox record with unknown scope")
             end
-        elseif entry.scope == nil or entry.scope == "" or entry.scope == "global" then
-            selected[#selected + 1] = line
-            batch.consume[#batch.consume + 1] = line
-            batch.has_global = true
-        else
-            ctx.log.warn("memory: retaining inbox record with unknown scope")
         end
     end
     batch.text = table.concat(selected, "\n")
@@ -500,8 +509,11 @@ local function consume_inbox(ctx, p, consumed)
     if #consumed == 0 or not ctx.fs.is_file(p.inbox) then
         return true
     end
-    local raw, records, read_err = read_inbox_records(ctx, p)
+    local raw, records, read_err, _, has_uneditable = read_inbox_records(ctx, p)
     if not records then return false, read_err end
+    if has_uneditable then
+        return false, "inbox contains a line too long to update safely"
+    end
 
     local remaining = {}
     local counts = {}
@@ -536,8 +548,11 @@ local function append_inbox(ctx, p, content, scope, source)
     end
 
     for _ = 1, 3 do
-        local old, records, read_err = read_inbox_records(ctx, p)
+        local old, records, read_err, _, has_uneditable = read_inbox_records(ctx, p)
         if not records then return false, read_err end
+        if has_uneditable then
+            return false, "inbox contains a line too long to update safely"
+        end
         records[#records + 1] = entry
         local updated = jsonl_text(records)
         if #updated > MAX_INBOX_CHARS then
@@ -757,18 +772,17 @@ bone.command.register("memory", {
         end
         if #findings == 0 and trim(inbox.text) == "" then
             state.last_conversation_id = max_id
+            local inbox_ok, consume_err = consume_inbox(ctx, p, inbox.consume)
+            if not inbox_ok then
+                return {
+                    display = "Memory checkpoint and inbox unchanged: " .. tostring(consume_err),
+                    submit = false,
+                }
+            end
             status(ctx, "Memory: saving checkpoint…")
             local state_ok, state_err = state_write(ctx, p, state, state_snapshot)
             if not state_ok then
                 return { display = "Memory checkpoint failed: " .. tostring(state_err), submit = false }
-            end
-            local inbox_ok, consume_err = consume_inbox(ctx, p, inbox.consume)
-            if not inbox_ok then
-                return {
-                    display = "Memory checkpoint saved, but inbox cleanup failed: "
-                        .. tostring(consume_err),
-                    submit = false,
-                }
             end
             return { display = string.format("Processed %d conversation(s). No durable preferences found.", #cids_rows), submit = false }
         end
@@ -780,15 +794,15 @@ bone.command.register("memory", {
             return { display = "Memory error: " .. tostring(message), submit = false }
         end
 
+        local inbox_ok, inbox_err = consume_inbox(ctx, p, inbox.consume)
+        if not inbox_ok then
+            return { display = "Memory updated, but inbox checkpoint failed: " .. tostring(inbox_err), submit = false }
+        end
         state.last_conversation_id = max_id
         status(ctx, "Memory: saving checkpoint…")
         local state_ok, state_err = state_write(ctx, p, state, state_snapshot)
         if not state_ok then
             return { display = "Memory updated, but checkpoint failed: " .. tostring(state_err), submit = false }
-        end
-        local inbox_ok, inbox_err = consume_inbox(ctx, p, inbox.consume)
-        if not inbox_ok then
-            return { display = "Memory updated, but inbox checkpoint failed: " .. tostring(inbox_err), submit = false }
         end
         return { display = message, submit = false }
     end,
