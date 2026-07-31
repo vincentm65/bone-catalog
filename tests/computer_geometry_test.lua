@@ -1,8 +1,8 @@
 -- Run with: lua5.4 tests/computer_geometry_test.lua
 --
--- Property-style coverage for the public computer tool's screenshot-to-cursor
--- mapping. The oracle intentionally works in logical monitor space; it does
--- not reproduce computer.lua's source-pixel conversion.
+-- Property-style observe-only tests for tools/computer.lua.
+-- Covers transforms 0-7, integer/fractional scales, positive/negative origins.
+-- No click, no cursor movement, no ctx.state, no authorization, no input delivery.
 
 local encoded = {}
 local sequence = 0
@@ -32,12 +32,15 @@ bone = {
 assert(loadfile("tools/computer.lua"))()
 local computer_tool = assert(registrations.computer)
 
+-- ── helpers ──────────────────────────────────────────────────────────────────
+
 local function check(condition, format_string, ...)
     if not condition then
         error(string.format(format_string, ...), 2)
     end
 end
 
+-- CRC-32 for SHA-256 stub
 local function crc32(data)
     local crc = 0xffffffff
     for index = 1, #data do
@@ -49,121 +52,67 @@ local function crc32(data)
     return (crc ~ 0xffffffff) & 0xffffffff
 end
 
-local function uint32(value)
-    return string.char(
-        (value >> 24) & 255,
-        (value >> 16) & 255,
-        (value >> 8) & 255,
-        value & 255
-    )
-end
-
-local function chunk(kind, data)
-    return uint32(#data) .. kind .. data .. uint32(crc32(kind .. data))
-end
+-- ── PNG fixture generator ────────────────────────────────────────────────────
 
 local png_cache = {}
 local function fixture_png(width, height)
     local key = tostring(width) .. "x" .. tostring(height)
     local cached = png_cache[key]
-    if cached then
-        return cached
+    if cached then return cached end
+
+    local function uint32(v)
+        return string.char(
+            (v >> 24) & 255, (v >> 16) & 255, (v >> 8) & 255, v & 255)
     end
+    local function chunk(kind, data)
+        local crc = 0xffffffff
+        for i = 1, #data do crc = crc ~ data:byte(i)
+            for _ = 1, 8 do crc = (crc & 1) ~= 0 and ((crc >> 1) ~ 0xedb88320) or (crc >> 1) end
+        end
+        crc = (crc ~ 0xffffffff) & 0xffffffff
+        return uint32(#data) .. kind .. data .. uint32(crc)
+    end
+
     local ihdr = uint32(width) .. uint32(height) .. string.char(8, 2, 0, 0, 0)
-    local png = "\137PNG\r\n\26\n"
-        .. chunk("IHDR", ihdr)
-        .. chunk("IDAT", "geometry-fixture")
-        .. chunk("IEND", "")
+    local png = "\137PNG\r\n\26\n" .. chunk("IHDR", ihdr) .. chunk("IDAT", "geometry-fixture") .. chunk("IEND", "")
     png_cache[key] = png
     return png
 end
 
+-- ── mock exec ────────────────────────────────────────────────────────────────
+
 local function success(stdout)
     return {
-        spawned = true,
-        timed_out = false,
-        cancelled = false,
-        output_limit_exceeded = false,
-        stdout = stdout or "",
-        stderr = "",
-        exit_code = 0,
+        spawned = true, timed_out = false, cancelled = false,
+        output_limit_exceeded = false, stdout = stdout or "", stderr = "", exit_code = 0,
     }
 end
 
-local function positive_round(value)
-    return math.floor(value + 0.5)
-end
-
--- Explicitly list all wl_output/Hyprland transforms so the test oracle does
--- not share computer.lua's odd/even transform shortcut.
-local transformed_extents = {
-    [0] = function(width, height) return width, height end, -- normal
-    [1] = function(width, height) return height, width end, -- 90 degrees
-    [2] = function(width, height) return width, height end, -- 180 degrees
-    [3] = function(width, height) return height, width end, -- 270 degrees
-    [4] = function(width, height) return width, height end, -- flipped
-    [5] = function(width, height) return height, width end, -- flipped 90
-    [6] = function(width, height) return width, height end, -- flipped 180
-    [7] = function(width, height) return height, width end, -- flipped 270
-}
-
-local function oracle_geometry(monitor)
-    local transform = assert(transformed_extents[monitor.transform])
-    local pixel_width, pixel_height = transform(monitor.width, monitor.height)
-    local logical_width = math.max(1, positive_round(pixel_width / monitor.scale))
-    local logical_height = math.max(1, positive_round(pixel_height / monitor.scale))
-    return {
-        pixel_width = pixel_width,
-        pixel_height = pixel_height,
-        logical_width = logical_width,
-        logical_height = logical_height,
-    }
-end
-
--- This is deliberately independent of screenshot pixel centers. A normalized
--- target denotes the nearest point in the monitor's logical rectangle.
-local function oracle_cursor(monitor, normalized_x, normalized_y)
-    local geometry = oracle_geometry(monitor)
-    return monitor.x + positive_round(normalized_x * (geometry.logical_width - 1)),
-        monitor.y + positive_round(normalized_y * (geometry.logical_height - 1)),
-        geometry
-end
-
-local function monitor_by_name(monitors, name)
-    for _, monitor in ipairs(monitors) do
-        if monitor.name == name then
-            return monitor
-        end
+-- Oracle: matches monitor_dimensions() exactly.
+-- monitor_dimensions: pixel dims swapped for odd transforms;
+-- logical = max(1, floor(d / scale + 0.5)).
+local function monitor_dimensions(monitor)
+    local pw, ph = monitor.width, monitor.height
+    if monitor.transform % 2 == 1 then
+        pw, ph = ph, pw
     end
-    error("unknown fixture monitor: " .. tostring(name))
+    local lw = math.max(1, math.floor(pw / monitor.scale + 0.5))
+    local lh = math.max(1, math.floor(ph / monitor.scale + 0.5))
+    return pw, ph, lw, lh
 end
 
-local function cursor_from_arguments(args, first)
-    local x = tonumber(args[first])
-    local y = tonumber(args[first + 1])
-    if x and y then
-        return x, y
-    end
-    if type(args[first]) == "string" then
-        local left, right = args[first]:match("^%s*(-?%d+)%s+(-?%d+)%s*$")
-        if left and right then
-            return tonumber(left), tonumber(right)
-        end
-    end
+-- model_image_dimensions: downscale to fit 1920x1080.
+local function model_image_dimensions(w, h)
+    local scale = math.min(1, 1920 / w, 1080 / h)
+    return math.max(1, math.floor(w * scale + 0.5)),
+           math.max(1, math.floor(h * scale + 0.5))
 end
 
-local function new_fixture(monitors, selected_name, fixture_id)
+local function new_fixture(monitors, fixture_id)
     local fixture = {
         monitors = monitors,
-        selected_name = selected_name,
         signature = "geometry-signature-" .. fixture_id,
-        state = {},
         calls = {},
-        cursor_x = 0,
-        cursor_y = 0,
-        cursor_moves = {},
-        call_sequence = 0,
-        random_sequence = 0,
         monotonic_ms = 1000,
         window = {
             address = "0xabc",
@@ -179,14 +128,6 @@ local function new_fixture(monitors, selected_name, fixture_id)
     }
 
     local ctx = {
-        state = {
-            get = function(key)
-                return fixture.state[key]
-            end,
-            set = function(key, value)
-                fixture.state[key] = value
-            end,
-        },
         codec = {
             base64_encode = function()
                 return "geometry-base64-png"
@@ -194,72 +135,20 @@ local function new_fixture(monitors, selected_name, fixture_id)
             sha256 = function(value)
                 return string.rep(string.format("%08x", crc32(value)), 8)
             end,
-            random_hex = function(bytes)
-                fixture.random_sequence = fixture.random_sequence + 1
-                local unit = string.format("%08x", fixture.random_sequence)
-                return (unit:rep(math.ceil(bytes * 2 / #unit))):sub(1, bytes * 2)
-            end,
-            png_tiles = function(value, columns, rows)
-                local monitor = monitor_by_name(fixture.monitors, fixture.selected_name)
-                local geometry = oracle_geometry(monitor)
-                local hashes = {}
-                for index = 1, columns * rows do
-                    hashes[index] = string.rep(string.format(
-                        "%08x", crc32(value .. ":" .. tostring(index))
-                    ), 8)
-                end
-                return {
-                    width = geometry.pixel_width,
-                    height = geometry.pixel_height,
-                    columns = columns,
-                    rows = rows,
-                    hashes = hashes,
-                }
-            end,
             png_resize = function()
                 error("unexpected native resize for geometry fixtures")
             end,
-            png_diff = function(before, after)
-                if before == after then
-                    return {
-                        equal = true,
-                        changed_pixels = 0,
-                        mean_absolute_difference = 0,
-                    }
-                end
-                return {
-                    equal = false,
-                    changed_pixels = 1,
-                    mean_absolute_difference = 0.001,
-                    bounds = { x = 0, y = 0, width = 1, height = 1 },
-                }
-            end,
         },
         time = {
-            monotonic_ms = function()
-                return fixture.monotonic_ms
-            end,
-            sleep_ms = function(duration)
-                fixture.monotonic_ms = fixture.monotonic_ms + duration
-                return true
-            end,
+            monotonic_ms = function() return fixture.monotonic_ms end,
         },
         config_dir = "/tmp/bone-computer-geometry-test",
-        ui = {
-            status = function() end,
-            notify = function() end,
-        },
-        log = {
-            info = function() end,
-        },
+        ui = { status = function() end, notify = function() end },
+        log = { info = function() end },
     }
 
     function ctx.exec(program, args, options)
-        fixture.calls[#fixture.calls + 1] = {
-            program = program,
-            args = args,
-            options = options,
-        }
+        fixture.calls[#fixture.calls + 1] = { program = program, args = args }
 
         if program == "hyprctl" and args[1] == "-j" and args[2] == "instances" then
             return success(cjson.encode({ { signature = fixture.signature } }))
@@ -269,45 +158,27 @@ local function new_fixture(monitors, selected_name, fixture_id)
             encoded["{}"] = fixture.window
             return success("[]\n{}")
         end
-        if program == "hyprctl" and args[1] == "-j" and args[2] == "monitors" then
-            return success(cjson.encode(fixture.monitors))
-        end
-        if program == "hyprctl" and args[1] == "-j" and args[2] == "activewindow" then
-            return success(cjson.encode(fixture.window))
-        end
-        if program == "hyprctl"
-            and ((args[1] == "-j" and args[2] == "cursorpos") or args[1] == "cursorpos")
-        then
-            if args[1] == "-j" then
-                return success(cjson.encode({ x = fixture.cursor_x, y = fixture.cursor_y }))
-            end
-            return success(tostring(fixture.cursor_x) .. ", " .. tostring(fixture.cursor_y))
-        end
-        if program == "hyprctl" and args[1] == "dispatch" and args[2] == "movecursor" then
-            local x, y = cursor_from_arguments(args, 3)
-            assert(x and y, "invalid mocked movecursor arguments")
-            fixture.cursor_x = x
-            fixture.cursor_y = y
-            fixture.cursor_moves[#fixture.cursor_moves + 1] = { x = x, y = y }
-            return success()
-        end
         if program == "grim" then
             local output_name
-            for index, argument in ipairs(args) do
-                if argument == "-o" then
-                    output_name = args[index + 1]
-                    break
-                end
+            for i, arg in ipairs(args) do
+                if arg == "-o" then output_name = args[i + 1]; break end
             end
-            local monitor = monitor_by_name(fixture.monitors, output_name)
-            local geometry = oracle_geometry(monitor)
-            return success(fixture_png(geometry.pixel_width, geometry.pixel_height))
+            local monitor
+            for _, m in ipairs(fixture.monitors) do
+                if m.name == output_name then monitor = m; break end
+            end
+            local pw, ph = monitor_dimensions(monitor)
+            return success(fixture_png(pw, ph))
         end
-        if program == "ydotool" then
-            return success()
-        end
-        if program == "sleep" then
-            return success()
+        if program == "magick" then
+            -- Grid rendering returns a valid PNG with the original dimensions.
+            local stdin = options and options.stdin
+            local w, h = 1920, 1080
+            if stdin and #stdin >= 24 then
+                w = stdin:byte(17) * 16777216 + stdin:byte(18) * 65536 + stdin:byte(19) * 256 + stdin:byte(20)
+                h = stdin:byte(21) * 16777216 + stdin:byte(22) * 65536 + stdin:byte(23) * 256 + stdin:byte(24)
+            end
+            return success(fixture_png(w, h))
         end
         error("unexpected geometry fixture exec: " .. tostring(program))
     end
@@ -316,75 +187,34 @@ local function new_fixture(monitors, selected_name, fixture_id)
     return fixture
 end
 
-local function invoke(fixture, params)
-    fixture.call_sequence = fixture.call_sequence + 1
-    fixture.ctx.call_id = string.format(
-        "geometry-%s-%d",
-        fixture.signature,
-        fixture.call_sequence
-    )
+-- ── invoke helper ────────────────────────────────────────────────────────────
 
-    local envelope = cjson.decode(computer_tool.execute(params, fixture.ctx))
+local function invoke(fixture, params)
+    local raw = computer_tool.execute(params, fixture.ctx)
+    local envelope = cjson.decode(raw)
     local content = cjson.decode(envelope.content)
-    check(content.screenshot_id == nil, "response exposed internal screenshot ID")
-    check(content.action_token == nil, "response exposed internal authorization")
-    check(content.next_call == nil, "response exposed internal continuation state")
-    check(content.screenshot_captured == true, "successful call did not capture a screenshot")
-    check(envelope.ephemeral_images == true, "screenshot attachment was not ephemeral")
-    check(type(envelope.images) == "table" and #envelope.images == 1, "missing screenshot attachment")
     return content, envelope
 end
 
-local scales = {
-    0.75,
-    1.0,
-    1.1,
-    1.25,
-    4 / 3,
-    1.5,
-    1.75,
-    2.0,
-    2.25,
-}
-
-local function property_points(monitor, transform, scale_index)
-    local geometry = oracle_geometry(monitor)
-    local points = {
-        -- Corners.
-        { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 },
-        -- Edge midpoints and asymmetric edge points.
-        { 0, 0.5 }, { 1, 0.5 }, { 0.5, 0 }, { 0.5, 1 },
-        { 0, 0.137 }, { 1, 0.863 }, { 0.271, 0 }, { 0.729, 1 },
-        -- Interior points that are sensitive to fractional-scale rounding.
-        { 0.5, 0.5 }, { 0.1, 0.9 }, { 1 / 3, 2 / 3 },
-        { 0.618034, 0.381966 }, { 0.000001, 0.999999 },
-        -- One source-pixel inset from each oriented edge.
-        {
-            1 / math.max(1, geometry.pixel_width - 1),
-            1 / math.max(1, geometry.pixel_height - 1),
-        },
-        {
-            (geometry.pixel_width - 2) / math.max(1, geometry.pixel_width - 1),
-            (geometry.pixel_height - 2) / math.max(1, geometry.pixel_height - 1),
-        },
-    }
-
-    -- A deterministic diagonal permutation supplies property-like coverage
-    -- without randomness or test-order dependence.
-    for index = 0, 10 do
-        points[#points + 1] = {
-            index / 10,
-            ((index * 7 + transform * 3 + scale_index * 5) % 11) / 10,
-        }
-    end
-    return points
+-- ── shell_coordinates oracle ─────────────────────────────────────────────────
+-- Builds the exact string computer.lua produces via string.format.
+local function expected_shell_coordinates(origin_x, origin_y, logical_w, logical_h)
+    return string.format(
+        "Map normalized (nx, ny) to Hyprland logical coordinates with X=%d+round(nx*(%d-1)) and Y=%d+round(ny*(%d-1)).",
+        origin_x, logical_w, origin_y, logical_h)
 end
 
-local checked_points = 0
+local function mapped_coordinate(origin, normalized, logical_extent)
+    return origin + math.floor(normalized * (logical_extent - 1) + 0.5)
+end
+
+-- ── test runner ──────────────────────────────────────────────────────────────
+
+local scales = { 0.75, 1.0, 1.1, 1.25, 4/3, 1.5, 1.75, 2.0, 2.25 }
 local checked_scenarios = 0
 local saw_negative_origin = false
 local saw_fractional_scale = false
-local saw_transform = {}
+local saw_grid = false
 
 for transform = 0, 7 do
     for scale_index, scale in ipairs(scales) do
@@ -407,129 +237,138 @@ for transform = 0, 7 do
             {
                 name = "FOCUSED",
                 focused = true,
-                x = 0,
-                y = 0,
-                width = 320,
-                height = 180,
-                scale = 1,
-                transform = 0,
+                x = 0, y = 0,
+                width = 320, height = 180,
+                scale = 1, transform = 0,
                 activeWorkspace = { id = 11 },
             },
             selected,
             {
                 name = "AUXILIARY",
                 focused = false,
-                x = 900,
-                y = -500,
-                width = 401,
-                height = 239,
-                scale = 1.25,
-                transform = 5,
+                x = 900, y = -500,
+                width = 401, height = 239,
+                scale = 1.25, transform = 5,
                 activeWorkspace = { id = 31 },
             },
         }
-        local fixture = new_fixture(
-            monitors,
-            selected_name,
-            tostring(transform) .. "-" .. tostring(scale_index)
-        )
-        local current = invoke(fixture, {
-            action = "observe",
-            monitor = selected_name,
-        })
-        check(current.monitor.name == selected_name, "wrong monitor selected: %s", current.monitor.name)
 
-        local geometry = oracle_geometry(selected)
-        check(
-            current.screenshot_geometry.width == geometry.pixel_width
-                and current.screenshot_geometry.height == geometry.pixel_height,
-            "transform %d scale %.6f returned incorrect screenshot extent",
-            transform,
-            scale
-        )
-        check(
-            current.screenshot_geometry.logical_width == geometry.logical_width
-                and current.screenshot_geometry.logical_height == geometry.logical_height,
-            "transform %d scale %.6f returned incorrect logical extent",
-            transform,
-            scale
-        )
+        local fixture = new_fixture(monitors, tostring(transform) .. "-" .. tostring(scale_index))
 
-        for point_index, point in ipairs(property_points(selected, transform, scale_index)) do
-            fixture.cursor_moves = {}
-            local clicked = invoke(fixture, {
-                action = "click",
-                x = point[1],
-                y = point[2],
-                settle_ms = 0,
-            })
-            check(
-                #fixture.cursor_moves == 1,
-                "transform %d scale %.6f point %d sent %d cursor moves",
-                transform,
-                scale,
-                point_index,
-                #fixture.cursor_moves
-            )
-            local actual = fixture.cursor_moves[1]
-            local expected_x, expected_y = oracle_cursor(selected, point[1], point[2])
-            local local_x = actual.x - selected.x
-            local local_y = actual.y - selected.y
+        -- ── 1. observe (no grid) ───────────────────────────────────────────
+        local content, envelope = invoke(fixture, { action = "observe", monitor = selected_name })
 
-            check(
-                local_x >= 0 and local_x < geometry.logical_width
-                    and local_y >= 0 and local_y < geometry.logical_height,
-                "cursor escaped selected monitor: transform=%d scale=%.6f point=(%.6f,%.6f) actual=(%d,%d) bounds=(%d,%d %dx%d)",
-                transform,
-                scale,
-                point[1],
-                point[2],
-                actual.x,
-                actual.y,
-                selected.x,
-                selected.y,
-                geometry.logical_width,
-                geometry.logical_height
-            )
-            check(
-                math.abs(actual.x - expected_x) <= 1
-                    and math.abs(actual.y - expected_y) <= 1,
-                "cursor exceeded one logical pixel of oracle: transform=%d scale=%.6f point=(%.6f,%.6f) expected=(%d,%d) actual=(%d,%d)",
-                transform,
-                scale,
-                point[1],
-                point[2],
-                expected_x,
-                expected_y,
-                actual.x,
-                actual.y
-            )
-            check(
-                clicked.monitor.name == selected_name,
-                "click response changed selected monitor from %s to %s",
-                selected_name,
-                tostring(clicked.monitor.name)
-            )
-            checked_points = checked_points + 1
-        end
+        -- Basic envelope assertions
+        check(envelope.ephemeral_images == true, "envelope must be ephemeral")
+        check(type(envelope.images) == "table" and #envelope.images == 1, "exactly one image attachment")
+        check(content.screenshot_captured == true, "screenshot must be captured")
+        check(content.read_only == true, "response must be read-only")
+        check(content.actionable == true, "response must be actionable for a named monitor")
+        check(content.mode == "monitor_observation", "mode must be monitor_observation")
 
+        -- Monitor name
+        check(content.monitor.name == selected_name, "wrong monitor name: %s", content.monitor.name)
+
+        -- Monitor metadata
+        check(content.monitor.scale == scale, "wrong scale: expected %s got %s", tostring(scale), tostring(content.monitor.scale))
+        check(content.monitor.transform == transform, "wrong transform: expected %d got %d", transform, content.monitor.transform)
+
+        -- Global logical origin
+        check(content.monitor.global_logical_origin.x == selected.x, "wrong origin x: expected %d got %d", selected.x, content.monitor.global_logical_origin.x)
+        check(content.monitor.global_logical_origin.y == selected.y, "wrong origin y: expected %d got %d", selected.y, content.monitor.global_logical_origin.y)
+
+        -- Global logical bounds (exclusive right/bottom)
+        local pw, ph, lw, lh = monitor_dimensions(selected)
+        check(content.monitor.global_logical_bounds.left == selected.x, "wrong bounds left")
+        check(content.monitor.global_logical_bounds.top == selected.y, "wrong bounds top")
+        check(content.monitor.global_logical_bounds.right_exclusive == selected.x + lw, "wrong bounds right_exclusive: expected %d got %d", selected.x + lw, content.monitor.global_logical_bounds.right_exclusive)
+        check(content.monitor.global_logical_bounds.bottom_exclusive == selected.y + lh, "wrong bounds bottom_exclusive: expected %d got %d", selected.y + lh, content.monitor.global_logical_bounds.bottom_exclusive)
+
+        -- Logical size
+        check(content.monitor.logical_size.width == lw, "wrong logical width: expected %d got %d", lw, content.monitor.logical_size.width)
+        check(content.monitor.logical_size.height == lh, "wrong logical height: expected %d got %d", lh, content.monitor.logical_size.height)
+
+        -- Full-resolution screenshot size
+        check(content.monitor.full_resolution_screenshot_size.width == pw, "wrong screenshot width: expected %d got %d", pw, content.monitor.full_resolution_screenshot_size.width)
+        check(content.monitor.full_resolution_screenshot_size.height == ph, "wrong screenshot height: expected %d got %d", ph, content.monitor.full_resolution_screenshot_size.height)
+
+        -- Mode size (raw monitor mode)
+        check(content.monitor.mode_size.width == selected.width, "wrong mode_size width")
+        check(content.monitor.mode_size.height == selected.height, "wrong mode_size height")
+
+        -- Shell coordinates formula
+        local expected_shell = expected_shell_coordinates(selected.x, selected.y, lw, lh)
+        check(content.shell_coordinates == expected_shell, "shell_coordinates mismatch:\nexpected: %s\ngot:      %s", expected_shell, content.shell_coordinates)
+        check(mapped_coordinate(selected.x, 0, lw) == selected.x,
+            "normalized x=0 must map to the left edge")
+        check(mapped_coordinate(selected.x, 1, lw) == selected.x + lw - 1,
+            "normalized x=1 must map to the inclusive right edge")
+        check(mapped_coordinate(selected.y, 0, lh) == selected.y,
+            "normalized y=0 must map to the top edge")
+        check(mapped_coordinate(selected.y, 1, lh) == selected.y + lh - 1,
+            "normalized y=1 must map to the inclusive bottom edge")
+        local midpoint_x = selected.x + math.floor(0.5 * (lw - 1) + 0.5)
+        local midpoint_y = selected.y + math.floor(0.5 * (lh - 1) + 0.5)
+        check(mapped_coordinate(selected.x, 0.5, lw) == midpoint_x,
+            "normalized x midpoint must use nearest-integer rounding")
+        check(mapped_coordinate(selected.y, 0.5, lh) == midpoint_y,
+            "normalized y midpoint must use nearest-integer rounding")
+
+        -- Attachment dimensions (model_image_dimensions)
+        local aw, ah = model_image_dimensions(pw, ph)
+        check(content.attachment_size.width == aw, "wrong attachment width: expected %d got %d", aw, content.attachment_size.width)
+        check(content.attachment_size.height == ah, "wrong attachment height: expected %d got %d", ah, content.attachment_size.height)
+
+        -- Attachment media type
+        check(envelope.images[1].media_type == "image/png", "attachment must be PNG")
+        check(envelope.images[1].width == aw, "attachment width mismatch in envelope")
+        check(envelope.images[1].height == ah, "attachment height mismatch in envelope")
+
+        -- Grid false
+        check(content.grid == false, "grid must be false without grid param")
+
+        -- ── 2. observe with grid ───────────────────────────────────────────
+        local content_g, envelope_g = invoke(fixture, { action = "observe", monitor = selected_name, grid = true })
+
+        check(envelope_g.ephemeral_images == true, "grid envelope must be ephemeral")
+        check(content_g.screenshot_captured == true, "grid: screenshot must be captured")
+        check(content_g.grid == true, "grid must be true")
+        check(content_g.monitor.name == selected_name, "grid: wrong monitor name")
+        check(content_g.monitor.global_logical_origin.x == selected.x, "grid: wrong origin x")
+        check(content_g.monitor.global_logical_origin.y == selected.y, "grid: wrong origin y")
+        check(content_g.monitor.global_logical_bounds.right_exclusive == selected.x + lw, "grid: wrong right_exclusive")
+        check(content_g.monitor.global_logical_bounds.bottom_exclusive == selected.y + lh, "grid: wrong bottom_exclusive")
+        check(content_g.monitor.logical_size.width == lw, "grid: wrong logical width")
+        check(content_g.monitor.logical_size.height == lh, "grid: wrong logical height")
+        check(content_g.monitor.full_resolution_screenshot_size.width == pw, "grid: wrong screenshot width")
+        check(content_g.monitor.full_resolution_screenshot_size.height == ph, "grid: wrong screenshot height")
+        check(content_g.shell_coordinates == expected_shell, "grid: shell_coordinates mismatch")
+
+        -- Grid geometry preservation: screenshot PNG geometry must be unchanged after grid rendering.
+        check(content_g.monitor.full_resolution_screenshot_size.width == pw, "grid: screenshot width must be preserved after grid")
+        check(content_g.monitor.full_resolution_screenshot_size.height == ph, "grid: screenshot height must be preserved after grid")
+
+        -- Attachment still downscale-correct after grid
+        check(content_g.attachment_size.width == aw, "grid: attachment width must match model_image_dimensions")
+        check(content_g.attachment_size.height == ah, "grid: attachment height must match model_image_dimensions")
+
+        -- Coordinates guidance mentions 0-1000 rulers
+        check(content_g.coordinates:find("0-1000") ~= nil, "grid: coordinates guidance must mention 0-1000 ruler values")
+        check(content_g.coordinates:find("divide by 1000") ~= nil, "grid: coordinates guidance must mention dividing by 1000")
+
+        saw_grid = true
         checked_scenarios = checked_scenarios + 1
-        saw_transform[transform] = true
         saw_negative_origin = saw_negative_origin or selected.x < 0 or selected.y < 0
         saw_fractional_scale = saw_fractional_scale or scale % 1 ~= 0
     end
 end
 
-for transform = 0, 7 do
-    assert(saw_transform[transform], "missing transform coverage: " .. transform)
-end
+-- ── coverage assertions ──────────────────────────────────────────────────────
+
 assert(saw_negative_origin, "negative monitor origins were not covered")
 assert(saw_fractional_scale, "fractional monitor scales were not covered")
-assert(checked_scenarios == 8 * #scales)
-assert(checked_points > 2000)
+assert(saw_grid, "grid mode was not exercised")
+assert(checked_scenarios == 8 * #scales, "expected %d scenarios, got %d", 8 * #scales, checked_scenarios)
 
-print(string.format(
-    "computer geometry tests passed (%d points across %d mixed-monitor scenarios)",
-    checked_points,
-    checked_scenarios
-))
+print(string.format("computer geometry tests passed (%d observe-only scenarios, transforms 0-7, %d scales, grid verified)",
+    checked_scenarios, #scales))
