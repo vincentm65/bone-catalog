@@ -8,7 +8,7 @@
 local CHECKPOINT_MARKER = "[Context checkpoint v1]"
 local INPUT_TOKENS = 30000
 local CHECKPOINT_TOKENS = 4000
-local GENERATION_TOKENS = 4000
+local GENERATION_TOKENS = 12000
 local SAFETY_TOKENS = 8000
 local CHARS_PER_TOKEN = 3.8
 
@@ -181,7 +181,7 @@ local function run_prompt(ctx, prompt, config, max_tokens)
         system_prompt = "Write a precise, concise coding-session state capsule.",
         timeout_ms = 120000,
         wall_timeout_ms = 180000,
-        max_tokens = math.min(config.generation_tokens, max_tokens or config.generation_tokens),
+        max_tokens = config.generation_tokens,
     }) or nil
     if type(result) ~= "table" then return nil, "summarizer returned no result" end
     if not result.ok then return nil, result.error or "summarization failed" end
