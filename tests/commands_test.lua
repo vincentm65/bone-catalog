@@ -213,8 +213,9 @@ assert(not unavailable_result)
 assert(#unavailable_notices == 0,
    "unavailable context capacity should not emit an inaccurate warning")
 
--- Falling below the threshold clears a failed-attempt high-water mark.
+-- Failed automatic attempts can retry immediately without context growth.
 local retry_agent_ok = false
+local retry_agent_calls = 0
 local retry_auto_ctx = {
    settings = settings(),
    config = { get_table = function() return {} end },
@@ -223,14 +224,15 @@ local retry_auto_ctx = {
       current = function() return { id = 45 } end,
       history = function()
          return {
-            { role = "user", content = large_message },
-            { role = "assistant", content = large_message },
+            { role = "user", content = "retry context" },
+            { role = "assistant", content = "more retry context" },
          }
       end,
       context_tokens = function(messages) return #messages * 100 end,
    },
    agent = {
       run = function()
+         retry_agent_calls = retry_agent_calls + 1
          if retry_agent_ok then
             return { ok = true, content = table.concat(summary, "\n\n") }
          end
@@ -240,13 +242,100 @@ local retry_auto_ctx = {
    ui = { notice = function() end },
 }
 assert(before_turn_handlers[1](nil, retry_auto_ctx) == nil)
-retry_auto_ctx.usage.snapshot = function() return { context_length = 10000 } end
-assert(before_turn_handlers[1](nil, retry_auto_ctx) == nil)
-retry_auto_ctx.usage.snapshot = function() return { context_length = 90000 } end
 retry_agent_ok = true
 local retry_auto_result = before_turn_handlers[1](nil, retry_auto_ctx)
 assert(retry_auto_result and retry_auto_result.action == "conversation.replace",
-   "context shrink should clear the automatic compaction retry marker")
+   "failed automatic compaction should be retryable at the same context length")
+assert(retry_agent_calls == 2,
+   "an immediate automatic retry should invoke the summarizer again")
+
+-- Non-shrinking automatic output must also leave compaction immediately retryable.
+local allow_auto_shrink = false
+local nonshrinking_auto_ctx = {
+   settings = settings({ ["compact.context_window_tokens"] = 10000 }),
+   config = { get_table = function() return {} end },
+   usage = { snapshot = function() return { context_length = 9000 } end },
+   conversation = {
+      current = function() return { id = 46 } end,
+      history = function()
+         return {
+            { role = "user", content = large_message },
+            { role = "assistant", content = large_message },
+         }
+      end,
+      context_tokens = function(messages)
+         if #messages == 0 then return 6000 end
+         if #messages == 1 then return allow_auto_shrink and 7000 or 9000 end
+         return 10000
+      end,
+   },
+   agent = {
+      run = function() return { ok = true, content = table.concat(summary, "\n\n") } end,
+   },
+   ui = { notice = function() end },
+}
+assert(before_turn_handlers[1](nil, nonshrinking_auto_ctx) == nil)
+allow_auto_shrink = true
+local shrinking_auto_result = before_turn_handlers[1](nil, nonshrinking_auto_ctx)
+assert(shrinking_auto_result and shrinking_auto_result.action == "conversation.replace",
+   "rejected non-shrinking output should be retryable at the same context length")
+
+local output_limit_calls = 0
+local output_limit_prompts = {}
+local output_limit_limits = {}
+local output_limit_history = {
+   { role = "user", content = "question before truncation" },
+   { role = "assistant", content = "answer before truncation" },
+}
+local output_limit_retry = commands.compact.handler("", {
+   settings = settings(),
+   conversation = {
+      history = function() return output_limit_history end,
+      context_tokens = function(messages) return #messages * 1000 end,
+   },
+   agent = {
+      run = function(prompt, opts)
+         output_limit_calls = output_limit_calls + 1
+         output_limit_prompts[#output_limit_prompts + 1] = prompt
+         output_limit_limits[#output_limit_limits + 1] = opts.max_tokens
+         if output_limit_calls == 1 then
+            return { ok = false, error = "incomplete response: max_output_tokens reached" }
+         end
+         return { ok = true, content = table.concat(summary, "\n\n") }
+      end,
+   },
+})
+assert(output_limit_retry.action == "conversation.replace", output_limit_retry.display)
+assert(output_limit_calls == 2, "output-limit failures should get exactly one retry")
+assert(output_limit_prompts[2]:find("previous attempt exhausted the provider output limit", 1, true))
+assert(output_limit_prompts[2]:find("complete capsule within 4000 tokens now", 1, true))
+assert(output_limit_prompts[2]:find("Be substantially shorter", 1, true),
+   "the output-limit retry should explicitly demand a shorter checkpoint")
+assert(table.concat(output_limit_limits, ",") == "12000,12000",
+   "output-limit retries should retain the independent generation budget")
+
+local repeated_limit_calls = 0
+local repeatedly_truncated = commands.compact.handler("", {
+   settings = settings(),
+   conversation = {
+      history = function() return output_limit_history end,
+      context_tokens = function(messages) return #messages * 1000 end,
+   },
+   agent = {
+      run = function()
+         repeated_limit_calls = repeated_limit_calls + 1
+         return { ok = false, error = "incomplete response: max_output_tokens reached" }
+      end,
+   },
+})
+assert(repeated_limit_calls == 2, "repeated output truncation should stop after one retry")
+assert(not repeatedly_truncated.action,
+   "repeated output truncation must preserve the original conversation")
+assert(repeatedly_truncated.display:find("original context preserved", 1, true))
+assert(#output_limit_history == 2
+   and output_limit_history[1].content == "question before truncation"
+   and output_limit_history[2].content == "answer before truncation",
+   "failed retries must not mutate the original history")
 
 local oversized = {}
 for _, heading in ipairs(headings) do
@@ -287,8 +376,8 @@ assert(retried.action == "conversation.replace", retried.display)
 assert(retry_calls == 2, "oversized checkpoints should get one bounded compression attempt")
 assert(retry_prompts[1]:find("within 4000 tokens", 1, true))
 assert(retry_prompts[2]:find("fit within 3200 tokens", 1, true))
-assert(table.concat(retry_limits, ",") == "4000,3200",
-   "summary and compression generation must use their requested capsule targets")
+assert(table.concat(retry_limits, ",") == "12000,12000",
+   "summary and compression must retain the independent generation budget")
 
 local failed_calls = 0
 local failed = commands.compact.handler("", {

@@ -176,13 +176,25 @@ local function compression_prompt(candidate, max_tokens)
 end
 
 local function run_prompt(ctx, prompt, config, max_tokens)
-    local result = ctx.agent and ctx.agent.run and ctx.agent.run(prompt, {
-        tools = {},
-        system_prompt = "Write a precise, concise coding-session state capsule.",
-        timeout_ms = 120000,
-        wall_timeout_ms = 180000,
-        max_tokens = config.generation_tokens,
-    }) or nil
+    local function run(candidate_prompt)
+        return ctx.agent and ctx.agent.run and ctx.agent.run(candidate_prompt, {
+            tools = {},
+            system_prompt = "Write a precise, concise coding-session state capsule.",
+            timeout_ms = 120000,
+            wall_timeout_ms = 180000,
+            max_tokens = config.generation_tokens,
+        }) or nil
+    end
+
+    local result = run(prompt)
+    if type(result) == "table" and not result.ok
+        and tostring(result.error):find("max_output_tokens", 1, true) then
+        result = run(table.concat({
+            prompt,
+            "The previous attempt exhausted the provider output limit.",
+            "Return a complete capsule within " .. max_tokens .. " tokens now. Be substantially shorter and prioritize only state required to continue the work.",
+        }, "\n\n"))
+    end
     if type(result) ~= "table" then return nil, "summarizer returned no result" end
     if not result.ok then return nil, result.error or "summarization failed" end
     local content = trim(result.content)
@@ -307,13 +319,20 @@ bone.on("before_turn", function(_, ctx)
     last_auto_context[key] = context_length
 
     local history = ctx.conversation.history()
-    if not history then return nil end
+    if not history then
+        last_auto_context[key] = nil
+        return nil
+    end
     local _, new_messages = strip_checkpoint(history)
-    if #new_messages == 0 then return nil end
+    if #new_messages == 0 then
+        last_auto_context[key] = nil
+        return nil
+    end
 
     if ctx.ui and ctx.ui.status then ctx.ui.status("Compacting context… building continuation checkpoint") end
     local messages, err = compact_history(history, ctx, config)
     if not messages then
+        last_auto_context[key] = nil
         if err and err ~= "nothing new to compact" and ctx.ui and ctx.ui.notice then
             ctx.ui.notice("Compaction failed; original context preserved: " .. err)
         end
@@ -322,6 +341,7 @@ bone.on("before_turn", function(_, ctx)
 
     local new_context = context_tokens(ctx, messages)
     if new_context >= context_length then
+        last_auto_context[key] = nil
         if ctx.ui and ctx.ui.notice then
             ctx.ui.notice(string.format(
                 "Compaction rejected; original context preserved (~%d ≥ ~%d tokens)",
