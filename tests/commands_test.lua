@@ -32,7 +32,8 @@ local function settings(values)
          if values[path] ~= nil then return values[path] end
          if path == "compact.auto" then return true end
          if path == "compact.trigger_percentage" then return 80 end
-         if path == "compact.context_window_tokens" then return 100000 end
+         if path == "compact.recent_context_tokens" then return 12000 end
+         if path == "compact.checkpoint_tokens" then return 4000 end
       end,
    }
 end
@@ -43,15 +44,21 @@ assert(loadfile("commands/usage.lua"))()
 assert(commands.compact, "compact command was not registered")
 assert(commands.usage, "usage command was not registered")
 assert(settings_page and settings_page.namespace == "compact", "compact settings were not registered")
-assert(#settings_page.fields == 3, "compact should expose exactly three settings")
+assert(#settings_page.fields == 4, "compact should expose exactly four settings")
 assert(settings_page.fields[1].key == "auto")
 assert(settings_page.fields[2].key == "trigger_percentage")
-local context_window_field = settings_page.fields[3]
-assert(context_window_field.key == "context_window_tokens")
-assert(context_window_field.type == "number")
-assert(context_window_field.default == 100000)
-assert(context_window_field.integer == true)
-assert(context_window_field.min == 10000)
+local recent_context_field = settings_page.fields[3]
+assert(recent_context_field.key == "recent_context_tokens")
+assert(recent_context_field.type == "number")
+assert(recent_context_field.default == 12000)
+assert(recent_context_field.integer == true)
+assert(recent_context_field.min == 1)
+local checkpoint_field = settings_page.fields[4]
+assert(checkpoint_field.key == "checkpoint_tokens")
+assert(checkpoint_field.type == "number")
+assert(checkpoint_field.default == 4000)
+assert(checkpoint_field.integer == true)
+assert(checkpoint_field.min == 1)
 assert(#before_turn_handlers == 1, "compact should register one before_turn handler")
 
 local headings = {
@@ -66,71 +73,87 @@ for _, heading in ipairs(headings) do
    summary[#summary + 1] = "## **" .. heading .. ":**\n- value"
 end
 local agent_calls = 0
-local summary_prompts = {}
-local long_turn = { { role = "user", content = "Fix the compaction bug" } }
-for i = 1, 100 do
-   long_turn[#long_turn + 1] = { role = "assistant", content = "", tool_calls = {
-      { id = "call-" .. i, name = "read_file", arguments = { path = "src/main.rs" } },
-   } }
-   long_turn[#long_turn + 1] = {
-      role = "tool",
-      content = "tool result " .. i,
-      tool_call_id = "call-" .. i,
-   }
-end
-long_turn[#long_turn + 1] = { role = "assistant", content = "Continue debugging next" }
+local summary_prompt_seen
+local summary_options
+local recent_user = { role = "user", content = "recent question" }
+local recent_call = { role = "assistant", content = "", tool_calls = {
+   { id = "call-recent", name = "read_file", arguments = { path = "src/main.rs" } },
+} }
+local recent_tool = { role = "tool", content = "recent tool result", tool_call_id = "call-recent" }
+local recent_answer = { role = "assistant", content = "recent answer" }
+local compact_history = {
+   { role = "user", content = "old question" },
+   { role = "assistant", content = "old answer" },
+   recent_user,
+   recent_call,
+   recent_tool,
+   recent_answer,
+}
 local compact = commands.compact.handler("", {
-   settings = settings(),
+   settings = settings({ ["compact.recent_context_tokens"] = 1 }),
    conversation = {
-      history = function() return long_turn end,
+      history = function() return compact_history end,
       context_tokens = function(messages) return #messages * 1000 end,
    },
    agent = {
-      run = function(prompt)
+      run = function(prompt, opts)
          agent_calls = agent_calls + 1
-         summary_prompts[#summary_prompts + 1] = prompt
+         summary_prompt_seen = prompt
+         summary_options = opts
          return { ok = true, content = table.concat(summary, "\n\n") }
       end,
    },
 })
 assert(compact.action == "conversation.replace", compact.display)
-assert(agent_calls == 1)
-assert(#compact.messages == 1, "compaction should replace all raw messages with one checkpoint")
+assert(agent_calls == 1, "compaction should make exactly one summarization call")
+assert(summary_options.max_tokens == nil, "compaction should not set a generation token cap")
+assert(type(summary_options.tools) == "table" and next(summary_options.tools) == nil,
+   "compaction should disable tools")
+assert(#compact.messages == 5, "compaction should preserve the newest complete turn")
 assert(compact.messages[1].role == "user")
 local checkpoint = compact.messages[1].content
 assert(checkpoint:find("[Context checkpoint v1]", 1, true))
 assert(checkpoint:find("Objective", 1, true))
-assert(summary_prompts[1]:find("Fix the compaction bug", 1, true))
-assert(summary_prompts[1]:find("tool_call_id=call%-100"))
-assert(summary_prompts[1]:find("tool result 100", 1, true))
-assert(summary_prompts[1]:find("Continue debugging next", 1, true))
-assert(compact.display:find("continuation checkpoint created", 1, true))
+assert(summary_prompt_seen:find("old question", 1, true))
+assert(summary_prompt_seen:find("old answer", 1, true))
+assert(summary_prompt_seen:find("Target approximately 4000 tokens", 1, true),
+   "compaction should request a concise target without enforcing an output cap")
+assert(not summary_prompt_seen:find("recent question", 1, true),
+   "preserved turns should be omitted from the summarization prompt")
+assert(compact.messages[2] == recent_user)
+assert(compact.messages[3] == recent_call)
+assert(compact.messages[4] == recent_tool)
+assert(compact.messages[5] == recent_answer)
+assert(compact.display:find("4 recent messages preserved", 1, true))
 
 local auto_statuses = {}
 local auto_notices = {}
-local large_message = string.rep("context ", 10000)
+local auto_calls = 0
+local auto_options
+local auto_recent_user = { role = "user", content = "recent automatic question" }
+local auto_recent_assistant = { role = "assistant", content = "recent automatic answer" }
+local auto_history = {
+   { role = "user", content = "old automatic question" },
+   { role = "assistant", content = "old automatic answer" },
+   auto_recent_user,
+   auto_recent_assistant,
+}
 local auto_result = before_turn_handlers[1](nil, {
-   settings = settings({ ["compact.trigger_percentage"] = 80 }),
-   config = {
-      get_table = function() return {} end,
-   },
-   usage = {
-      snapshot = function() return { context_length = 90000 } end,
-   },
+   settings = settings({ ["compact.recent_context_tokens"] = 1 }),
+   config = { get_table = function() return {} end },
+   model = { context_window_tokens = 100000 },
+   usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
       current = function() return { id = 42 } end,
-      history = function()
-         return {
-            { role = "user", content = large_message },
-            { role = "assistant", content = large_message },
-            { role = "user", content = large_message },
-            { role = "assistant", content = large_message },
-         }
-      end,
+      history = function() return auto_history end,
       context_tokens = function(messages) return #messages * 100 end,
    },
    agent = {
-      run = function() return { ok = true, content = table.concat(summary, "\n\n") } end,
+      run = function(_, opts)
+         auto_calls = auto_calls + 1
+         auto_options = opts
+         return { ok = true, content = table.concat(summary, "\n\n") }
+      end,
    },
    ui = {
       status = function(message) auto_statuses[#auto_statuses + 1] = message end,
@@ -138,101 +161,268 @@ local auto_result = before_turn_handlers[1](nil, {
    },
 })
 assert(auto_result.action == "conversation.replace")
-assert(#auto_result.messages == 1, "automatic compaction should preserve no raw messages")
+assert(auto_calls == 1, "automatic compaction should make exactly one summarization call")
+assert(auto_options.max_tokens == nil)
+assert(type(auto_options.tools) == "table" and next(auto_options.tools) == nil)
+assert(#auto_result.messages == 3, "automatic compaction should preserve the newest turn")
+assert(auto_result.messages[2] == auto_recent_user)
+assert(auto_result.messages[3] == auto_recent_assistant)
 assert(#auto_statuses == 1 and auto_statuses[1]:find("Compacting context", 1, true),
    "automatic compaction should emit transient progress")
-assert(#auto_notices == 1 and auto_notices[1]:find("continuation checkpoint created", 1, true),
+assert(#auto_notices == 1 and auto_notices[1]:find("Context compacted", 1, true),
    "automatic compaction should emit a persistent success notice")
 
+local incremental_calls = 0
 local incremental_prompt
+local incremental_options
 local previous_checkpoint = "[Context checkpoint v1]\n\n## Objective\n- Existing objective"
+local incremental_recent_user = { role = "user", content = "current question" }
+local incremental_recent_assistant = { role = "assistant", content = "current answer" }
+local incremental_history = {
+   { role = "user", content = previous_checkpoint },
+   { role = "user", content = "completed older task" },
+   { role = "assistant", content = "older validation passed" },
+   incremental_recent_user,
+   incremental_recent_assistant,
+}
 local incremental = commands.compact.handler("", {
-   settings = settings(),
+   settings = settings({ ["compact.recent_context_tokens"] = 1 }),
    conversation = {
-      history = function()
-         return {
-            { role = "user", content = previous_checkpoint },
-            { role = "assistant", content = "Ran validation" },
-            { role = "tool", content = "tests passed", tool_call_id = "call-test" },
-         }
-      end,
+      history = function() return incremental_history end,
       context_tokens = function(messages) return #messages * 1000 end,
    },
    agent = {
-      run = function(prompt)
+      run = function(prompt, opts)
+         incremental_calls = incremental_calls + 1
          incremental_prompt = prompt
+         incremental_options = opts
          return { ok = true, content = table.concat(summary, "\n\n") }
       end,
    },
 })
 assert(incremental.action == "conversation.replace", incremental.display)
-assert(#incremental.messages == 1)
-assert(incremental_prompt:find(previous_checkpoint, 1, true),
-   "incremental compaction should fold from the previous checkpoint")
-assert(incremental_prompt:find("Ran validation", 1, true))
-assert(incremental_prompt:find("tests passed", 1, true))
+assert(incremental_calls == 1, "incremental compaction should make exactly one call")
+assert(incremental_options.max_tokens == nil)
+assert(type(incremental_options.tools) == "table" and next(incremental_options.tools) == nil)
+assert(#incremental.messages == 3)
+assert(incremental.messages[2] == incremental_recent_user)
+assert(incremental.messages[3] == incremental_recent_assistant)
+assert(incremental_prompt:find("Previous capsule:\n" .. previous_checkpoint, 1, true),
+   "incremental compaction should provide the previous checkpoint separately")
+assert(incremental_prompt:find("completed older task", 1, true))
+assert(incremental_prompt:find("older validation passed", 1, true))
+assert(not incremental_prompt:find("current question", 1, true),
+   "incremental compaction should omit preserved recent turns")
 
-local fallback_notices = {}
-local fallback_history_calls = 0
-local fallback_result = before_turn_handlers[1](nil, {
-   settings = settings({ ["compact.context_window_tokens"] = 200000 }),
+local function snapshot_history(history)
+   local snapshot = {}
+   for i, message in ipairs(history) do
+      snapshot[i] = {
+         message = message,
+         role = message.role,
+         content = message.content,
+         tool_call_id = message.tool_call_id,
+         tool_calls = message.tool_calls,
+      }
+   end
+   return snapshot
+end
+
+local function assert_history_unchanged(history, snapshot, label)
+   assert(#history == #snapshot, label .. " changed history length")
+   for i, original in ipairs(snapshot) do
+      local message = history[i]
+      assert(message == original.message, label .. " replaced original message " .. i)
+      assert(message.role == original.role, label .. " changed role " .. i)
+      assert(message.content == original.content, label .. " changed content " .. i)
+      assert(message.tool_call_id == original.tool_call_id, label .. " changed tool call id " .. i)
+      assert(message.tool_calls == original.tool_calls, label .. " changed tool calls " .. i)
+   end
+end
+
+local failure_history = {
+   { role = "user", content = "old failure question" },
+   { role = "assistant", content = "old failure answer" },
+   { role = "user", content = "recent failure question" },
+   { role = "assistant", content = "recent failure answer" },
+}
+local failure_originals = snapshot_history(failure_history)
+local function rejected_compaction(label, agent_run, values, token_counter)
+   local calls = 0
+   local options
+   local result = commands.compact.handler("", {
+      settings = settings(values or { ["compact.recent_context_tokens"] = 1 }),
+      conversation = {
+         history = function() return failure_history end,
+         context_tokens = token_counter,
+      },
+      agent = {
+         run = function(prompt, opts)
+            calls = calls + 1
+            options = opts
+            return agent_run(prompt, opts)
+         end,
+      },
+   })
+   assert(calls == 1, label .. " should make exactly one summarization call")
+   assert(options.max_tokens == nil, label .. " should not set max_tokens")
+   assert(type(options.tools) == "table" and next(options.tools) == nil,
+      label .. " should disable tools")
+   assert(not result.action, label .. " must preserve the original conversation")
+   assert(result.display:find("original context preserved", 1, true))
+   assert_history_unchanged(failure_history, failure_originals, label)
+   return result
+end
+
+local missing = rejected_compaction("missing summary result", function() return nil end)
+assert(missing.display:find("summarizer returned no result", 1, true))
+
+local failed = rejected_compaction("failed summary", function()
+   return { ok = false, error = "incomplete response: max_output_tokens reached" }
+end)
+assert(failed.display:find("max_output_tokens reached", 1, true),
+   "output-limit failures should not trigger a retry")
+
+local empty = rejected_compaction("empty summary", function()
+   return { ok = true, content = "  \n\t" }
+end)
+assert(empty.display:find("summarizer returned an empty summary", 1, true))
+
+local large_checkpoint = string.rep("large checkpoint detail ", 99) .. "large checkpoint detail"
+local large = commands.compact.handler("", {
+   settings = settings({
+      ["compact.recent_context_tokens"] = 1,
+      ["compact.checkpoint_tokens"] = 10,
+   }),
+   conversation = {
+      history = function() return failure_history end,
+      context_tokens = function(messages) return #messages * 1000 end,
+   },
+   agent = {
+      run = function(_, opts)
+         assert(opts.max_tokens == nil, "large summary should not set max_tokens")
+         return { ok = true, content = large_checkpoint }
+      end,
+   },
+})
+assert(large.action == "conversation.replace", large.display)
+assert(large.messages[1].content:find(large_checkpoint, 1, true),
+   "large summary should be accepted without output-size rejection")
+assert_history_unchanged(failure_history, failure_originals, "large summary")
+
+local nonshrinking = rejected_compaction("non-shrinking summary", function()
+   return { ok = true, content = table.concat(summary, "\n\n") }
+end, nil, function(messages)
+   if #messages == 0 then return 0 end
+   if #messages == 1 then return 100 end
+   return 4000
+end)
+assert(nonshrinking.display:find("Compaction rejected", 1, true))
+
+-- Automatic retry state resets on every unavailable, unchanged, or rejected path.
+local reset_snapshot_length = 90000
+local reset_model = { context_window_tokens = 100000 }
+local reset_history_available = true
+local reset_history_has_older = true
+local reset_history_reads = 0
+local reset_agent_calls = 0
+local reset_recent_user = { role = "user", content = "reset recent question" }
+local reset_recent_assistant = { role = "assistant", content = "reset recent answer" }
+local reset_full_history = {
+   { role = "user", content = "reset old question" },
+   { role = "assistant", content = "reset old answer" },
+   reset_recent_user,
+   reset_recent_assistant,
+}
+local reset_auto_ctx = {
+   settings = settings({
+      ["compact.recent_context_tokens"] = 1,
+      ["compact.context_window_tokens"] = 200000,
+   }),
    config = { get_table = function() return {} end },
-   usage = { snapshot = function() return { context_length = 90000 } end },
+   model = reset_model,
+   usage = { snapshot = function() return { context_length = reset_snapshot_length } end },
    conversation = {
       current = function() return { id = 43 } end,
       history = function()
-         fallback_history_calls = fallback_history_calls + 1
-         return {}
+         reset_history_reads = reset_history_reads + 1
+         if not reset_history_available then return nil end
+         if not reset_history_has_older then return { reset_recent_user, reset_recent_assistant } end
+         return reset_full_history
       end,
-   },
-   ui = { notice = function(message) fallback_notices[#fallback_notices + 1] = message end },
-})
-assert(not fallback_result)
-assert(fallback_history_calls == 0,
-   "the configured context capacity should control the automatic threshold")
-assert(#fallback_notices == 0,
-   "the configured fallback capacity should keep automatic compaction enabled")
-
-local unavailable_notices = {}
-local unavailable_result = before_turn_handlers[1](nil, {
-   settings = {
-      get = function(path)
-         if path == "compact.auto" then return true end
-         if path == "compact.trigger_percentage" then return 80 end
+      context_tokens = function(messages)
+         if #messages == 0 then return 0 end
+         if #messages == 1 then return 100 end
+         return 89000
       end,
-   },
-   config = { get_table = function() return {} end },
-   usage = { snapshot = function() return { context_length = 90000 } end },
-   conversation = {
-      current = function() return { id = 44 } end,
-      history = function() error("history should not be read without a threshold") end,
-   },
-   ui = { notice = function(message) unavailable_notices[#unavailable_notices + 1] = message end },
-})
-assert(not unavailable_result)
-assert(#unavailable_notices == 0,
-   "unavailable context capacity should not emit an inaccurate warning")
-
--- Failed automatic attempts can retry immediately without context growth.
-local retry_agent_ok = false
-local retry_agent_calls = 0
-local retry_auto_ctx = {
-   settings = settings(),
-   config = { get_table = function() return {} end },
-   usage = { snapshot = function() return { context_length = 90000 } end },
-   conversation = {
-      current = function() return { id = 45 } end,
-      history = function()
-         return {
-            { role = "user", content = "retry context" },
-            { role = "assistant", content = "more retry context" },
-         }
-      end,
-      context_tokens = function(messages) return #messages * 100 end,
    },
    agent = {
       run = function()
+         reset_agent_calls = reset_agent_calls + 1
+         return { ok = true, content = table.concat(summary, "\n\n") }
+      end,
+   },
+   ui = { notice = function() end },
+}
+assert(before_turn_handlers[1](nil, reset_auto_ctx).action == "conversation.replace")
+assert(reset_agent_calls == 1)
+assert(before_turn_handlers[1](nil, reset_auto_ctx) == nil)
+assert(reset_agent_calls == 1, "successful compaction should suppress an immediate duplicate attempt")
+local reads_before_missing_model = reset_history_reads
+reset_auto_ctx.model = nil
+assert(before_turn_handlers[1](nil, reset_auto_ctx) == nil)
+assert(reset_history_reads == reads_before_missing_model,
+   "history should not be read without model context capacity")
+reset_auto_ctx.model = reset_model
+assert(before_turn_handlers[1](nil, reset_auto_ctx).action == "conversation.replace")
+assert(reset_agent_calls == 2,
+   "unavailable model capacity should reset automatic retry state")
+reset_snapshot_length = 79000
+assert(before_turn_handlers[1](nil, reset_auto_ctx) == nil)
+reset_snapshot_length = 90000
+assert(before_turn_handlers[1](nil, reset_auto_ctx).action == "conversation.replace")
+assert(reset_agent_calls == 3, "dropping below threshold should reset automatic retry state")
+reset_snapshot_length = 93000
+reset_history_available = false
+assert(before_turn_handlers[1](nil, reset_auto_ctx) == nil)
+reset_history_available = true
+assert(before_turn_handlers[1](nil, reset_auto_ctx).action == "conversation.replace")
+assert(reset_agent_calls == 4, "unavailable history should allow an immediate retry")
+reset_history_has_older = false
+assert(before_turn_handlers[1](nil, reset_auto_ctx) == nil)
+reset_history_has_older = true
+assert(before_turn_handlers[1](nil, reset_auto_ctx).action == "conversation.replace")
+assert(reset_agent_calls == 5,
+   "history already within the recent budget should allow an immediate retry")
+
+local retry_agent_ok = false
+local retry_agent_calls = 0
+local retry_history = {
+   { role = "user", content = "retry old question" },
+   { role = "assistant", content = "retry old answer" },
+   { role = "user", content = "retry recent question" },
+   { role = "assistant", content = "retry recent answer" },
+}
+local retry_originals = snapshot_history(retry_history)
+local retry_auto_ctx = {
+   settings = settings({ ["compact.recent_context_tokens"] = 1 }),
+   config = { get_table = function() return {} end },
+   model = { context_window_tokens = 100000 },
+   usage = { snapshot = function() return { context_length = 90000 } end },
+   conversation = {
+      current = function() return { id = 44 } end,
+      history = function() return retry_history end,
+      context_tokens = function(messages)
+         if #messages == 0 then return 0 end
+         if #messages == 1 then return 100 end
+         return 1000
+      end,
+   },
+   agent = {
+      run = function(_, opts)
          retry_agent_calls = retry_agent_calls + 1
+         assert(opts.max_tokens == nil)
+         assert(type(opts.tools) == "table" and next(opts.tools) == nil)
          if retry_agent_ok then
             return { ok = true, content = table.concat(summary, "\n\n") }
          end
@@ -242,171 +432,80 @@ local retry_auto_ctx = {
    ui = { notice = function() end },
 }
 assert(before_turn_handlers[1](nil, retry_auto_ctx) == nil)
+assert_history_unchanged(retry_history, retry_originals, "failed automatic summary")
 retry_agent_ok = true
 local retry_auto_result = before_turn_handlers[1](nil, retry_auto_ctx)
 assert(retry_auto_result and retry_auto_result.action == "conversation.replace",
    "failed automatic compaction should be retryable at the same context length")
 assert(retry_agent_calls == 2,
-   "an immediate automatic retry should invoke the summarizer again")
+   "each automatic summary attempt should invoke the summarizer exactly once")
 
--- Non-shrinking automatic output must also leave compaction immediately retryable.
-local allow_auto_shrink = false
-local nonshrinking_auto_ctx = {
-   settings = settings({ ["compact.context_window_tokens"] = 10000 }),
+local large_auto_calls = 0
+local large_auto_ctx = {
+   settings = settings({
+      ["compact.recent_context_tokens"] = 1,
+      ["compact.checkpoint_tokens"] = 100,
+   }),
    config = { get_table = function() return {} end },
-   usage = { snapshot = function() return { context_length = 9000 } end },
+   model = { context_window_tokens = 100000 },
+   usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
-      current = function() return { id = 46 } end,
-      history = function()
-         return {
-            { role = "user", content = large_message },
-            { role = "assistant", content = large_message },
-         }
-      end,
+      current = function() return { id = 45 } end,
+      history = function() return retry_history end,
       context_tokens = function(messages)
-         if #messages == 0 then return 6000 end
-         if #messages == 1 then return allow_auto_shrink and 7000 or 9000 end
-         return 10000
+         if #messages == 0 then return 0 end
+         if #messages == 1 then return 500 end
+         return 1000
       end,
    },
    agent = {
-      run = function() return { ok = true, content = table.concat(summary, "\n\n") } end,
+      run = function(_, opts)
+         large_auto_calls = large_auto_calls + 1
+         assert(opts.max_tokens == nil)
+         return { ok = true, content = string.rep("large checkpoint ", 1000) }
+      end,
+   },
+   ui = { notice = function() end },
+}
+local large_auto_result = before_turn_handlers[1](nil, large_auto_ctx)
+assert(large_auto_result and large_auto_result.action == "conversation.replace",
+   "large automatic output should be accepted without output-size rejection")
+assert(large_auto_calls == 1,
+   "large automatic output should not trigger an internal repair call")
+
+local allow_auto_shrink = false
+local nonshrinking_auto_calls = 0
+local nonshrinking_auto_ctx = {
+   settings = settings({ ["compact.recent_context_tokens"] = 1 }),
+   config = { get_table = function() return {} end },
+   model = { context_window_tokens = 100000 },
+   usage = { snapshot = function() return { context_length = 90000 } end },
+   conversation = {
+      current = function() return { id = 46 } end,
+      history = function() return retry_history end,
+      context_tokens = function(messages)
+         if #messages == 0 then return 0 end
+         if #messages == 1 then return 100 end
+         return allow_auto_shrink and 7000 or 90000
+      end,
+   },
+   agent = {
+      run = function(_, opts)
+         nonshrinking_auto_calls = nonshrinking_auto_calls + 1
+         assert(opts.max_tokens == nil)
+         return { ok = true, content = table.concat(summary, "\n\n") }
+      end,
    },
    ui = { notice = function() end },
 }
 assert(before_turn_handlers[1](nil, nonshrinking_auto_ctx) == nil)
+assert_history_unchanged(retry_history, retry_originals, "non-shrinking automatic summary")
 allow_auto_shrink = true
 local shrinking_auto_result = before_turn_handlers[1](nil, nonshrinking_auto_ctx)
 assert(shrinking_auto_result and shrinking_auto_result.action == "conversation.replace",
    "rejected non-shrinking output should be retryable at the same context length")
-
-local output_limit_calls = 0
-local output_limit_prompts = {}
-local output_limit_limits = {}
-local output_limit_history = {
-   { role = "user", content = "question before truncation" },
-   { role = "assistant", content = "answer before truncation" },
-}
-local output_limit_retry = commands.compact.handler("", {
-   settings = settings(),
-   conversation = {
-      history = function() return output_limit_history end,
-      context_tokens = function(messages) return #messages * 1000 end,
-   },
-   agent = {
-      run = function(prompt, opts)
-         output_limit_calls = output_limit_calls + 1
-         output_limit_prompts[#output_limit_prompts + 1] = prompt
-         output_limit_limits[#output_limit_limits + 1] = opts.max_tokens
-         if output_limit_calls == 1 then
-            return { ok = false, error = "incomplete response: max_output_tokens reached" }
-         end
-         return { ok = true, content = table.concat(summary, "\n\n") }
-      end,
-   },
-})
-assert(output_limit_retry.action == "conversation.replace", output_limit_retry.display)
-assert(output_limit_calls == 2, "output-limit failures should get exactly one retry")
-assert(output_limit_prompts[2]:find("previous attempt exhausted the provider output limit", 1, true))
-assert(output_limit_prompts[2]:find("complete capsule within 4000 tokens now", 1, true))
-assert(output_limit_prompts[2]:find("Be substantially shorter", 1, true),
-   "the output-limit retry should explicitly demand a shorter checkpoint")
-assert(table.concat(output_limit_limits, ",") == "12000,12000",
-   "output-limit retries should retain the independent generation budget")
-
-local repeated_limit_calls = 0
-local repeatedly_truncated = commands.compact.handler("", {
-   settings = settings(),
-   conversation = {
-      history = function() return output_limit_history end,
-      context_tokens = function(messages) return #messages * 1000 end,
-   },
-   agent = {
-      run = function()
-         repeated_limit_calls = repeated_limit_calls + 1
-         return { ok = false, error = "incomplete response: max_output_tokens reached" }
-      end,
-   },
-})
-assert(repeated_limit_calls == 2, "repeated output truncation should stop after one retry")
-assert(not repeatedly_truncated.action,
-   "repeated output truncation must preserve the original conversation")
-assert(repeatedly_truncated.display:find("original context preserved", 1, true))
-assert(#output_limit_history == 2
-   and output_limit_history[1].content == "question before truncation"
-   and output_limit_history[2].content == "answer before truncation",
-   "failed retries must not mutate the original history")
-
-local oversized = {}
-for _, heading in ipairs(headings) do
-   oversized[#oversized + 1] = heading .. ":\n- " .. string.rep("detail ", 5000)
-end
-local retry_calls = 0
-local retry_prompts = {}
-local retry_limits = {}
-local retried = commands.compact.handler("", {
-   settings = settings(),
-   conversation = {
-      history = function()
-         return {
-            { role = "user", content = "old question" },
-            { role = "assistant", content = "old answer" },
-            { role = "user", content = "recent question" },
-            { role = "assistant", content = "recent answer" },
-         }
-      end,
-      context_tokens = function(messages)
-         if #messages == 0 then return 4800 end
-         if #messages == 1 then return 4800 + math.ceil(#messages[1].content / 4) end
-         return 4800 + #messages * 2000
-      end,
-   },
-   agent = {
-      run = function(prompt, opts)
-         retry_calls = retry_calls + 1
-         retry_prompts[#retry_prompts + 1] = prompt
-         retry_limits[#retry_limits + 1] = opts.max_tokens
-         local content = retry_calls < 2 and table.concat(oversized, "\n\n")
-            or table.concat(summary, "\n\n")
-         return { ok = true, content = content }
-      end,
-   },
-})
-assert(retried.action == "conversation.replace", retried.display)
-assert(retry_calls == 2, "oversized checkpoints should get one bounded compression attempt")
-assert(retry_prompts[1]:find("within 4000 tokens", 1, true))
-assert(retry_prompts[2]:find("fit within 3200 tokens", 1, true))
-assert(table.concat(retry_limits, ",") == "12000,12000",
-   "summary and compression must retain the independent generation budget")
-
-local failed_calls = 0
-local failed = commands.compact.handler("", {
-   settings = settings(),
-   conversation = {
-      history = function()
-         return {
-            { role = "user", content = "old question" },
-            { role = "assistant", content = "old answer" },
-            { role = "user", content = "recent question" },
-            { role = "assistant", content = "recent answer" },
-         }
-      end,
-      context_tokens = function(messages)
-         if #messages == 1 then return math.ceil(#messages[1].content / 4) end
-         return #messages * 1000
-      end,
-   },
-   agent = {
-      run = function()
-         failed_calls = failed_calls + 1
-         return { ok = true, content = table.concat(oversized, "\n\n") }
-      end,
-   },
-})
-assert(failed_calls == 2, "oversized checkpoints should stop after one bounded compression attempt")
-assert(not failed.action, "failed compaction must preserve the original conversation")
-assert(failed.display:find(" > 4000 tokens)", 1, true),
-   "failure should report measured and configured checkpoint sizes")
+assert(nonshrinking_auto_calls == 2,
+   "non-shrinking output should not trigger extra summarization calls")
 
 local usage_snapshot = {
    request_count = 1,
