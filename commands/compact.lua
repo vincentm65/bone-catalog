@@ -28,6 +28,14 @@ bone.settings.register({
             min = 50,
             max = 95,
         },
+        {
+            key = "fallback_context_window_tokens",
+            label = "Fallback context capacity (tokens)",
+            type = "number",
+            default = 100000,
+            integer = true,
+            min = 1,
+        },
     },
 })
 
@@ -39,6 +47,8 @@ local function compact_config(ctx)
     return {
         auto = ctx.settings.get("compact.auto"),
         trigger_percentage = tonumber(ctx.settings.get("compact.trigger_percentage")) or 80,
+        fallback_context_window_tokens =
+            tonumber(ctx.settings.get("compact.fallback_context_window_tokens")) or 100000,
     }
 end
 
@@ -200,7 +210,7 @@ end
 
 local function effective_threshold(ctx, config)
     local window = ctx.model and tonumber(ctx.model.context_window_tokens)
-    if not window or window <= 0 then return nil end
+    if not window or window <= 0 then window = config.fallback_context_window_tokens end
     return math.floor(window * config.trigger_percentage / 100)
 end
 

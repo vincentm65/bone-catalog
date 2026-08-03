@@ -32,6 +32,7 @@ local function settings(values)
          if values[path] ~= nil then return values[path] end
          if path == "compact.auto" then return true end
          if path == "compact.trigger_percentage" then return 80 end
+         if path == "compact.fallback_context_window_tokens" then return 100000 end
       end,
    }
 end
@@ -42,9 +43,14 @@ assert(loadfile("commands/usage.lua"))()
 assert(commands.compact, "compact command was not registered")
 assert(commands.usage, "usage command was not registered")
 assert(settings_page and settings_page.namespace == "compact", "compact settings were not registered")
-assert(#settings_page.fields == 2, "compact should expose exactly two settings")
+assert(#settings_page.fields == 3, "compact should expose exactly three settings")
 assert(settings_page.fields[1].key == "auto")
 assert(settings_page.fields[2].key == "trigger_percentage")
+local fallback_field = settings_page.fields[3]
+assert(fallback_field.key == "fallback_context_window_tokens")
+assert(fallback_field.default == 100000)
+assert(fallback_field.integer == true)
+assert(fallback_field.min == 1)
 assert(#before_turn_handlers == 1, "compact should register one before_turn handler")
 
 local headings = {
@@ -191,6 +197,24 @@ assert(#auto_statuses == 1 and auto_statuses[1]:find("Compacting context", 1, tr
    "automatic compaction should emit transient progress")
 assert(#auto_notices == 1 and auto_notices[1]:find("Context compacted", 1, true),
    "automatic compaction should emit a persistent success notice")
+
+local fallback_history_reads = 0
+local fallback_result = before_turn_handlers[1](nil, {
+   settings = settings({ ["compact.fallback_context_window_tokens"] = 200000 }),
+   config = { get_table = function() return {} end },
+   model = nil,
+   usage = { snapshot = function() return { context_length = 90000 } end },
+   conversation = {
+      current = function() return { id = 47 } end,
+      history = function()
+         fallback_history_reads = fallback_history_reads + 1
+         return auto_history
+      end,
+   },
+})
+assert(fallback_result == nil)
+assert(fallback_history_reads == 0,
+   "configured fallback capacity should control the trigger when model capacity is unavailable")
 
 local incremental_calls = 0
 local incremental_prompt
@@ -382,15 +406,12 @@ assert(before_turn_handlers[1](nil, reset_auto_ctx).action == "conversation.repl
 assert(reset_agent_calls == 1)
 assert(before_turn_handlers[1](nil, reset_auto_ctx) == nil)
 assert(reset_agent_calls == 1, "successful compaction should suppress an immediate duplicate attempt")
-local reads_before_missing_model = reset_history_reads
 reset_auto_ctx.model = nil
-assert(before_turn_handlers[1](nil, reset_auto_ctx) == nil)
-assert(reset_history_reads == reads_before_missing_model,
-   "history should not be read without model context capacity")
-reset_auto_ctx.model = reset_model
+reset_snapshot_length = 93000
 assert(before_turn_handlers[1](nil, reset_auto_ctx).action == "conversation.replace")
 assert(reset_agent_calls == 2,
-   "unavailable model capacity should reset automatic retry state")
+   "fallback context capacity should trigger compaction when model capacity is unavailable")
+reset_auto_ctx.model = reset_model
 reset_snapshot_length = 79000
 assert(before_turn_handlers[1](nil, reset_auto_ctx) == nil)
 reset_snapshot_length = 90000
