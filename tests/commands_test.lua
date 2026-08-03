@@ -32,8 +32,6 @@ local function settings(values)
          if values[path] ~= nil then return values[path] end
          if path == "compact.auto" then return true end
          if path == "compact.trigger_percentage" then return 80 end
-         if path == "compact.recent_context_tokens" then return 12000 end
-         if path == "compact.checkpoint_tokens" then return 4000 end
       end,
    }
 end
@@ -44,21 +42,9 @@ assert(loadfile("commands/usage.lua"))()
 assert(commands.compact, "compact command was not registered")
 assert(commands.usage, "usage command was not registered")
 assert(settings_page and settings_page.namespace == "compact", "compact settings were not registered")
-assert(#settings_page.fields == 4, "compact should expose exactly four settings")
+assert(#settings_page.fields == 2, "compact should expose exactly two settings")
 assert(settings_page.fields[1].key == "auto")
 assert(settings_page.fields[2].key == "trigger_percentage")
-local recent_context_field = settings_page.fields[3]
-assert(recent_context_field.key == "recent_context_tokens")
-assert(recent_context_field.type == "number")
-assert(recent_context_field.default == 12000)
-assert(recent_context_field.integer == true)
-assert(recent_context_field.min == 1)
-local checkpoint_field = settings_page.fields[4]
-assert(checkpoint_field.key == "checkpoint_tokens")
-assert(checkpoint_field.type == "number")
-assert(checkpoint_field.default == 4000)
-assert(checkpoint_field.integer == true)
-assert(checkpoint_field.min == 1)
 assert(#before_turn_handlers == 1, "compact should register one before_turn handler")
 
 local headings = {
@@ -75,6 +61,7 @@ end
 local agent_calls = 0
 local summary_prompt_seen
 local summary_options
+local oversized_turn_text = string.rep("older context detail ", 1500)
 local recent_user = { role = "user", content = "recent question" }
 local recent_call = { role = "assistant", content = "", tool_calls = {
    { id = "call-recent", name = "read_file", arguments = { path = "src/main.rs" } },
@@ -83,14 +70,14 @@ local recent_tool = { role = "tool", content = "recent tool result", tool_call_i
 local recent_answer = { role = "assistant", content = "recent answer" }
 local compact_history = {
    { role = "user", content = "old question" },
-   { role = "assistant", content = "old answer" },
+   { role = "assistant", content = "old answer " .. oversized_turn_text },
    recent_user,
    recent_call,
    recent_tool,
    recent_answer,
 }
 local compact = commands.compact.handler("", {
-   settings = settings({ ["compact.recent_context_tokens"] = 1 }),
+   settings = settings(),
    conversation = {
       history = function() return compact_history end,
       context_tokens = function(messages) return #messages * 1000 end,
@@ -126,6 +113,39 @@ assert(compact.messages[4] == recent_tool)
 assert(compact.messages[5] == recent_answer)
 assert(compact.display:find("4 recent messages preserved", 1, true))
 
+local huge_turn_history = { { role = "user", content = "huge completed turn" } }
+for i = 2, 400 do
+   huge_turn_history[#huge_turn_history + 1] = {
+      role = "assistant",
+      content = string.rep("x", 100) .. tostring(i),
+   }
+end
+local current_user = { role = "user", content = "current request" }
+huge_turn_history[#huge_turn_history + 1] = current_user
+local huge_prompt
+local huge_turn_result = commands.compact.handler("", {
+   settings = settings(),
+   conversation = {
+      history = function() return huge_turn_history end,
+      context_tokens = function(messages) return #messages * 1000 end,
+   },
+   agent = {
+      run = function(prompt)
+         huge_prompt = prompt
+         return { ok = true, content = table.concat(summary, "\n\n") }
+      end,
+   },
+})
+assert(huge_turn_result.action == "conversation.replace", huge_turn_result.display)
+assert(#huge_turn_result.messages == 2,
+   "an oversized completed turn should be summarized instead of retained")
+assert(huge_turn_result.messages[2] == current_user,
+   "the current user message should remain verbatim")
+assert(huge_prompt:find("huge completed turn", 1, true),
+   "the oversized completed turn should be sent to the summarizer")
+assert(not huge_prompt:find("current request", 1, true),
+   "the preserved current user message should be omitted from the summary prompt")
+
 local auto_statuses = {}
 local auto_notices = {}
 local auto_calls = 0
@@ -134,12 +154,12 @@ local auto_recent_user = { role = "user", content = "recent automatic question" 
 local auto_recent_assistant = { role = "assistant", content = "recent automatic answer" }
 local auto_history = {
    { role = "user", content = "old automatic question" },
-   { role = "assistant", content = "old automatic answer" },
+   { role = "assistant", content = "old automatic answer " .. oversized_turn_text },
    auto_recent_user,
    auto_recent_assistant,
 }
 local auto_result = before_turn_handlers[1](nil, {
-   settings = settings({ ["compact.recent_context_tokens"] = 1 }),
+   settings = settings(),
    config = { get_table = function() return {} end },
    model = { context_window_tokens = 100000 },
    usage = { snapshot = function() return { context_length = 90000 } end },
@@ -181,12 +201,12 @@ local incremental_recent_assistant = { role = "assistant", content = "current an
 local incremental_history = {
    { role = "user", content = previous_checkpoint },
    { role = "user", content = "completed older task" },
-   { role = "assistant", content = "older validation passed" },
+   { role = "assistant", content = "older validation passed " .. oversized_turn_text },
    incremental_recent_user,
    incremental_recent_assistant,
 }
 local incremental = commands.compact.handler("", {
-   settings = settings({ ["compact.recent_context_tokens"] = 1 }),
+   settings = settings(),
    conversation = {
       history = function() return incremental_history end,
       context_tokens = function(messages) return #messages * 1000 end,
@@ -242,7 +262,7 @@ end
 
 local failure_history = {
    { role = "user", content = "old failure question" },
-   { role = "assistant", content = "old failure answer" },
+   { role = "assistant", content = "old failure answer " .. oversized_turn_text },
    { role = "user", content = "recent failure question" },
    { role = "assistant", content = "recent failure answer" },
 }
@@ -251,7 +271,7 @@ local function rejected_compaction(label, agent_run, values, token_counter)
    local calls = 0
    local options
    local result = commands.compact.handler("", {
-      settings = settings(values or { ["compact.recent_context_tokens"] = 1 }),
+      settings = settings(values),
       conversation = {
          history = function() return failure_history end,
          context_tokens = token_counter,
@@ -290,10 +310,7 @@ assert(empty.display:find("summarizer returned an empty summary", 1, true))
 
 local large_checkpoint = string.rep("large checkpoint detail ", 99) .. "large checkpoint detail"
 local large = commands.compact.handler("", {
-   settings = settings({
-      ["compact.recent_context_tokens"] = 1,
-      ["compact.checkpoint_tokens"] = 10,
-   }),
+   settings = settings(),
    conversation = {
       history = function() return failure_history end,
       context_tokens = function(messages) return #messages * 1000 end,
@@ -330,15 +347,12 @@ local reset_recent_user = { role = "user", content = "reset recent question" }
 local reset_recent_assistant = { role = "assistant", content = "reset recent answer" }
 local reset_full_history = {
    { role = "user", content = "reset old question" },
-   { role = "assistant", content = "reset old answer" },
+   { role = "assistant", content = "reset old answer " .. oversized_turn_text },
    reset_recent_user,
    reset_recent_assistant,
 }
 local reset_auto_ctx = {
-   settings = settings({
-      ["compact.recent_context_tokens"] = 1,
-      ["compact.context_window_tokens"] = 200000,
-   }),
+   settings = settings(),
    config = { get_table = function() return {} end },
    model = reset_model,
    usage = { snapshot = function() return { context_length = reset_snapshot_length } end },
@@ -399,13 +413,13 @@ local retry_agent_ok = false
 local retry_agent_calls = 0
 local retry_history = {
    { role = "user", content = "retry old question" },
-   { role = "assistant", content = "retry old answer" },
+   { role = "assistant", content = "retry old answer " .. oversized_turn_text },
    { role = "user", content = "retry recent question" },
    { role = "assistant", content = "retry recent answer" },
 }
 local retry_originals = snapshot_history(retry_history)
 local retry_auto_ctx = {
-   settings = settings({ ["compact.recent_context_tokens"] = 1 }),
+   settings = settings(),
    config = { get_table = function() return {} end },
    model = { context_window_tokens = 100000 },
    usage = { snapshot = function() return { context_length = 90000 } end },
@@ -442,10 +456,7 @@ assert(retry_agent_calls == 2,
 
 local large_auto_calls = 0
 local large_auto_ctx = {
-   settings = settings({
-      ["compact.recent_context_tokens"] = 1,
-      ["compact.checkpoint_tokens"] = 100,
-   }),
+   settings = settings(),
    config = { get_table = function() return {} end },
    model = { context_window_tokens = 100000 },
    usage = { snapshot = function() return { context_length = 90000 } end },
@@ -476,7 +487,7 @@ assert(large_auto_calls == 1,
 local allow_auto_shrink = false
 local nonshrinking_auto_calls = 0
 local nonshrinking_auto_ctx = {
-   settings = settings({ ["compact.recent_context_tokens"] = 1 }),
+   settings = settings(),
    config = { get_table = function() return {} end },
    model = { context_window_tokens = 100000 },
    usage = { snapshot = function() return { context_length = 90000 } end },

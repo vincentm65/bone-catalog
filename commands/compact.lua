@@ -5,8 +5,8 @@
 -- model-facing transcript.
 
 local CHECKPOINT_MARKER = "[Context checkpoint v1]"
-local DEFAULT_RECENT_CONTEXT_TOKENS = 12000
-local DEFAULT_CHECKPOINT_TOKENS = 4000
+local RECENT_CONTEXT_CHARS = 24000
+local CHECKPOINT_TOKENS = 4000
 local CHARS_PER_TOKEN = 3.8
 
 bone.settings.register({
@@ -28,22 +28,6 @@ bone.settings.register({
             min = 50,
             max = 95,
         },
-        {
-            key = "recent_context_tokens",
-            label = "Recent context to preserve (tokens)",
-            type = "number",
-            default = DEFAULT_RECENT_CONTEXT_TOKENS,
-            integer = true,
-            min = 1,
-        },
-        {
-            key = "checkpoint_tokens",
-            label = "Checkpoint target (tokens)",
-            type = "number",
-            default = DEFAULT_CHECKPOINT_TOKENS,
-            integer = true,
-            min = 1,
-        },
     },
 })
 
@@ -55,10 +39,6 @@ local function compact_config(ctx)
     return {
         auto = ctx.settings.get("compact.auto"),
         trigger_percentage = tonumber(ctx.settings.get("compact.trigger_percentage")) or 80,
-        recent_context_tokens = tonumber(ctx.settings.get("compact.recent_context_tokens"))
-            or DEFAULT_RECENT_CONTEXT_TOKENS,
-        checkpoint_tokens = tonumber(ctx.settings.get("compact.checkpoint_tokens"))
-            or DEFAULT_CHECKPOINT_TOKENS,
     }
 end
 
@@ -110,7 +90,7 @@ local function group_turns(messages)
     local current
     for _, msg in ipairs(messages) do
         if msg.role == "user" or not current then
-            current = { messages = {}, tokens = 0 }
+            current = { messages = {}, chars = 0 }
             turns[#turns + 1] = current
         end
         current.messages[#current.messages + 1] = msg
@@ -120,32 +100,45 @@ local function group_turns(messages)
         for _, msg in ipairs(turn.messages) do
             lines[#lines + 1] = serialize_message(msg)
         end
-        turn.tokens = estimate_tokens(table.concat(lines, "\n"))
+        turn.chars = #table.concat(lines, "\n")
     end
     return turns
 end
 
-local function select_regions(history, config)
+local function select_regions(history)
     local old_checkpoint, messages = strip_checkpoint(history)
     local turns = group_turns(messages)
-    if #turns <= 1 then return old_checkpoint, {}, messages, turns[1] and turns[1].tokens or 0 end
-
-    local keep_from = #turns
-    local recent_tokens = 0
-    for i = #turns, 1, -1 do
-        local next_tokens = recent_tokens + turns[i].tokens
-        if recent_tokens > 0 and next_tokens > config.recent_context_tokens then break end
-        keep_from = i
-        recent_tokens = next_tokens
+    if #turns == 0 then return old_checkpoint, {}, {}, 0 end
+    if #turns == 1 then
+        local only = turns[1]
+        local current_user_turn = #only.messages == 1 and only.messages[1].role == "user"
+        if current_user_turn or only.chars <= RECENT_CONTEXT_CHARS then
+            return old_checkpoint, {}, messages, math.ceil(only.chars / CHARS_PER_TOKEN)
+        end
+        return old_checkpoint, messages, {}, 0
     end
 
-    if keep_from == 1 then return old_checkpoint, {}, messages, recent_tokens end
+    local keep_from = #turns + 1
+    local recent_chars = 0
+    for i = #turns, 1, -1 do
+        local turn = turns[i]
+        local next_chars = recent_chars + turn.chars
+        local current_user_turn = i == #turns and #turn.messages == 1
+            and turn.messages[1].role == "user"
+        if next_chars > RECENT_CONTEXT_CHARS and not current_user_turn then break end
+        keep_from = i
+        recent_chars = next_chars
+    end
+
+    if keep_from == 1 then
+        return old_checkpoint, {}, messages, math.ceil(recent_chars / CHARS_PER_TOKEN)
+    end
     local older, recent = {}, {}
     for i, turn in ipairs(turns) do
         local target = i < keep_from and older or recent
         for _, msg in ipairs(turn.messages) do target[#target + 1] = msg end
     end
-    return old_checkpoint, older, recent, recent_tokens
+    return old_checkpoint, older, recent, math.ceil(recent_chars / CHARS_PER_TOKEN)
 end
 
 local function summary_prompt(previous, excerpt, target_tokens)
@@ -164,11 +157,11 @@ local function summary_prompt(previous, excerpt, target_tokens)
     }, "\n\n")
 end
 
-local function summarize_once(ctx, old_checkpoint, older, config)
+local function summarize_once(ctx, old_checkpoint, older)
     local serialized = {}
     for _, msg in ipairs(older) do serialized[#serialized + 1] = serialize_message(msg) end
     local prompt = summary_prompt(
-        old_checkpoint, table.concat(serialized, "\n"), config.checkpoint_tokens)
+        old_checkpoint, table.concat(serialized, "\n"), CHECKPOINT_TOKENS)
     local result = ctx.agent and ctx.agent.run and ctx.agent.run(prompt, {
         tools = {},
         system_prompt = "Write a precise, concise coding-session state capsule.",
@@ -190,11 +183,11 @@ local function context_tokens(ctx, messages)
     return estimate_tokens(encode(messages))
 end
 
-local function compact_history(history, ctx, config)
+local function compact_history(history, ctx)
     if not history or #history == 0 then return nil, "nothing to compact" end
-    local old_checkpoint, older, recent, recent_tokens = select_regions(history, config)
+    local old_checkpoint, older, recent, recent_tokens = select_regions(history)
     if #older == 0 then return nil, "history is already within the recent-context budget" end
-    local checkpoint, err = summarize_once(ctx, old_checkpoint, older, config)
+    local checkpoint, err = summarize_once(ctx, old_checkpoint, older)
     if not checkpoint then return nil, err end
 
     local messages = { { role = "user", content = checkpoint } }
@@ -257,14 +250,14 @@ bone.on("before_turn", function(_, ctx)
         last_auto_context[key] = nil
         return nil
     end
-    local _, older = select_regions(history, config)
+    local _, older = select_regions(history)
     if #older == 0 then
         last_auto_context[key] = nil
         return nil
     end
 
     if ctx.ui and ctx.ui.status then ctx.ui.status("Compacting context… preserving recent turns") end
-    local messages, err, details = compact_history(history, ctx, config)
+    local messages, err, details = compact_history(history, ctx)
     if not messages then
         last_auto_context[key] = nil
         if err and err ~= "history is already within the recent-context budget"
@@ -311,9 +304,8 @@ end
 local function handle_compact(ctx)
     local history, err = history_or_error(ctx)
     if not history then return err end
-    local config = compact_config(ctx)
     if ctx.ui and ctx.ui.status then ctx.ui.status("Compacting context… preserving recent turns") end
-    local messages, compact_err, details = compact_history(history, ctx, config)
+    local messages, compact_err, details = compact_history(history, ctx)
     if not messages then
         return command_result("Compaction made no changes; original context preserved: " .. compact_err)
     end
