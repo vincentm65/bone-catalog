@@ -64,6 +64,10 @@ local summary = {}
 for _, heading in ipairs(headings) do
    summary[#summary + 1] = "## **" .. heading .. ":**\n- value"
 end
+local base_system_prompt = "Bone base system prompt"
+local tool_definitions = {
+   { name = "read_file", description = "Read a file", parameters = {} },
+}
 local agent_calls = 0
 local summary_prompt_seen
 local summary_options
@@ -87,32 +91,42 @@ local compact = commands.compact.handler("", {
    conversation = {
       history = function() return compact_history end,
       context_tokens = function(messages) return #messages * 1000 end,
+      system_prompt = function() return base_system_prompt end,
    },
-   agent = {
-      run = function(prompt, opts)
+   tools = { definitions = function() return tool_definitions end },
+   llm = {
+      complete = function(opts)
          agent_calls = agent_calls + 1
-         summary_prompt_seen = prompt
+         summary_prompt_seen = opts.messages[#opts.messages].content
          summary_options = opts
-         return { ok = true, content = table.concat(summary, "\n\n") }
+         return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
       end,
    },
 })
 assert(compact.action == "conversation.replace", compact.display)
 assert(agent_calls == 1, "compaction should make exactly one summarization call")
-assert(summary_options.max_tokens == nil, "compaction should not set a generation token cap")
-assert(type(summary_options.tools) == "table" and next(summary_options.tools) == nil,
-   "compaction should disable tools")
+assert(summary_options.max_tokens == 4000, "compaction should cap checkpoint generation")
+assert(summary_options.tools == tool_definitions, "compaction should pass the current tool definitions")
+assert(#summary_options.messages == #compact_history + 2)
+assert(summary_options.messages[1].role == "system")
+assert(summary_options.messages[1].content == base_system_prompt)
+for i, message in ipairs(compact_history) do
+   assert(summary_options.messages[i + 1] == message,
+      "compaction should preserve history message identity and order")
+end
+assert(summary_options.messages[#summary_options.messages].role == "user")
 assert(#compact.messages == 5, "compaction should preserve the newest complete turn")
 assert(compact.messages[1].role == "user")
 local checkpoint = compact.messages[1].content
 assert(checkpoint:find("[Context checkpoint v1]", 1, true))
 assert(checkpoint:find("Objective", 1, true))
-assert(summary_prompt_seen:find("old question", 1, true))
-assert(summary_prompt_seen:find("old answer", 1, true))
+assert(checkpoint:find("Resume the current user request from this checkpoint", 1, true))
+assert(checkpoint:find("does not complete the active task", 1, true))
 assert(summary_prompt_seen:find("Target approximately 4000 tokens", 1, true),
-   "compaction should request a concise target without enforcing an output cap")
-assert(not summary_prompt_seen:find("recent question", 1, true),
-   "preserved turns should be omitted from the summarization prompt")
+   "compaction should request the capped output target")
+assert(summary_prompt_seen:find("before the final 4 messages", 1, true),
+   "compaction should identify the verbatim recent suffix")
+assert(summary_options.messages[4] == recent_user)
 assert(compact.messages[2] == recent_user)
 assert(compact.messages[3] == recent_call)
 assert(compact.messages[4] == recent_tool)
@@ -129,16 +143,18 @@ end
 local current_user = { role = "user", content = "current request" }
 huge_turn_history[#huge_turn_history + 1] = current_user
 local huge_prompt
+local huge_options
 local huge_turn_result = commands.compact.handler("", {
    settings = settings(),
    conversation = {
       history = function() return huge_turn_history end,
       context_tokens = function(messages) return #messages * 1000 end,
    },
-   agent = {
-      run = function(prompt)
-         huge_prompt = prompt
-         return { ok = true, content = table.concat(summary, "\n\n") }
+   llm = {
+      complete = function(opts)
+         huge_options = opts
+         huge_prompt = opts.messages[#opts.messages].content
+         return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
       end,
    },
 })
@@ -147,10 +163,12 @@ assert(#huge_turn_result.messages == 2,
    "an oversized completed turn should be summarized instead of retained")
 assert(huge_turn_result.messages[2] == current_user,
    "the current user message should remain verbatim")
-assert(huge_prompt:find("huge completed turn", 1, true),
-   "the oversized completed turn should be sent to the summarizer")
-assert(not huge_prompt:find("current request", 1, true),
-   "the preserved current user message should be omitted from the summary prompt")
+assert(huge_options.messages[2] == huge_turn_history[1],
+   "the oversized completed turn should remain in the request history")
+assert(huge_options.messages[#huge_options.messages - 1] == current_user,
+   "the preserved current user message should remain in the request history")
+assert(huge_prompt:find("before the final 1 messages", 1, true),
+   "the instruction should exclude the preserved current user message from the capsule")
 
 local auto_statuses = {}
 local auto_notices = {}
@@ -166,19 +184,21 @@ local auto_history = {
 }
 local auto_result = before_turn_handlers[1](nil, {
    settings = settings(),
-   config = { get_table = function() return {} end },
+   config = { get_table = function() return { compact = true } end },
    model = { context_window_tokens = 100000 },
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
       current = function() return { id = 42 } end,
       history = function() return auto_history end,
       context_tokens = function(messages) return #messages * 100 end,
+      system_prompt = function() return base_system_prompt end,
    },
-   agent = {
-      run = function(_, opts)
+   tools = { definitions = function() return tool_definitions end },
+   llm = {
+      complete = function(opts)
          auto_calls = auto_calls + 1
          auto_options = opts
-         return { ok = true, content = table.concat(summary, "\n\n") }
+         return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
       end,
    },
    ui = {
@@ -188,8 +208,11 @@ local auto_result = before_turn_handlers[1](nil, {
 })
 assert(auto_result.action == "conversation.replace")
 assert(auto_calls == 1, "automatic compaction should make exactly one summarization call")
-assert(auto_options.max_tokens == nil)
-assert(type(auto_options.tools) == "table" and next(auto_options.tools) == nil)
+assert(auto_options.max_tokens == 4000)
+assert(auto_options.tools == tool_definitions)
+assert(#auto_options.messages == #auto_history + 2)
+assert(auto_options.messages[1].content == base_system_prompt)
+assert(auto_options.messages[#auto_options.messages].content:find("before the final 2 messages", 1, true))
 assert(#auto_result.messages == 3, "automatic compaction should preserve the newest turn")
 assert(auto_result.messages[2] == auto_recent_user)
 assert(auto_result.messages[3] == auto_recent_assistant)
@@ -197,6 +220,44 @@ assert(#auto_statuses == 1 and auto_statuses[1]:find("Compacting context", 1, tr
    "automatic compaction should emit transient progress")
 assert(#auto_notices == 1 and auto_notices[1]:find("Context compacted", 1, true),
    "automatic compaction should emit a persistent success notice")
+
+local missing_commands_result = before_turn_handlers[1](nil, {
+   settings = settings(),
+   config = { get_table = function() return nil end },
+   model = { context_window_tokens = 100000 },
+   usage = { snapshot = function() return { context_length = 90000 } end },
+   conversation = {
+      current = function() return { id = 48 } end,
+      history = function() return auto_history end,
+      context_tokens = function(messages) return #messages * 100 end,
+   },
+   llm = {
+      complete = function()
+         return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
+      end,
+   },
+   ui = { notice = function() end },
+})
+assert(missing_commands_result and missing_commands_result.action == "conversation.replace",
+   "a missing commands config table should not disable automatic compaction")
+
+local disabled_history_reads = 0
+local disabled_result = before_turn_handlers[1](nil, {
+   settings = settings(),
+   config = { get_table = function() return { compact = false } end },
+   model = { context_window_tokens = 100000 },
+   usage = { snapshot = function() return { context_length = 90000 } end },
+   conversation = {
+      current = function() return { id = 49 } end,
+      history = function()
+         disabled_history_reads = disabled_history_reads + 1
+         return auto_history
+      end,
+   },
+})
+assert(disabled_result == nil)
+assert(disabled_history_reads == 0,
+   "the canonical commands.compact=false value should disable automatic compaction")
 
 local fallback_history_reads = 0
 local fallback_result = before_turn_handlers[1](nil, {
@@ -234,29 +295,33 @@ local incremental = commands.compact.handler("", {
    conversation = {
       history = function() return incremental_history end,
       context_tokens = function(messages) return #messages * 1000 end,
+      system_prompt = function() return base_system_prompt end,
    },
-   agent = {
-      run = function(prompt, opts)
+   tools = { definitions = function() return tool_definitions end },
+   llm = {
+      complete = function(opts)
          incremental_calls = incremental_calls + 1
-         incremental_prompt = prompt
+         incremental_prompt = opts.messages[#opts.messages].content
          incremental_options = opts
-         return { ok = true, content = table.concat(summary, "\n\n") }
+         return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
       end,
    },
 })
 assert(incremental.action == "conversation.replace", incremental.display)
 assert(incremental_calls == 1, "incremental compaction should make exactly one call")
-assert(incremental_options.max_tokens == nil)
-assert(type(incremental_options.tools) == "table" and next(incremental_options.tools) == nil)
+assert(incremental_options.max_tokens == 4000)
+assert(incremental_options.tools == tool_definitions)
 assert(#incremental.messages == 3)
 assert(incremental.messages[2] == incremental_recent_user)
 assert(incremental.messages[3] == incremental_recent_assistant)
-assert(incremental_prompt:find("Previous capsule:\n" .. previous_checkpoint, 1, true),
-   "incremental compaction should provide the previous checkpoint separately")
-assert(incremental_prompt:find("completed older task", 1, true))
-assert(incremental_prompt:find("older validation passed", 1, true))
-assert(not incremental_prompt:find("current question", 1, true),
-   "incremental compaction should omit preserved recent turns")
+assert(incremental_options.messages[2] == incremental_history[1],
+   "incremental compaction should keep the previous checkpoint in history")
+assert(incremental_options.messages[3] == incremental_history[2])
+assert(incremental_options.messages[4] == incremental_history[3])
+assert(incremental_options.messages[5] == incremental_recent_user)
+assert(incremental_options.messages[6] == incremental_recent_assistant)
+assert(incremental_prompt:find("before the final 2 messages", 1, true),
+   "incremental compaction should exclude the recent suffix through the final instruction")
 
 local function snapshot_history(history)
    local snapshot = {}
@@ -291,7 +356,7 @@ local failure_history = {
    { role = "assistant", content = "recent failure answer" },
 }
 local failure_originals = snapshot_history(failure_history)
-local function rejected_compaction(label, agent_run, values, token_counter)
+local function rejected_compaction(label, llm_complete, values, token_counter, expected_calls)
    local calls = 0
    local options
    local result = commands.compact.handler("", {
@@ -300,16 +365,16 @@ local function rejected_compaction(label, agent_run, values, token_counter)
          history = function() return failure_history end,
          context_tokens = token_counter,
       },
-      agent = {
-         run = function(prompt, opts)
+      llm = {
+         complete = function(opts)
             calls = calls + 1
             options = opts
-            return agent_run(prompt, opts)
+            return llm_complete(opts, calls)
          end,
       },
    })
-   assert(calls == 1, label .. " should make exactly one summarization call")
-   assert(options.max_tokens == nil, label .. " should not set max_tokens")
+   assert(calls == (expected_calls or 1), label .. " made an unexpected number of summarization calls")
+   assert(options.max_tokens == 4000, label .. " should set max_tokens")
    assert(type(options.tools) == "table" and next(options.tools) == nil,
       label .. " should disable tools")
    assert(not result.action, label .. " must preserve the original conversation")
@@ -325,12 +390,56 @@ local failed = rejected_compaction("failed summary", function()
    return { ok = false, error = "incomplete response: max_output_tokens reached" }
 end)
 assert(failed.display:find("max_output_tokens reached", 1, true),
-   "output-limit failures should not trigger a retry")
+   "transport and stream failures should not trigger a repair")
+
+local cancelled = rejected_compaction("cancelled summary", function()
+   return { ok = false, cancelled = true, error = "cancelled" }
+end)
+assert(cancelled.display:find("cancelled", 1, true))
+
+local malformed = rejected_compaction("malformed summary", function()
+   return { ok = true, content = {}, tool_calls = {} }
+end)
+assert(malformed.display:find("malformed content", 1, true))
 
 local empty = rejected_compaction("empty summary", function()
-   return { ok = true, content = "  \n\t" }
-end)
-assert(empty.display:find("summarizer returned an empty summary", 1, true))
+   return { ok = true, content = "  \n\t", tool_calls = {} }
+end, nil, nil, 2)
+assert(empty.display:find("summary repair failed", 1, true))
+assert(empty.display:find("empty summary", 1, true))
+
+local repair_calls = 0
+local repaired = commands.compact.handler("", {
+   settings = settings(),
+   conversation = {
+      history = function() return failure_history end,
+      context_tokens = function(messages) return #messages * 1000 end,
+   },
+   llm = {
+      complete = function(opts)
+         repair_calls = repair_calls + 1
+         assert(opts.max_tokens == 4000)
+         assert(type(opts.tools) == "table" and next(opts.tools) == nil)
+         if repair_calls == 1 then
+            return { ok = true, content = "ignored", tool_calls = { { name = "read_file" } } }
+         end
+         assert(opts.messages[#opts.messages].content:find(
+            "Repair the previous failed attempt", 1, true))
+         return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
+      end,
+   },
+})
+assert(repair_calls == 2, "tool-call output should trigger exactly one repair")
+assert(repaired.action == "conversation.replace", repaired.display)
+
+local failed_tool_repair = rejected_compaction("failed tool-call repair", function(_, call)
+   if call == 1 then
+      return { ok = true, content = "ignored", tool_calls = { { name = "read_file" } } }
+   end
+   return { ok = false, error = "repair transport failed" }
+end, nil, nil, 2)
+assert(failed_tool_repair.display:find("summary repair failed", 1, true))
+assert(failed_tool_repair.display:find("repair transport failed", 1, true))
 
 local large_checkpoint = string.rep("large checkpoint detail ", 99) .. "large checkpoint detail"
 local large = commands.compact.handler("", {
@@ -339,10 +448,10 @@ local large = commands.compact.handler("", {
       history = function() return failure_history end,
       context_tokens = function(messages) return #messages * 1000 end,
    },
-   agent = {
-      run = function(_, opts)
-         assert(opts.max_tokens == nil, "large summary should not set max_tokens")
-         return { ok = true, content = large_checkpoint }
+   llm = {
+      complete = function(opts)
+         assert(opts.max_tokens == 4000, "large summary should set max_tokens")
+         return { ok = true, content = large_checkpoint, tool_calls = {} }
       end,
    },
 })
@@ -394,10 +503,10 @@ local reset_auto_ctx = {
          return 89000
       end,
    },
-   agent = {
-      run = function()
+   llm = {
+      complete = function()
          reset_agent_calls = reset_agent_calls + 1
-         return { ok = true, content = table.concat(summary, "\n\n") }
+         return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
       end,
    },
    ui = { notice = function() end },
@@ -453,13 +562,13 @@ local retry_auto_ctx = {
          return 1000
       end,
    },
-   agent = {
-      run = function(_, opts)
+   llm = {
+      complete = function(opts)
          retry_agent_calls = retry_agent_calls + 1
-         assert(opts.max_tokens == nil)
+         assert(opts.max_tokens == 4000)
          assert(type(opts.tools) == "table" and next(opts.tools) == nil)
          if retry_agent_ok then
-            return { ok = true, content = table.concat(summary, "\n\n") }
+            return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
          end
          return { ok = false, error = "temporary failure" }
       end,
@@ -490,11 +599,11 @@ local large_auto_ctx = {
          return 1000
       end,
    },
-   agent = {
-      run = function(_, opts)
+   llm = {
+      complete = function(opts)
          large_auto_calls = large_auto_calls + 1
-         assert(opts.max_tokens == nil)
-         return { ok = true, content = string.rep("large checkpoint ", 1000) }
+         assert(opts.max_tokens == 4000)
+         return { ok = true, content = string.rep("large checkpoint ", 1000), tool_calls = {} }
       end,
    },
    ui = { notice = function() end },
@@ -521,11 +630,11 @@ local nonshrinking_auto_ctx = {
          return allow_auto_shrink and 7000 or 90000
       end,
    },
-   agent = {
-      run = function(_, opts)
+   llm = {
+      complete = function(opts)
          nonshrinking_auto_calls = nonshrinking_auto_calls + 1
-         assert(opts.max_tokens == nil)
-         return { ok = true, content = table.concat(summary, "\n\n") }
+         assert(opts.max_tokens == 4000)
+         return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
       end,
    },
    ui = { notice = function() end },
