@@ -105,7 +105,7 @@ local compact = commands.compact.handler("", {
 })
 assert(compact.action == "conversation.replace", compact.display)
 assert(agent_calls == 1, "compaction should make exactly one summarization call")
-assert(summary_options.max_tokens == 4000, "compaction should cap checkpoint generation")
+assert(summary_options.max_tokens == nil, "compaction should use the provider's output default")
 assert(summary_options.tools == tool_definitions, "compaction should pass the current tool definitions")
 assert(#summary_options.messages == #compact_history + 2)
 assert(summary_options.messages[1].role == "system")
@@ -208,7 +208,7 @@ local auto_result = before_turn_handlers[1](nil, {
 })
 assert(auto_result.action == "conversation.replace")
 assert(auto_calls == 1, "automatic compaction should make exactly one summarization call")
-assert(auto_options.max_tokens == 4000)
+assert(auto_options.max_tokens == nil)
 assert(auto_options.tools == tool_definitions)
 assert(#auto_options.messages == #auto_history + 2)
 assert(auto_options.messages[1].content == base_system_prompt)
@@ -309,7 +309,7 @@ local incremental = commands.compact.handler("", {
 })
 assert(incremental.action == "conversation.replace", incremental.display)
 assert(incremental_calls == 1, "incremental compaction should make exactly one call")
-assert(incremental_options.max_tokens == 4000)
+assert(incremental_options.max_tokens == nil)
 assert(incremental_options.tools == tool_definitions)
 assert(#incremental.messages == 3)
 assert(incremental.messages[2] == incremental_recent_user)
@@ -374,7 +374,7 @@ local function rejected_compaction(label, llm_complete, values, token_counter, e
       },
    })
    assert(calls == (expected_calls or 1), label .. " made an unexpected number of summarization calls")
-   assert(options.max_tokens == 4000, label .. " should set max_tokens")
+   assert(options.max_tokens == nil, label .. " should use the provider's output default")
    assert(type(options.tools) == "table" and next(options.tools) == nil,
       label .. " should disable tools")
    assert(not result.action, label .. " must preserve the original conversation")
@@ -418,7 +418,7 @@ local repaired = commands.compact.handler("", {
    llm = {
       complete = function(opts)
          repair_calls = repair_calls + 1
-         assert(opts.max_tokens == 4000)
+         assert(opts.max_tokens == nil)
          assert(type(opts.tools) == "table" and next(opts.tools) == nil)
          if repair_calls == 1 then
             return { ok = true, content = "ignored", tool_calls = { { name = "read_file" } } }
@@ -450,7 +450,7 @@ local large = commands.compact.handler("", {
    },
    llm = {
       complete = function(opts)
-         assert(opts.max_tokens == 4000, "large summary should set max_tokens")
+         assert(opts.max_tokens == nil, "large summary should use the provider's output default")
          return { ok = true, content = large_checkpoint, tool_calls = {} }
       end,
    },
@@ -565,7 +565,7 @@ local retry_auto_ctx = {
    llm = {
       complete = function(opts)
          retry_agent_calls = retry_agent_calls + 1
-         assert(opts.max_tokens == 4000)
+         assert(opts.max_tokens == nil)
          assert(type(opts.tools) == "table" and next(opts.tools) == nil)
          if retry_agent_ok then
             return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
@@ -602,7 +602,7 @@ local large_auto_ctx = {
    llm = {
       complete = function(opts)
          large_auto_calls = large_auto_calls + 1
-         assert(opts.max_tokens == 4000)
+         assert(opts.max_tokens == nil)
          return { ok = true, content = string.rep("large checkpoint ", 1000), tool_calls = {} }
       end,
    },
@@ -633,7 +633,7 @@ local nonshrinking_auto_ctx = {
    llm = {
       complete = function(opts)
          nonshrinking_auto_calls = nonshrinking_auto_calls + 1
-         assert(opts.max_tokens == 4000)
+         assert(opts.max_tokens == nil)
          return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
       end,
    },

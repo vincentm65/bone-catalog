@@ -194,7 +194,6 @@ local function request_summary(ctx, history, tools, prompt, repair_reason)
     local result = ctx.llm.complete({
         messages = messages,
         tools = tools,
-        max_tokens = CHECKPOINT_TOKENS,
     })
     if type(result) ~= "table" then return nil, "summarizer returned no result" end
     if result.cancelled then return nil, result.error or "summarization cancelled" end
