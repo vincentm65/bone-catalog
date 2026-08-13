@@ -354,6 +354,105 @@ local function opts_for(agent, title)
     return opts
 end
 
+-- ---------------------------------------------------------------------------
+-- Context sharing (dispatch only)
+-- ---------------------------------------------------------------------------
+
+-- Char budget for the automatically shared conversation tail. After filtering
+-- to user/assistant text (no tool calls/results), characters are the exact
+-- cost, so we budget on them directly rather than re-deriving the token
+-- heuristic the status bar uses for full-prompt estimation.
+local MAX_CONTEXT_CHARS = 16000
+
+local CONTEXT_OMITTED = { role = "user", content = "[... earlier conversation omitted ...]" }
+
+--- The parent conversation's provider, or nil when unavailable.
+local function parent_provider(ctx)
+    if ctx and ctx.runtime and type(ctx.runtime.info) == "function" then
+        local info = ctx.runtime.info()
+        if type(info) == "table" then return info.provider end
+    end
+    return nil
+end
+
+--- Share context only with subagents that resolve to the parent's provider, so
+--- the model cannot leak the whole conversation into a different provider the
+--- user did not intend. A nil agent provider means "inherit" (the parent's
+--- provider). When the parent provider is unknown we cannot prove a mismatch,
+--- so we share.
+local function can_share_context(ctx, agent)
+    if not agent.provider then return true end
+    local parent = parent_provider(ctx)
+    if not parent then return true end
+    return agent.provider == parent
+end
+
+--- Convert one history message into a shareable {role, content}. Drop tool
+--- results entirely and strip assistant tool_calls: they reference the parent's
+--- tool set, which is meaningless (and potentially confusing) to a subagent
+--- with a different set.
+local function shareable_message(msg)
+    if type(msg) ~= "table" or msg.role == "tool" then return nil end
+    return { role = msg.role, content = msg.content or "" }
+end
+
+--- Build the message array to share with a dispatched subagent, or nil.
+--- `params.context` (explicit) overrides `include_context` (automatic tail).
+local function build_shared_context(ctx, agent, params)
+    if params.context then return params.context end
+    if not params.include_context then return nil end
+    if not can_share_context(ctx, agent) then return nil end
+
+    local history_fn = ctx and ctx.conversation and ctx.conversation.history
+    if type(history_fn) ~= "function" then return nil end
+    local history = history_fn()
+    if type(history) ~= "table" or #history == 0 then return nil end
+
+    local shareable = {}
+    local first_user
+    for _, msg in ipairs(history) do
+        local m = shareable_message(msg)
+        if m then
+            if not first_user and m.role == "user" then first_user = m end
+            shareable[#shareable + 1] = m
+        end
+    end
+    if #shareable == 0 then return nil end
+
+    local total = 0
+    for _, m in ipairs(shareable) do total = total + #m.content end
+    if total <= MAX_CONTEXT_CHARS then return shareable end
+
+    -- Over budget: keep the original user framing plus the most recent tail,
+    -- with an omission marker between them.
+    if not first_user then
+        -- No user message to anchor on (unusual): just take the tail.
+        local kept = {}
+        local used = 0
+        for i = #shareable, 1, -1 do
+            local cost = #shareable[i].content
+            if used + cost > MAX_CONTEXT_CHARS and #kept > 0 then break end
+            table.insert(kept, 1, shareable[i])
+            used = used + cost
+        end
+        return kept
+    end
+
+    local kept = { first_user }
+    local used = #first_user.content
+    for i = #shareable, 1, -1 do
+        local m = shareable[i]
+        if m ~= first_user then
+            local cost = #m.content
+            if used + cost > MAX_CONTEXT_CHARS then break end
+            table.insert(kept, 2, m)
+            used = used + cost
+        end
+    end
+    table.insert(kept, 2, CONTEXT_OMITTED)
+    return kept
+end
+
 --- Build a status summary string for one agent (latest job by id).
 local function agent_status(agent, jobs)
     local latest = nil
@@ -417,6 +516,13 @@ local function build_description()
             "- NEVER duplicate the work you delegated. Once a task is dispatched, do not read the same files, run the same searches, or research the same questions yourself — that wastes context and defeats the purpose of delegating. Let the sub-agent do it.",
         }, "\n")
     end
+    parts[#parts + 1] = ""
+    parts[#parts + 1] = table.concat({
+        "Context sharing (dispatch only, opt-in):",
+        "- By default a subagent sees only its task text. Set include_context=true to also share a bounded tail of this conversation (user/assistant text only; tool calls/results are dropped) so it has the broader context.",
+        "- Or pass an explicit context array of {role: user|assistant|tool, content} messages; it overrides include_context.",
+        "- Context is shared only with subagents that resolve to the same provider as this conversation, and is ignored on followup (the prior job already carries its own transcript).",
+    }, "\n")
     return table.concat(parts, "\n")
 end
 
@@ -504,6 +610,16 @@ local function execute(params, ctx)
             if agent_def then
                 -- Build spawn opts from the agent definition.
                 local opts = opts_for(agent_def, title)
+
+                -- Opt-in conversation context: explicit `context` overrides the
+                -- automatic `include_context` tail. Skipped (nil) when the agent
+                -- resolves to a different provider or no history is available.
+                if params.context or params.include_context then
+                    local shared = build_shared_context(ctx, agent_def, params)
+                    if shared and #shared > 0 then
+                        opts.context = shared
+                    end
+                end
 
                 local result = ctx.agent.spawn(task_desc, opts)
                 if result.ok then
@@ -648,6 +764,30 @@ bone.tool.register({
             wait = {
                 type = "boolean",
                 description = "dispatch only: block until the dispatched tasks finish and return the results. Use when your next step depends on them.",
+            },
+            include_context = {
+                type = "boolean",
+                description = "dispatch only: prepend a bounded tail of the current conversation (user/assistant text only) so each dispatched subagent has the broader context instead of just the task text. Only shared with subagents on the same provider; ignored on followup.",
+            },
+            context = {
+                type = "array",
+                description = "dispatch only (advanced): explicit messages to share with each dispatched subagent instead of the automatic tail. Overrides include_context. Shared only with subagents on the same provider.",
+                items = {
+                    type = "object",
+                    properties = {
+                        role = {
+                            type = "string",
+                            enum = { "user", "assistant", "tool" },
+                            description = "Message role",
+                        },
+                        content = {
+                            type = "string",
+                            description = "Message text",
+                        },
+                    },
+                    required = { "role", "content" },
+                    additionalProperties = false,
+                },
             },
             id = {
                 type = "string",
