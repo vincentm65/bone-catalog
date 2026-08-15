@@ -128,7 +128,7 @@ bone.on("turn_end", function(_, ctx)
         return
     end
     if ctx.ui and ctx.ui.notice then
-        ctx.ui.notice(text)
+        ctx.ui.notice("* " .. text .. " *")
     end
 end, { timeout_ms = 900000 })
 
@@ -139,7 +139,7 @@ bone.command.register("recap", {
     handler = function(args, ctx)
         local text, err = do_recap(ctx)
         if text then
-            return { display = text, submit = false }
+            return { display = "* " .. text .. " *", submit = false }
         end
         return { display = "Recap unavailable: " .. (err or "unknown"), submit = false }
     end,
