@@ -52,6 +52,30 @@ local function sanitize_message(msg)
     return { role = msg.role, content = msg.content or "" }
 end
 
+local function request_recap(ctx, messages)
+    local result = ctx.llm.complete({
+        messages = messages,
+        max_tokens = 128,
+    })
+    if type(result) ~= "table" then
+        return nil, "recap LLM returned no result"
+    end
+    if result.cancelled then
+        return nil, result.error or "recap cancelled"
+    end
+    if not result.ok then
+        return nil, result.error or "recap failed"
+    end
+    if result.tool_calls and next(result.tool_calls) ~= nil then
+        return nil, "recap LLM returned tool calls"
+    end
+    local content = trim(result.content)
+    if content == "" then
+        return nil, "recap LLM returned an empty summary"
+    end
+    return content
+end
+
 local function do_recap(ctx)
     if not ctx.conversation or not ctx.conversation.history then
         return nil, "conversation history is not available"
@@ -72,25 +96,17 @@ local function do_recap(ctx)
     end
     messages[#messages + 1] = { role = "user", content = RECAP_PROMPT }
 
-    local result = ctx.llm.complete({
-        messages = messages,
-        max_tokens = 128,
-    })
-    if type(result) ~= "table" then
-        return nil, "recap LLM returned no result"
-    end
-    if result.cancelled then
-        return nil, result.error or "recap cancelled"
-    end
-    if not result.ok then
-        return nil, result.error or "recap failed"
-    end
-    if result.tool_calls and next(result.tool_calls) ~= nil then
-        return nil, "recap LLM returned tool calls"
-    end
-    local content = trim(result.content)
-    if content == "" then
-        return nil, "recap LLM returned an empty summary"
+    local content, err = request_recap(ctx, messages)
+    if content then return content end
+
+    -- Retry once: append a repair instruction.
+    messages[#messages + 1] = {
+        role = "user",
+        content = "Your previous response was empty. Please provide the recap now.",
+    }
+    content, err = request_recap(ctx, messages)
+    if not content then
+        return nil, err or "recap failed"
     end
     return content
 end
@@ -128,7 +144,7 @@ bone.on("turn_end", function(_, ctx)
         return
     end
     if ctx.ui and ctx.ui.notice then
-        ctx.ui.notice("* " .. text .. " *")
+        ctx.ui.notice("* Recap: " .. text .. " *")
     end
 end, { timeout_ms = 900000 })
 
@@ -139,7 +155,7 @@ bone.command.register("recap", {
     handler = function(args, ctx)
         local text, err = do_recap(ctx)
         if text then
-            return { display = "* " .. text .. " *", submit = false }
+            return { display = "* Recap: " .. text .. " *", submit = false }
         end
         return { display = "Recap unavailable: " .. (err or "unknown"), submit = false }
     end,
