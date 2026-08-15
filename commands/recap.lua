@@ -1,7 +1,7 @@
 -- /recap — brief conversation recap, automatic or on-demand.
 --
 -- After a configurable idle period (default 15 min), a 1–2 sentence
--- summary of the conversation is shown as a dim line in the
+-- summary of the conversation is shown as a dim, italic line in the
 -- scrollback.  Type /recap for an immediate recap.
 
 local RECAP_PROMPT = table.concat({
@@ -17,6 +17,21 @@ local SYSTEM_PROMPT = table.concat({
 
 local function trim(s)
     return (s or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+-- Render each line as markdown emphasis so transcript system/notice lines
+-- (muted markdown) show the recap as a dim italic block. Asterisks inside the
+-- LLM text are escaped so they stay literal.
+local function italic_lines(text)
+    local out = {}
+    for line in (text .. "\n"):gmatch("(.-)\n") do
+        if line == "" then
+            out[#out + 1] = ""
+        else
+            out[#out + 1] = "*" .. line:gsub("%*", "\\*") .. "*"
+        end
+    end
+    return table.concat(out, "\n")
 end
 
 bone.settings.register({
@@ -148,7 +163,7 @@ local function run_recap(ctx)
         return
     end
     if ctx.ui and ctx.ui.notice then
-        ctx.ui.notice("* Recap: " .. text .. " *")
+        ctx.ui.notice(italic_lines("Recap: " .. text))
     end
 end
 
@@ -189,7 +204,7 @@ bone.command.register("recap", {
     handler = function(args, ctx)
         local text, err = do_recap(ctx)
         if text then
-            return { display = "* Recap: " .. text .. " *", submit = false }
+            return { display = italic_lines("Recap: " .. text), submit = false }
         end
         return { display = "Recap unavailable: " .. (err or "unknown"), submit = false }
     end,

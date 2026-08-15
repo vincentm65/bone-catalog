@@ -60,13 +60,29 @@ assert(request_options, "recap should make a private LLM request")
 assert(request_options.max_tokens == nil,
    "recap should use the provider's normal output-token behavior")
 assert(result.submit == false, "recap output should remain display-only")
-assert(result.display == "* Recap: The bug was fixed and tested. *")
+assert(result.display == "*Recap: The bug was fixed and tested.*",
+   "recap display should be per-line markdown emphasis, got: " .. tostring(result.display))
 -- system + one user message carrying the transcript; no raw history replay
 assert(#request_options.messages == 2, "expected system + one user message")
 assert(request_options.messages[1].role == "system")
 assert(request_options.messages[2].role == "user")
 assert(request_options.messages[2].content:find("Please fix the bug") ~= nil)
 assert(request_options.messages[2].content:find("Fixed and tested it") ~= nil)
+
+-- 1b) Multi-line summaries are wrapped per line (a single *…* pair would only
+-- italicize the first markdown paragraph); asterisks in the LLM text are escaped.
+local multi_result = commands.recap.handler("", {
+   conversation = {
+      history = function()
+         return { { role = "user", content = "a" }, { role = "assistant", content = "b" } }
+      end,
+   },
+   llm = { complete = function()
+      return { ok = true, content = "First line.\nSecond line has *stars*.", tool_calls = {} }
+   end },
+})
+assert(multi_result.display == "*Recap: First line.*\n*Second line has \\*stars\\*.*",
+   "per-line emphasis expected, got: " .. tostring(multi_result.display))
 
 -- 2) Tool-heavy history must not leak tool messages/ids to the provider (HIGH-1).
 local tool_opts
@@ -134,7 +150,8 @@ assert(scheduled[1].delay == 60000, "idle delay should be 60s in ms")
 assert(notices[1] == nil, "no recap notice before the idle timer fires")
 scheduled[1].cb()
 assert(#notices == 1, "one notice after the idle timer fires")
-assert(notices[1] == "* Recap: Fixed the login bug. *")
+assert(notices[1] == "*Recap: Fixed the login bug.*",
+   "auto notice should be per-line markdown emphasis, got: " .. tostring(notices[1]))
 
 -- 4) A newer turn cancels the pending timer; its stale callback is a no-op.
 local scheduled2 = {}
@@ -167,6 +184,7 @@ scheduled2[1]()
 assert(notices2[1] == nil, "stale timer callback should be a no-op")
 scheduled2[2]()
 assert(#notices2 == 1, "the latest timer should produce one notice")
-assert(notices2[1] == "* Recap: Recap A. *")
+assert(notices2[1] == "*Recap: Recap A.*",
+   "stale-timer notice should be per-line markdown emphasis, got: " .. tostring(notices2[1]))
 
 print("recap_test: ok")
