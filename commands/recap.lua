@@ -55,7 +55,6 @@ end
 local function request_recap(ctx, messages)
     local result = ctx.llm.complete({
         messages = messages,
-        max_tokens = 128,
     })
     if type(result) ~= "table" then
         return nil, "recap LLM returned no result"
