@@ -1,6 +1,6 @@
 -- /recap — brief conversation recap, automatic or on-demand.
 --
--- After a configurable idle period (default 60 s), a 1–2 sentence
+-- After a configurable idle period (default 15 min), a 1–2 sentence
 -- summary of the conversation is shown as a dim line in the
 -- scrollback.  Type /recap for an immediate recap.
 
@@ -8,6 +8,11 @@ local RECAP_PROMPT = table.concat({
     "Summarize the conversation so far in 1-2 brief sentences.",
     "Focus on what was accomplished and what is pending.",
     "Be concise. Do not call tools.",
+}, " ")
+
+local SYSTEM_PROMPT = table.concat({
+    "You summarize coding conversations concisely.",
+    "The transcript contains only user and assistant text; tool activity is omitted.",
 }, " ")
 
 local function trim(s)
@@ -28,10 +33,10 @@ bone.settings.register({
             key = "idle_seconds",
             label = "Idle delay (seconds)",
             type = "number",
-            default = 60,
+            default = 900,
             integer = true,
             min = 5,
-            max = 600,
+            max = 3600,
         },
     },
 })
@@ -48,8 +53,23 @@ local function recap_auto_enabled(ctx)
     return ctx.settings.get("recap.auto") ~= false
 end
 
-local function sanitize_message(msg)
-    return { role = msg.role, content = msg.content or "" }
+-- Project the transcript to user/assistant text only. Tool activity (role
+-- "tool" messages and assistant tool_calls / tool_call_id) is dropped so the
+-- recap request never sends provider-invalid tool_result / tool_use sequences
+-- (which is what replaying the raw transcript did for tool-heavy sessions).
+local function build_transcript(history)
+    local lines = {}
+    for _, msg in ipairs(history) do
+        local content = trim(msg.content)
+        if content ~= "" then
+            if msg.role == "user" then
+                lines[#lines + 1] = "User: " .. content
+            elseif msg.role == "assistant" then
+                lines[#lines + 1] = "Assistant: " .. content
+            end
+        end
+    end
+    return table.concat(lines, "\n\n")
 end
 
 local function request_recap(ctx, messages)
@@ -87,22 +107,26 @@ local function do_recap(ctx)
         return nil, "private LLM completion is unavailable"
     end
 
-    local messages = {
-        { role = "system", content = "You summarize coding conversations concisely." },
-    }
-    for _, msg in ipairs(history) do
-        messages[#messages + 1] = sanitize_message(msg)
+    local transcript = build_transcript(history)
+    if transcript == "" then
+        return nil, "nothing to recap"
     end
-    messages[#messages + 1] = { role = "user", content = RECAP_PROMPT }
+
+    -- A single user message carrying the transcript. Keeping it to system + one
+    -- user turn avoids provider role-alternation constraints entirely.
+    local messages = {
+        { role = "system", content = SYSTEM_PROMPT },
+        { role = "user", content = "Transcript:\n\n" .. transcript .. "\n\n" .. RECAP_PROMPT },
+    }
 
     local content, err = request_recap(ctx, messages)
     if content then return content end
 
-    -- Retry once: append a repair instruction.
-    messages[#messages + 1] = {
-        role = "user",
-        content = "Your previous response was empty. Please provide the recap now.",
-    }
+    -- Retry once: resend the same user message with a repair nudge. Appending a
+    -- second user message (as before) can violate providers that require
+    -- alternating roles, so the nudge is folded into the existing message.
+    messages[2].content = messages[2].content
+        .. "\n\nYour last reply was empty. Please provide the recap now."
     content, err = request_recap(ctx, messages)
     if not content then
         return nil, err or "recap failed"
@@ -113,28 +137,9 @@ end
 -- ── Automatic recap ──────────────────────────────────────────────
 
 local recap_seq = 0
+local pending_timer = nil
 
-bone.on("turn_end", function(_, ctx)
-    if recap_disabled_in_config(ctx) then return end
-    if not recap_auto_enabled(ctx) then return end
-
-    local idle_s = tonumber(ctx.settings.get("recap.idle_seconds")) or 60
-    local idle_ms = idle_s * 1000
-
-    recap_seq = recap_seq + 1
-    local my_seq = recap_seq
-
-    local remaining = idle_ms
-    while remaining > 0 do
-        local chunk = math.min(remaining, 60000)
-        local ok = pcall(ctx.time.sleep_ms, chunk)
-        if not ok then return end
-        remaining = remaining - chunk
-    end
-
-    -- Skip if a newer turn ended while we were sleeping.
-    if my_seq ~= recap_seq then return end
-
+local function run_recap(ctx)
     local text, err = do_recap(ctx)
     if not text then
         if ctx.ui and ctx.ui.notice and err ~= "nothing to recap" then
@@ -145,7 +150,37 @@ bone.on("turn_end", function(_, ctx)
     if ctx.ui and ctx.ui.notice then
         ctx.ui.notice("* Recap: " .. text .. " *")
     end
-end, { timeout_ms = 900000 })
+end
+
+-- Schedule a recap to run once the conversation has been idle for `idle_ms`.
+-- The wait happens on a background thread (ctx.time.after), so the turn_end
+-- handler returns immediately and the Lua VM is free to serve commands, tools,
+-- and other event handlers while the user is idle. A newer turn cancels the
+-- outstanding timer; the seq check is the backstop if cancel races the fire.
+local function schedule_auto_recap(ctx, idle_ms)
+    if not ctx.time or not ctx.time.after then return end
+
+    recap_seq = recap_seq + 1
+    local my_seq = recap_seq
+
+    if pending_timer and pending_timer.cancel then
+        pcall(pending_timer.cancel)
+    end
+    pending_timer = ctx.time.after(idle_ms, function()
+        if my_seq ~= recap_seq then return end
+        if recap_disabled_in_config(ctx) then return end
+        if not recap_auto_enabled(ctx) then return end
+        run_recap(ctx)
+    end)
+end
+
+bone.on("turn_end", function(_, ctx)
+    if recap_disabled_in_config(ctx) then return end
+    if not recap_auto_enabled(ctx) then return end
+
+    local idle_s = tonumber(ctx.settings.get("recap.idle_seconds")) or 900
+    schedule_auto_recap(ctx, idle_s * 1000)
+end)
 
 -- ── Manual command ───────────────────────────────────────────────
 
