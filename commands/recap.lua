@@ -48,6 +48,10 @@ local function recap_auto_enabled(ctx)
     return ctx.settings.get("recap.auto") ~= false
 end
 
+local function sanitize_message(msg)
+    return { role = msg.role, content = msg.content or "" }
+end
+
 local function do_recap(ctx)
     if not ctx.conversation or not ctx.conversation.history then
         return nil, "conversation history is not available"
@@ -64,7 +68,7 @@ local function do_recap(ctx)
         { role = "system", content = "You summarize coding conversations concisely." },
     }
     for _, msg in ipairs(history) do
-        messages[#messages + 1] = msg
+        messages[#messages + 1] = sanitize_message(msg)
     end
     messages[#messages + 1] = { role = "user", content = RECAP_PROMPT }
 
