@@ -10,10 +10,7 @@ local RECAP_PROMPT = table.concat({
     "Be concise. Do not call tools.",
 }, " ")
 
-local SYSTEM_PROMPT = table.concat({
-    "You summarize coding conversations concisely.",
-    "The transcript contains only user and assistant text; tool activity is omitted.",
-}, " ")
+local FALLBACK_SYSTEM_PROMPT = "You summarize coding conversations concisely."
 
 local function trim(s)
     return (s or ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -68,28 +65,23 @@ local function recap_auto_enabled(ctx)
     return ctx.settings.get("recap.auto") ~= false
 end
 
--- Project the transcript to user/assistant text only. Tool activity (role
--- "tool" messages and assistant tool_calls / tool_call_id) is dropped so the
--- recap request never sends provider-invalid tool_result / tool_use sequences
--- (which is what replaying the raw transcript did for tool-heavy sessions).
-local function build_transcript(history)
-    local lines = {}
-    for _, msg in ipairs(history) do
-        local content = trim(msg.content)
-        if content ~= "" then
-            if msg.role == "user" then
-                lines[#lines + 1] = "User: " .. content
-            elseif msg.role == "assistant" then
-                lines[#lines + 1] = "Assistant: " .. content
-            end
-        end
+-- Preserve the normal provider-facing conversation prefix so providers can reuse
+-- their prompt cache for recap requests and the following normal turn.
+local function build_messages(ctx, history)
+    local system_prompt = ctx.conversation.system_prompt and ctx.conversation.system_prompt()
+        or FALLBACK_SYSTEM_PROMPT
+    local messages = { { role = "system", content = system_prompt } }
+    for _, message in ipairs(history) do
+        messages[#messages + 1] = message
     end
-    return table.concat(lines, "\n\n")
+    messages[#messages + 1] = { role = "user", content = RECAP_PROMPT }
+    return messages
 end
 
-local function request_recap(ctx, messages)
+local function request_recap(ctx, messages, tools)
     local result = ctx.llm.complete({
         messages = messages,
+        tools = tools,
     })
     if type(result) ~= "table" then
         return nil, "recap LLM returned no result"
@@ -122,27 +114,17 @@ local function do_recap(ctx)
         return nil, "private LLM completion is unavailable"
     end
 
-    local transcript = build_transcript(history)
-    if transcript == "" then
-        return nil, "nothing to recap"
-    end
+    local messages = build_messages(ctx, history)
+    local tools = ctx.tools and ctx.tools.definitions and ctx.tools.definitions() or {}
 
-    -- A single user message carrying the transcript. Keeping it to system + one
-    -- user turn avoids provider role-alternation constraints entirely.
-    local messages = {
-        { role = "system", content = SYSTEM_PROMPT },
-        { role = "user", content = "Transcript:\n\n" .. transcript .. "\n\n" .. RECAP_PROMPT },
-    }
-
-    local content, err = request_recap(ctx, messages)
+    local content, err = request_recap(ctx, messages, tools)
     if content then return content end
 
-    -- Retry once: resend the same user message with a repair nudge. Appending a
-    -- second user message (as before) can violate providers that require
-    -- alternating roles, so the nudge is folded into the existing message.
-    messages[2].content = messages[2].content
+    -- Retry once by extending only the recap instruction at the tail, preserving
+    -- the provider-cacheable system, history, and tool-definition prefix.
+    messages[#messages].content = messages[#messages].content
         .. "\n\nYour last reply was empty. Please provide the recap now."
-    content, err = request_recap(ctx, messages)
+    content, err = request_recap(ctx, messages, tools)
     if not content then
         return nil, err or "recap failed"
     end

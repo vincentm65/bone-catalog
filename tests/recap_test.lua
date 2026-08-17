@@ -38,17 +38,22 @@ assert(idle_field.max and idle_field.max >= 900,
 assert(idle_field.min and idle_field.min <= idle_field.default,
    "recap idle default must be within [min, max]")
 
--- 1) Manual happy path (user/assistant only): one user message, no raw replay.
+-- 1) Manual happy path preserves the normal provider-facing prefix.
 local request_options
+local system_prompt = "You are the active coding assistant."
+local history = {
+   { role = "user", content = "Please fix the bug" },
+   { role = "assistant", content = "Fixed and tested it" },
+}
+local tool_definitions = {
+   { type = "function", name = "read_file", description = "Read a file" },
+}
 local result = commands.recap.handler("", {
    conversation = {
-      history = function()
-         return {
-            { role = "user", content = "Please fix the bug" },
-            { role = "assistant", content = "Fixed and tested it" },
-         }
-      end,
+      system_prompt = function() return system_prompt end,
+      history = function() return history end,
    },
+   tools = { definitions = function() return tool_definitions end },
    llm = {
       complete = function(opts)
          request_options = opts
@@ -62,12 +67,22 @@ assert(request_options.max_tokens == nil,
 assert(result.submit == false, "recap output should remain display-only")
 assert(result.display == "*Recap: The bug was fixed and tested.*",
    "recap display should be per-line markdown emphasis, got: " .. tostring(result.display))
--- system + one user message carrying the transcript; no raw history replay
-assert(#request_options.messages == 2, "expected system + one user message")
+assert(#request_options.messages == #history + 2,
+   "expected system + unchanged history + recap instruction")
 assert(request_options.messages[1].role == "system")
-assert(request_options.messages[2].role == "user")
-assert(request_options.messages[2].content:find("Please fix the bug") ~= nil)
-assert(request_options.messages[2].content:find("Fixed and tested it") ~= nil)
+assert(request_options.messages[1].content == system_prompt,
+   "recap should use the active conversation system prompt")
+for i, message in ipairs(history) do
+   assert(request_options.messages[i + 1] == message,
+      "history message " .. i .. " should be forwarded unchanged")
+end
+local recap_message = request_options.messages[#request_options.messages]
+assert(recap_message.role == "user")
+assert(recap_message.content ==
+   "Summarize the conversation so far in 1-2 brief sentences. " ..
+   "Focus on what was accomplished and what is pending. Be concise. Do not call tools.")
+assert(request_options.tools == tool_definitions,
+   "tool definitions should be forwarded unchanged")
 
 -- 1b) Multi-line summaries are wrapped per line (a single *…* pair would only
 -- italicize the first markdown paragraph); asterisks in the LLM text are escaped.
@@ -84,20 +99,24 @@ local multi_result = commands.recap.handler("", {
 assert(multi_result.display == "*Recap: First line.*\n*Second line has \\*stars\\*.*",
    "per-line emphasis expected, got: " .. tostring(multi_result.display))
 
--- 2) Tool-heavy history must not leak tool messages/ids to the provider (HIGH-1).
+-- 2) Tool-heavy history and definitions remain intact in the cacheable prefix.
 local tool_opts
+local tool_history = {
+   { role = "user", content = "Read the file and fix the bug" },
+   { role = "assistant", content = "",
+     tool_calls = { { id = "c1", name = "read_file", arguments = "{}" } } },
+   { role = "tool", content = "<file contents>", tool_call_id = "c1" },
+   { role = "assistant", content = "Done, fixed the bug." },
+}
+local recap_tools = {
+   { type = "function", name = "read_file", description = "Read a file" },
+}
 local tool_result = commands.recap.handler("", {
    conversation = {
-      history = function()
-         return {
-            { role = "user", content = "Read the file and fix the bug" },
-            { role = "assistant", content = "",
-              tool_calls = { { id = "c1", name = "read_file", arguments = "{}" } } },
-            { role = "tool", content = "<file contents>", tool_call_id = "c1" },
-            { role = "assistant", content = "Done, fixed the bug." },
-         }
-      end,
+      system_prompt = function() return system_prompt end,
+      history = function() return tool_history end,
    },
+   tools = { definitions = function() return recap_tools end },
    llm = {
       complete = function(opts)
          tool_opts = opts
@@ -108,15 +127,19 @@ local tool_result = commands.recap.handler("", {
 assert(tool_result.display:find("Recap:") ~= nil,
    "recap should succeed with tool history: " .. tostring(tool_result.display))
 assert(tool_opts, "tool-history recap should make a request")
-for _, m in ipairs(tool_opts.messages) do
-   assert(m.role ~= "tool", "tool role must not be sent to the provider")
-   assert(m.tool_call_id == nil, "tool_call_id must not be sent to the provider")
-   assert(m.tool_calls == nil, "tool_calls must not be sent to the provider")
+assert(tool_opts.messages[1].content == system_prompt)
+for i, message in ipairs(tool_history) do
+   assert(tool_opts.messages[i + 1] == message,
+      "tool-history message " .. i .. " should be forwarded unchanged")
 end
-assert(tool_opts.messages[2].content:find("Read the file and fix the bug") ~= nil)
-assert(tool_opts.messages[2].content:find("Done, fixed the bug.") ~= nil)
--- the tool message body and the empty tool-call assistant turn are dropped
-assert(tool_opts.messages[2].content:find("file contents") == nil)
+assert(tool_opts.messages[3].tool_calls[1].id == "c1",
+   "assistant tool calls should be preserved")
+assert(tool_opts.messages[4].role == "tool",
+   "tool result role should be preserved")
+assert(tool_opts.messages[4].tool_call_id == "c1",
+   "tool result call ID should be preserved")
+assert(tool_opts.tools == recap_tools,
+   "tool definitions should be forwarded unchanged with tool history")
 
 -- 3) Auto path: turn_end schedules a deferred recap that fires on the idle timer.
 local scheduled = {}
