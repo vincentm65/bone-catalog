@@ -687,6 +687,7 @@ local usage_snapshot = {
    request_count = 1,
    sent = 100,
    received = 25,
+   cached = 40,
    context_length = 80,
    tool_count = 2,
    tool_schema_tokens = 10,
@@ -711,6 +712,9 @@ end
 assert(usage.submit == false)
 assert(usage.display:find("Conversation usage", 1, true))
 assert(usage.display:find("125 total", 1, true))
+assert(plain(usage.display):find("Cached:       40", 1, true))
+assert(plain(usage.display):find("Cache rate:   40.0% of input", 1, true))
+assert(plain(usage.display):find("New input:    60", 1, true))
 assert(not usage.display:find("Memory total:", 1, true))
 assert(plain(usage.display):find("Tools:        2 tools · ~10 tokens", 1, true))
 assert(plain(usage.display):find("System:       ~20 tokens", 1, true))

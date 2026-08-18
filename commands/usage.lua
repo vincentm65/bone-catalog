@@ -144,8 +144,15 @@ bone.command.register("usage", {
       klabel("Context")  .. kvalue(tokens(usage.context_length) .. " current"),
     }
 
-    if (usage.cached or 0) > 0 then
-      table.insert(lines, klabel("Cached") .. kvalue(tokens(usage.cached)))
+    local sent = usage.sent or 0
+    local cached = usage.cached or 0
+    if sent > 0 or cached > 0 then
+      table.insert(lines, klabel("Cached") .. kvalue(tokens(cached)))
+      local cache_rate = sent > 0 and (cached * 100 / sent) or 0
+      table.insert(lines, klabel("Cache rate") .. kvalue(string.format("%.1f%% of input", cache_rate)))
+      if cached > 0 and cached < sent then
+        table.insert(lines, klabel("New input") .. kvalue(tokens(sent - cached)))
+      end
     end
     local cost = money(usage.cost)
     if cost then
@@ -196,7 +203,10 @@ bone.command.register("usage", {
           tokens(p.completion_tokens)
         )
         if (p.cached_tokens or 0) > 0 then
-          row = row .. " / " .. tokens(p.cached_tokens) .. " cached"
+          local p_sent = p.prompt_tokens or 0
+          local p_rate = p_sent > 0 and (p.cached_tokens * 100 / p_sent) or 0
+          row = row .. " / " .. tokens(p.cached_tokens)
+            .. " cached (" .. string.format("%.1f%%", p_rate) .. ")"
         end
         local provider_cost = money(p.cost)
         if provider_cost then
