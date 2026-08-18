@@ -149,6 +149,7 @@ local huge_turn_result = commands.compact.handler("", {
    conversation = {
       history = function() return huge_turn_history end,
       context_tokens = function(messages) return #messages * 1000 end,
+      system_prompt = function() return base_system_prompt end,
    },
    llm = {
       complete = function(opts)
@@ -230,6 +231,7 @@ local missing_commands_result = before_turn_handlers[1](nil, {
       current = function() return { id = 48 } end,
       history = function() return auto_history end,
       context_tokens = function(messages) return #messages * 100 end,
+      system_prompt = function() return base_system_prompt end,
    },
    llm = {
       complete = function()
@@ -356,6 +358,32 @@ local failure_history = {
    { role = "assistant", content = "recent failure answer" },
 }
 local failure_originals = snapshot_history(failure_history)
+for _, case in ipairs({
+   { label = "missing active system prompt" },
+   { label = "empty active system prompt", system_prompt = function() return "" end },
+}) do
+   local calls = 0
+   local conversation = {
+      history = function() return failure_history end,
+      context_tokens = function(messages) return #messages * 1000 end,
+      system_prompt = case.system_prompt,
+   }
+   local result = commands.compact.handler("", {
+      settings = settings(),
+      conversation = conversation,
+      llm = {
+         complete = function()
+            calls = calls + 1
+            return { ok = true, content = table.concat(summary, "\n\n"), tool_calls = {} }
+         end,
+      },
+   })
+   assert(calls == 0, case.label .. " must not invoke the summarizer")
+   assert(not result.action, case.label .. " must preserve the original conversation")
+   assert(result.display:find("active system prompt is unavailable", 1, true))
+   assert_history_unchanged(failure_history, failure_originals, case.label)
+end
+
 local function rejected_compaction(label, llm_complete, values, token_counter, expected_calls)
    local calls = 0
    local options
@@ -364,6 +392,7 @@ local function rejected_compaction(label, llm_complete, values, token_counter, e
       conversation = {
          history = function() return failure_history end,
          context_tokens = token_counter,
+         system_prompt = function() return base_system_prompt end,
       },
       llm = {
          complete = function(opts)
@@ -414,6 +443,7 @@ local repaired = commands.compact.handler("", {
    conversation = {
       history = function() return failure_history end,
       context_tokens = function(messages) return #messages * 1000 end,
+      system_prompt = function() return base_system_prompt end,
    },
    llm = {
       complete = function(opts)
@@ -447,6 +477,7 @@ local large = commands.compact.handler("", {
    conversation = {
       history = function() return failure_history end,
       context_tokens = function(messages) return #messages * 1000 end,
+      system_prompt = function() return base_system_prompt end,
    },
    llm = {
       complete = function(opts)
@@ -491,6 +522,7 @@ local reset_auto_ctx = {
    usage = { snapshot = function() return { context_length = reset_snapshot_length } end },
    conversation = {
       current = function() return { id = 43 } end,
+      system_prompt = function() return base_system_prompt end,
       history = function()
          reset_history_reads = reset_history_reads + 1
          if not reset_history_available then return nil end
@@ -555,6 +587,7 @@ local retry_auto_ctx = {
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
       current = function() return { id = 44 } end,
+      system_prompt = function() return base_system_prompt end,
       history = function() return retry_history end,
       context_tokens = function(messages)
          if #messages == 0 then return 0 end
@@ -592,6 +625,7 @@ local large_auto_ctx = {
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
       current = function() return { id = 45 } end,
+      system_prompt = function() return base_system_prompt end,
       history = function() return retry_history end,
       context_tokens = function(messages)
          if #messages == 0 then return 0 end
@@ -623,6 +657,7 @@ local nonshrinking_auto_ctx = {
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
       current = function() return { id = 46 } end,
+      system_prompt = function() return base_system_prompt end,
       history = function() return retry_history end,
       context_tokens = function(messages)
          if #messages == 0 then return 0 end

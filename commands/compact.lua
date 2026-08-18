@@ -182,12 +182,13 @@ local function request_summary(ctx, history, tools, prompt, repair_reason)
             "Return a non-empty capsule body as plain text and do not call tools.",
         }, "\n\n")
     end
+    local system_prompt = ctx.conversation and ctx.conversation.system_prompt
+        and ctx.conversation.system_prompt()
+    if type(system_prompt) ~= "string" or system_prompt == "" then
+        return nil, "active system prompt is unavailable"
+    end
     local messages = {
-        {
-            role = "system",
-            content = ctx.conversation.system_prompt and ctx.conversation.system_prompt()
-                or "Write a precise, concise coding-session state capsule.",
-        },
+        { role = "system", content = system_prompt },
     }
     for _, message in ipairs(history) do messages[#messages + 1] = message end
     messages[#messages + 1] = { role = "user", content = prompt }
@@ -327,7 +328,7 @@ bone.on("before_turn", function(_, ctx)
             context_length, new_context, details.recent_messages))
     end
     return { action = "conversation.replace", messages = messages }
-end)
+end, { priority = -100 })
 
 local function command_result(display, extra)
     local result = { display = display, submit = false }
