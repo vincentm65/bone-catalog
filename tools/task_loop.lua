@@ -264,7 +264,7 @@ end
 
 bone.tool.register({
     name = "task_loop",
-    description = "Experimental autonomous visible checklist for A/B testing against task_list. Use only when the user asks for autonomous multi-step execution or explicitly requests task_loop. write starts the loop; after every response Bone automatically continues while actionable items remain. Call advance immediately after verifying the current item. Call stop with a reason when genuinely blocked. Supports one level of subtasks. State is host-held; write always receives the FULL list. Actions: write, advance, complete, stop, resume, clear.",
+    description = "Autonomous visible checklist for driving multi-step work. Use only when the user asks for autonomous multi-step execution or explicitly requests task_loop. write starts the loop; after every response Bone automatically continues while actionable items remain. Call advance immediately after verifying the current item. Call stop with a reason when genuinely blocked. Supports one level of subtasks. State is host-held; write always receives the FULL list. Actions: write, advance, complete, stop, resume, clear.",
     safety = "read_only",
     stateful = true,
     parameters = {
