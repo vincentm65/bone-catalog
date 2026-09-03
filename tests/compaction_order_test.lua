@@ -64,12 +64,15 @@ local active_prompt = base_prompt .. "\n\n" .. memory_result.system_prompt_appen
 
 local private_request
 local compact_result = handlers[2].handler(nil, {
-    settings = { get = function(path)
-        if path == "compact.auto" then return true end
-        if path == "compact.trigger_percentage" then return 80 end
-        if path == "compact.fallback_context_window_tokens" then return 100000 end
-    end },
-    config = { get_table = function() return { compact = true } end },
+    config = {
+        get = function(ns, key)
+            assert(ns == "compact")
+            if key == "auto" then return true end
+            if key == "trigger_percentage" then return 80 end
+            if key == "fallback_context_window_tokens" then return 100000 end
+        end,
+        get_table = function() return { compact = true } end,
+    },
     model = { context_window_tokens = 100000 },
     usage = { snapshot = function() return { context_length = 90000 } end },
     conversation = {

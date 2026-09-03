@@ -25,10 +25,11 @@ bone = {
    end,
 }
 
-local function settings(values)
+local function config(values)
    values = values or {}
    return {
-      get = function(path)
+      get = function(ns, key)
+         local path = ns .. "." .. key
          if values[path] ~= nil then return values[path] end
          if path == "compact.auto" then return true end
          if path == "compact.trigger_percentage" then return 80 end
@@ -87,7 +88,7 @@ local compact_history = {
    recent_answer,
 }
 local compact = commands.compact.handler("", {
-   settings = settings(),
+   config = config(),
    conversation = {
       history = function() return compact_history end,
       context_tokens = function(messages) return #messages * 1000 end,
@@ -145,7 +146,7 @@ huge_turn_history[#huge_turn_history + 1] = current_user
 local huge_prompt
 local huge_options
 local huge_turn_result = commands.compact.handler("", {
-   settings = settings(),
+   config = config(),
    conversation = {
       history = function() return huge_turn_history end,
       context_tokens = function(messages) return #messages * 1000 end,
@@ -184,8 +185,7 @@ local auto_history = {
    auto_recent_assistant,
 }
 local auto_result = before_turn_handlers[1](nil, {
-   settings = settings(),
-   config = { get_table = function() return { compact = true } end },
+   config = { get = config().get, get_table = function() return { compact = true } end },
    model = { context_window_tokens = 100000 },
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
@@ -223,8 +223,7 @@ assert(#auto_notices == 1 and auto_notices[1]:find("Context compacted", 1, true)
    "automatic compaction should emit a persistent success notice")
 
 local missing_commands_result = before_turn_handlers[1](nil, {
-   settings = settings(),
-   config = { get_table = function() return nil end },
+   config = { get = config().get, get_table = function() return nil end },
    model = { context_window_tokens = 100000 },
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
@@ -245,8 +244,7 @@ assert(missing_commands_result and missing_commands_result.action == "conversati
 
 local disabled_history_reads = 0
 local disabled_result = before_turn_handlers[1](nil, {
-   settings = settings(),
-   config = { get_table = function() return { compact = false } end },
+   config = { get = config().get, get_table = function() return { compact = false } end },
    model = { context_window_tokens = 100000 },
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
@@ -263,8 +261,7 @@ assert(disabled_history_reads == 0,
 
 local fallback_history_reads = 0
 local fallback_result = before_turn_handlers[1](nil, {
-   settings = settings({ ["compact.fallback_context_window_tokens"] = 200000 }),
-   config = { get_table = function() return {} end },
+   config = { get = config({ ["compact.fallback_context_window_tokens"] = 200000 }).get, get_table = function() return {} end },
    model = nil,
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
@@ -293,7 +290,7 @@ local incremental_history = {
    incremental_recent_assistant,
 }
 local incremental = commands.compact.handler("", {
-   settings = settings(),
+   config = config(),
    conversation = {
       history = function() return incremental_history end,
       context_tokens = function(messages) return #messages * 1000 end,
@@ -369,7 +366,7 @@ for _, case in ipairs({
       system_prompt = case.system_prompt,
    }
    local result = commands.compact.handler("", {
-      settings = settings(),
+      config = config(),
       conversation = conversation,
       llm = {
          complete = function()
@@ -388,7 +385,7 @@ local function rejected_compaction(label, llm_complete, values, token_counter, e
    local calls = 0
    local options
    local result = commands.compact.handler("", {
-      settings = settings(values),
+      config = config(values),
       conversation = {
          history = function() return failure_history end,
          context_tokens = token_counter,
@@ -439,7 +436,7 @@ assert(empty.display:find("empty summary", 1, true))
 
 local repair_calls = 0
 local repaired = commands.compact.handler("", {
-   settings = settings(),
+   config = config(),
    conversation = {
       history = function() return failure_history end,
       context_tokens = function(messages) return #messages * 1000 end,
@@ -473,7 +470,7 @@ assert(failed_tool_repair.display:find("repair transport failed", 1, true))
 
 local large_checkpoint = string.rep("large checkpoint detail ", 99) .. "large checkpoint detail"
 local large = commands.compact.handler("", {
-   settings = settings(),
+   config = config(),
    conversation = {
       history = function() return failure_history end,
       context_tokens = function(messages) return #messages * 1000 end,
@@ -516,8 +513,7 @@ local reset_full_history = {
    reset_recent_assistant,
 }
 local reset_auto_ctx = {
-   settings = settings(),
-   config = { get_table = function() return {} end },
+   config = { get = config().get, get_table = function() return {} end },
    model = reset_model,
    usage = { snapshot = function() return { context_length = reset_snapshot_length } end },
    conversation = {
@@ -581,8 +577,7 @@ local retry_history = {
 }
 local retry_originals = snapshot_history(retry_history)
 local retry_auto_ctx = {
-   settings = settings(),
-   config = { get_table = function() return {} end },
+   config = { get = config().get, get_table = function() return {} end },
    model = { context_window_tokens = 100000 },
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
@@ -619,8 +614,7 @@ assert(retry_agent_calls == 2,
 
 local large_auto_calls = 0
 local large_auto_ctx = {
-   settings = settings(),
-   config = { get_table = function() return {} end },
+   config = { get = config().get, get_table = function() return {} end },
    model = { context_window_tokens = 100000 },
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {
@@ -651,8 +645,7 @@ assert(large_auto_calls == 1,
 local allow_auto_shrink = false
 local nonshrinking_auto_calls = 0
 local nonshrinking_auto_ctx = {
-   settings = settings(),
-   config = { get_table = function() return {} end },
+   config = { get = config().get, get_table = function() return {} end },
    model = { context_window_tokens = 100000 },
    usage = { snapshot = function() return { context_length = 90000 } end },
    conversation = {

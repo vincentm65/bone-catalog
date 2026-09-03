@@ -62,7 +62,7 @@ local values = {
 local exec_result = { spawned = true, stdout = "INIT_OK\nLIST_OK\n", stderr = "", exit_code = 0 }
 local captured
 local ctx = {
-    settings = { get = function(path) return values[path] end },
+    config = { get = function(ns, key) return values[ns .. "." .. key] end },
     exec = function(program, args, opts)
         captured = { program = program, args = args, opts = opts }
         return exec_result

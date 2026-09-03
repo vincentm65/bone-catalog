@@ -68,7 +68,7 @@ end
 
 local function shotgun_targets(ctx)
   local entries = {}
-  local configured = ctx.settings.get("shotgun.targets") or ""
+  local configured = ctx.config.get("shotgun", "targets") or ""
   for raw_target in tostring(configured):gmatch("[^,]+") do
     local target = trim(raw_target)
     local provider, model = target:match("^([^/]+)/(.+)$")

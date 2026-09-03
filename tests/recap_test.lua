@@ -145,11 +145,14 @@ assert(tool_opts.tools == recap_tools,
 local scheduled = {}
 local notices = {}
 local auto_ctx = {
-   settings = { get = function(k)
-      if k == "recap.idle_seconds" then return 60 end
-      if k == "recap.auto" then return true end
-      return nil
-   end },
+   config = {
+      get = function(ns, key)
+         if ns == "recap" and key == "idle_seconds" then return 60 end
+         if ns == "recap" and key == "auto" then return true end
+         return nil
+      end,
+      get_table = function() return {} end,
+   },
    time = { after = function(delay, cb)
       table.insert(scheduled, { delay = delay, cb = cb })
       return { cancel = function() end }
@@ -180,11 +183,14 @@ assert(notices[1] == "*Recap: Fixed the login bug.*",
 local scheduled2 = {}
 local notices2 = {}
 local auto_ctx2 = {
-   settings = { get = function(k)
-      if k == "recap.idle_seconds" then return 60 end
-      if k == "recap.auto" then return true end
-      return nil
-   end },
+   config = {
+      get = function(ns, key)
+         if ns == "recap" and key == "idle_seconds" then return 60 end
+         if ns == "recap" and key == "auto" then return true end
+         return nil
+      end,
+      get_table = function() return {} end,
+   },
    time = { after = function(_, cb)
       table.insert(scheduled2, cb)
       return { cancel = function() end }

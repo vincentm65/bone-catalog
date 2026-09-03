@@ -61,8 +61,8 @@ local function recap_disabled_in_config(ctx)
 end
 
 local function recap_auto_enabled(ctx)
-    if not ctx.settings or not ctx.settings.get then return true end
-    return ctx.settings.get("recap.auto") ~= false
+    if not (ctx.config and ctx.config.get) then return true end
+    return ctx.config.get("recap", "auto") ~= false
 end
 
 -- Preserve the normal provider-facing conversation prefix so providers can reuse
@@ -175,7 +175,7 @@ bone.on("turn_end", function(_, ctx)
     if recap_disabled_in_config(ctx) then return end
     if not recap_auto_enabled(ctx) then return end
 
-    local idle_s = tonumber(ctx.settings.get("recap.idle_seconds")) or 900
+    local idle_s = tonumber(ctx.config.get("recap", "idle_seconds")) or 900
     schedule_auto_recap(ctx, idle_s * 1000)
 end)
 

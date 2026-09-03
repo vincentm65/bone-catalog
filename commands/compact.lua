@@ -48,11 +48,19 @@ local function trim(s)
 end
 
 local function compact_config(ctx)
+    local config = ctx.config
+    if not (config and config.get) then
+        return {
+            auto = true,
+            trigger_percentage = 80,
+            fallback_context_window_tokens = 100000,
+        }
+    end
     return {
-        auto = ctx.settings.get("compact.auto"),
-        trigger_percentage = tonumber(ctx.settings.get("compact.trigger_percentage")) or 80,
+        auto = config.get("compact", "auto") ~= false,
+        trigger_percentage = tonumber(config.get("compact", "trigger_percentage")) or 80,
         fallback_context_window_tokens =
-            tonumber(ctx.settings.get("compact.fallback_context_window_tokens")) or 100000,
+            tonumber(config.get("compact", "fallback_context_window_tokens")) or 100000,
     }
 end
 

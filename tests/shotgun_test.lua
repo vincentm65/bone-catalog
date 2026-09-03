@@ -20,20 +20,18 @@ assert(#page.fields == 1 and page.fields[1].key == "targets")
 assert(page.fields[1].type == "string" and page.fields[1].default == "")
 
 local empty = command.handler("prompt", {
-  settings = { get = function() return "" end },
+  config = { get = function() return "" end },
 })
 assert(empty.submit == false)
 assert(empty.display:find("/config", 1, true))
 
 local spawned = {}
 local result = command.handler("compare these", {
-  settings = {
-    get = function(path)
-      assert(path == "shotgun.targets")
+  config = {
+    get = function(ns, key)
+      assert(ns == "shotgun" and key == "targets")
       return "deepseek, openrouter/anthropic/claude-sonnet-4"
     end,
-  },
-  config = {
     list_providers = function()
       return {
         { id = "deepseek", model = "deepseek-chat" },
@@ -72,8 +70,8 @@ assert(result.content:find("## Reviewer 2", 1, true))
 local cancelled_ids = {}
 local wait_calls = 0
 local cancelled = command.handler("cancel this", {
-  settings = { get = function() return "deepseek, openrouter" end },
   config = {
+    get = function() return "deepseek, openrouter" end,
     list_providers = function()
       return {
         { id = "deepseek", model = "deepseek-chat" },
@@ -112,8 +110,10 @@ for i = 1, 30 do
 end
 local next_job = 0
 local large = command.handler("large synthesis", {
-  settings = { get = function() return table.concat(large_targets, ",") end },
-  config = { list_providers = function() return large_providers end },
+  config = {
+    get = function() return table.concat(large_targets, ",") end,
+    list_providers = function() return large_providers end,
+  },
   agent = {
     spawn = function()
       next_job = next_job + 1

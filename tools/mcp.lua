@@ -56,8 +56,8 @@ local function trim(value)
 end
 
 local function setting(ctx, key, default)
-    if not (ctx.settings and ctx.settings.get) then return default end
-    local value = ctx.settings.get("mcp." .. key)
+    if not (ctx.config and ctx.config.get) then return default end
+    local value = ctx.config.get("mcp", key)
     if value == nil then return default end
     return value
 end
