@@ -1,9 +1,11 @@
 -- Run with: lua tests/task_loop_test.lua
 local registered
 local hooks = {}
+local closed = {}
 bone = {
     tool = { register = function(spec) registered = spec end },
     on = function(event, handler) hooks[event] = handler end,
+    api = { ui = { close = function(id) table.insert(closed, id) end } },
 }
 
 local encoded = {}
@@ -133,13 +135,27 @@ assert(result:find("must be write", 1, true), result)
 assert(type(hooks.before_turn) == "function", "before_turn hook required")
 assert(type(hooks.turn_end) == "function", "turn_end hook required")
 
--- before_turn: emits a reminder only while the loop is active.
+-- before_turn: emits a reminder only while the loop is active and never
+-- touches the pane.
 result = run({ action = "write", tasks = { "a", "b" } })
 local reminder = hooks.before_turn({}, ctx)
 assert(reminder and reminder.turn_message, "expected a turn_message while active")
 assert(reminder.turn_message:find("Autonomous Task Loop", 1, true), reminder.turn_message)
+assert(#closed == 0, "active loop must not close the pane")
 
+-- before_turn: a finished loop clears host state and closes the pane on the
+-- next real user turn instead of lingering.
 result = run({ action = "complete" })
 assert(hooks.before_turn({}, ctx) == nil, "no reminder once complete")
+assert(state_value == nil, "finished loop state must clear on the next user turn")
+assert(#closed == 1 and closed[1] == "task_loop", "finished loop pane must close")
+
+-- before_turn: a stopped (incomplete) loop keeps its state and pane for a
+-- later resume.
+result = run({ action = "write", tasks = { "a", "b" } })
+result = run({ action = "stop", reason = "blocked" })
+assert(hooks.before_turn({}, ctx) == nil, "no reminder while stopped")
+assert(state_value ~= nil, "stopped loop must keep its checklist for resume")
+assert(#closed == 1, "stopped loop pane must not close")
 
 print("task_loop tests passed")

@@ -323,7 +323,18 @@ bone.tool.register({
 bone.on("before_turn", function(_event, ctx)
     if ctx.runtime.info().agent_depth ~= 0 then return end
     local state = load_state(ctx)
-    if not state or not state.active or is_complete(state.tasks) then return end
+    if not state then return end
+
+    -- A finished loop (inactive with every leaf done) must not leave its
+    -- checklist pane behind: the next real user turn is when to drop the host
+    -- state and close the pane. Stopped or failed loops are incomplete, so
+    -- their checklists survive for a later resume.
+    if not state.active and is_complete(state.tasks) then
+        ctx.state.clear(STATE_KEY)
+        bone.api.ui.close(STATE_KEY)
+        return
+    end
+    if not state.active or is_complete(state.tasks) then return end
 
     local done, total = counts(state.tasks)
     local current = current_task(state.tasks)
