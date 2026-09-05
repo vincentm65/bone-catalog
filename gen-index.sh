@@ -44,6 +44,9 @@ for kind in tools commands; do
   singular=${kind%s}
   for file in "$kind"/*.lua; do
     [[ -e "$file" ]] || continue
+    # commands/skill.lua is shipped as part of tools/skill.lua so one catalog
+    # item owns the complete feature and uninstall cannot leave a dangling lib.
+    [[ "$file" == "commands/skill.lua" ]] && continue
     name=$(basename "$file")
     desc=$(extract_desc "$file" | json_escape)
     sha=$(sha256sum "$file" | cut -d' ' -f1)
@@ -54,6 +57,8 @@ for kind in tools commands; do
     bundled_files=()
     if [[ "$file" == "commands/themes.lua" ]]; then
       mapfile -t bundled_files < <(find themes -maxdepth 1 -type f -name '*.lua' | sort)
+    elif [[ "$file" == "tools/skill.lua" ]]; then
+      bundled_files=("lib/skill.lua" "commands/skill.lua")
     fi
     if [[ ${#bundled_files[@]} -gt 0 ]]; then
       printf ', "files": [' >> "$out"
