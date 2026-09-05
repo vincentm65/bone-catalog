@@ -2,9 +2,12 @@
 local registered
 local hooks = {}
 local closed = {}
+local submitted = {}
 bone = {
     tool = { register = function(spec) registered = spec end },
     on = function(event, handler) hooks[event] = handler end,
+    submit = function(prompt) table.insert(submitted, prompt) end,
+    log = { info = function() end, warn = function() end },
     api = { ui = { close = function(id) table.insert(closed, id) end } },
 }
 
@@ -157,5 +160,28 @@ result = run({ action = "stop", reason = "blocked" })
 assert(hooks.before_turn({}, ctx) == nil, "no reminder while stopped")
 assert(state_value ~= nil, "stopped loop must keep its checklist for resume")
 assert(#closed == 1, "stopped loop pane must not close")
+
+-- turn_end: a cancelled turn (Esc) halts the loop without submitting the
+-- continuation prompt; the checklist survives for a later resume.
+result = run({ action = "write", tasks = { "a", "b" } })
+hooks.turn_end({ ok = false, cancelled = true, error = "turn cancelled", content = "" }, ctx)
+state = cjson.decode(state_value)
+assert(state.active == false, "cancelled turn must stop the loop")
+assert(#submitted == 0, "cancelled turn must not submit the continuation prompt")
+assert(#closed == 1, "cancelled loop must keep its checklist for resume")
+assert(hooks.before_turn({}, ctx) == nil, "no reminder while stopped")
+
+-- turn_end: a failed turn halts the loop the same way.
+result = run({ action = "resume" })
+hooks.turn_end({ ok = false, error = "provider error", content = "" }, ctx)
+state = cjson.decode(state_value)
+assert(state.active == false, "failed turn must stop the loop")
+assert(#submitted == 0, "failed turn must not submit the continuation prompt")
+
+-- turn_end: a normal turn without a stop sentinel still continues.
+result = run({ action = "resume" })
+hooks.turn_end({ ok = true, content = "worked on a" }, ctx)
+assert(#submitted == 1, "normal turn must keep the loop going")
+assert(submitted[1]:find("Continue the autonomous task list", 1, true), submitted[1])
 
 print("task_loop tests passed")

@@ -313,7 +313,10 @@ local function job_status(job)
     end
     if job.status == "running" then
         local elapsed = os.time() - job.started_at
-        local task = job.activity or (job.title ~= nil and job.title ~= "" and job.title or (job.task or ""))
+        local activity = type(job.activity) == "string" and job.activity or nil
+        local title = type(job.title) == "string" and job.title or ""
+        local task = activity or (title ~= "" and title or
+            (type(job.task) == "string" and job.task or ""))
         if #task > 40 then
             task = task:sub(1, 37) .. "..."
         end

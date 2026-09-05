@@ -203,4 +203,11 @@ assert(hooks.before_turn(nil, ctx(8)) == nil)
 hooks.turn_end({ ok = true, content = "GOAL_STATUS: working" })
 assert(#submitted == 1, "switching conversations must stop the prior loop")
 
+-- A cancelled turn (Esc) halts the loop without submitting the
+-- continuation prompt; /goal resume can pick the file back up.
+assert(type(command.handler("cancellable goal", ctx(7))) == "string")
+hooks.turn_end({ ok = false, cancelled = true, error = "turn cancelled", content = "" })
+assert(#submitted == 1, "cancelled turn must not continue the goal")
+assert(hooks.before_turn(nil, ctx(7)) == nil, "cancelled goal must stay halted")
+
 print("goal command tests passed")

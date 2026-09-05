@@ -87,10 +87,18 @@ jobs = {
         status = "running",
         started_at = os.time() - 1,
         task = "second task",
+        title = "Second",
+        -- mlua serializes Rust Option::None as a truthy null userdata.
+        activity = debug.upvalueid((function()
+            local value
+            return function() return value end
+        end)(), 1),
     },
 }
 result = subagent_tool.execute({ action = "status" }, ctx)
 assert(result:find("job-2", 1, true), "status must expose the controllable job id")
+assert(result:find("Second", 1, true),
+    "status must ignore null userdata activity and fall back to the title")
 
 -- ── Context sharing (dispatch opt-in) ───────────────────────────────────────
 

@@ -9,7 +9,7 @@
 --   2. Multi-question:  { questions = { {question, options, allow_custom, type, default}, ... } }
 --      Asks each question sequentially with backtracking navigation.
 --      After answering, user can go back to previous questions or proceed.
--- catalog_description = "Ask the user one or more questions with selectable options or custom answers. Use the 'questions' array to ask several questions back-to-back in a single call, or use top-level 'question' + 'options' for a single question."
+-- catalog_description = "Ask one question directly, or use questions for several. Every select question must contain its own nested options array unless allow_custom is true."
 
 local menu = require("ui.menu")
 
@@ -386,60 +386,123 @@ local OPTION_ITEMS = {
     },
 }
 
-local QUESTION_PROPERTIES = {
-    question = {
-        type = "string",
-        description = "The question to ask.",
-    },
-    options = {
-        type = "array",
-        description = "Options to choose from. Object options may include a description and "
-            .. "a rich preview shown beside the selector. A plain string is accepted as "
-            .. "shorthand for { label = <string> }.",
-        items = OPTION_ITEMS,
-    },
-    allow_custom = {
-        type = "boolean",
-        description = "Add a 'type your own answer' row below the options.",
-    },
-    type = {
-        type = "string",
-        enum = QUESTION_TYPES,
-        description = "Question type. If omitted: 'single_select' when options are given "
-            .. "(use multi_select explicitly for checkboxes), otherwise 'text_input'.",
-    },
-    default = {
-        type = "integer",
-        description = "Default selected option index (1-based).",
-    },
-    visible_rows = {
-        type = "integer",
-        minimum = 1,
-        description = "Requested menu height in rows. Defaults to 12.",
-    },
+local QUESTION_PROPERTY = {
+    type = "string",
+    description = "The question to ask.",
+}
+local OPTIONS_PROPERTY = {
+    type = "array",
+    minItems = 1,
+    description = "Choices for this question. In multi-question mode, put this array inside "
+        .. "the corresponding questions item, not at the top level. Object options may include "
+        .. "a description and rich preview; strings are shorthand labels.",
+    items = OPTION_ITEMS,
+}
+local ALLOW_CUSTOM_PROPERTY = {
+    type = "boolean",
+    description = "Add a 'type your own answer' row below the options.",
+}
+local DEFAULT_PROPERTY = {
+    type = "integer",
+    minimum = 1,
+    description = "Default selected option index (1-based).",
+}
+local VISIBLE_ROWS_PROPERTY = {
+    type = "integer",
+    minimum = 1,
+    description = "Requested menu height in rows. Defaults to 12.",
 }
 
-local ROOT_PROPERTIES = {}
-for name, schema in pairs(QUESTION_PROPERTIES) do ROOT_PROPERTIES[name] = schema end
-ROOT_PROPERTIES.questions = {
-    type = "array",
-    description = "Multiple questions to ask sequentially with backtracking. "
-        .. "After answering all, you can revise any question.",
-    items = {
+-- Separate answer-mode variants make invalid select questions structurally
+-- invalid in the advertised schema instead of leaving that rule to execute().
+local QUESTION_VARIANTS = {
+    {
+        title = "Select question with choices",
         type = "object",
-        properties = QUESTION_PROPERTIES,
+        properties = {
+            question = QUESTION_PROPERTY,
+            options = OPTIONS_PROPERTY,
+            allow_custom = ALLOW_CUSTOM_PROPERTY,
+            type = {
+                type = "string",
+                enum = { "single_select", "multi_select" },
+                description = "Selection type. Omit for single_select; use multi_select for checkboxes.",
+            },
+            default = DEFAULT_PROPERTY,
+            visible_rows = VISIBLE_ROWS_PROPERTY,
+        },
+        required = { "question", "options" },
+        additionalProperties = false,
+    },
+    {
+        title = "Text question",
+        type = "object",
+        properties = {
+            question = QUESTION_PROPERTY,
+            type = {
+                type = "string",
+                enum = { "text_input" },
+                description = "Text input type. This may be omitted when no options are provided.",
+            },
+            visible_rows = VISIBLE_ROWS_PROPERTY,
+        },
         required = { "question" },
         additionalProperties = false,
     },
+    {
+        title = "Custom-only selection question",
+        type = "object",
+        properties = {
+            question = QUESTION_PROPERTY,
+            options = {
+                type = "array",
+                description = "Optional choices for this question; may be empty when custom input is enabled.",
+                items = OPTION_ITEMS,
+            },
+            allow_custom = {
+                type = "boolean",
+                enum = { true },
+                description = "Must be true when a selection question has no choices.",
+            },
+            type = {
+                type = "string",
+                enum = { "single_select", "multi_select" },
+            },
+            visible_rows = VISIBLE_ROWS_PROPERTY,
+        },
+        required = { "question", "type", "allow_custom" },
+        additionalProperties = false,
+    },
+}
+
+local QUESTION_SCHEMA = {
+    anyOf = QUESTION_VARIANTS,
+}
+
+local ROOT_VARIANTS = {}
+for _, variant in ipairs(QUESTION_VARIANTS) do ROOT_VARIANTS[#ROOT_VARIANTS + 1] = variant end
+ROOT_VARIANTS[#ROOT_VARIANTS + 1] = {
+    title = "Multiple questions",
+    type = "object",
+    properties = {
+        questions = {
+            type = "array",
+            minItems = 1,
+            description = "Questions to ask sequentially. Each select question must contain its "
+                .. "own options array; do not put options beside the questions array.",
+            items = QUESTION_SCHEMA,
+        },
+    },
+    required = { "questions" },
+    additionalProperties = false,
 }
 
 bone.tool.register({
     name = "ask_user",
-    description = "Ask the user one or more questions with selectable options or custom answers. Use the 'questions' array to ask several questions back-to-back in a single call, or use top-level 'question' + 'options' for a single question.",
+    description = "Ask one question directly, or use questions for several. Every select question must contain its own options array unless allow_custom is true.",
     parameters = {
         type = "object",
-        properties = ROOT_PROPERTIES,
-        additionalProperties = false,
+        anyOf = ROOT_VARIANTS,
     },
     safety = "read_only",
     display = {

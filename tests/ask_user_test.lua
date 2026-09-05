@@ -48,15 +48,40 @@ bone = { tool = { register = function(spec) registered = spec end } }
 assert(loadfile("tools/ask_user.lua"))()
 assert(registered, "ask_user tool was not registered")
 
-local properties = registered.parameters.properties
-assert(properties.type and properties.default.type == "integer")
-assert(properties.visible_rows and properties.visible_rows.minimum == 1)
-assert(properties.options.items.anyOf, "top-level options must accept strings or objects")
-assert(properties.options.items.anyOf[2].properties.preview,
+local variants = registered.parameters.anyOf
+assert(#variants == 4, "schema must expose three single-question modes and one multi-question mode")
+
+local select_schema = variants[1]
+assert(select_schema.properties.type.enum[1] == "single_select")
+assert(select_schema.properties.default.type == "integer")
+assert(select_schema.properties.default.minimum == 1)
+assert(select_schema.properties.visible_rows.minimum == 1)
+assert(select_schema.properties.options.minItems == 1)
+assert(select_schema.required[1] == "question" and select_schema.required[2] == "options",
+    "select questions must require nested options")
+assert(select_schema.properties.options.items.anyOf, "options must accept strings or objects")
+assert(select_schema.properties.options.items.anyOf[2].properties.preview,
     "object options must expose rich previews")
-assert(properties.questions.items.properties.options.items.anyOf,
-    "question options must accept strings or objects")
-assert(properties.questions.items.properties.visible_rows.minimum == 1)
+
+local text_schema = variants[2]
+assert(text_schema.properties.type.enum[1] == "text_input")
+assert(text_schema.properties.options == nil, "text questions must not advertise options")
+
+local custom_schema = variants[3]
+assert(custom_schema.properties.allow_custom.enum[1] == true)
+assert(custom_schema.required[3] == "allow_custom")
+
+local multi_schema = variants[4]
+assert(multi_schema.required[1] == "questions")
+assert(multi_schema.properties.options == nil,
+    "multi-question mode must reject options beside the questions array")
+assert(multi_schema.properties.questions.minItems == 1)
+assert(multi_schema.properties.questions.items.anyOf[1].properties.options.minItems == 1)
+assert(multi_schema.properties.questions.items.anyOf[1].required[2] == "options",
+    "nested select questions must require their own options")
+assert(multi_schema.properties.questions.items.anyOf[1].properties.options.items.anyOf,
+    "nested question options must accept strings or objects")
+assert(multi_schema.properties.questions.items.anyOf[1].properties.visible_rows.minimum == 1)
 
 local ctx = { ui = {} }
 local function run(params, mocked)
