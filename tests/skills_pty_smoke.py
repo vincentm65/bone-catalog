@@ -23,17 +23,8 @@ class Provider(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         requests.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
-        call_number = len(requests)
-        if call_number <= 2:
-            arguments = {'action': 'read', 'name': 'demo', 'file':
-                         'references/note.txt' if call_number == 1 else '../secret.txt'}
-            delta = {'tool_calls': [{'index': 0, 'id': f'call_{call_number}', 'type': 'function',
-                                    'function': {'name': 'skill', 'arguments': json.dumps(arguments)}}]}
-            finish = 'tool_calls'
-        else:
-            delta, finish = {'content': 'SMOKE_RESPONSE'}, 'stop'
         data = {'id': 'smoke', 'object': 'chat.completion.chunk', 'choices': [
-            {'index': 0, 'delta': delta, 'finish_reason': finish}]}
+            {'index': 0, 'delta': {'content': 'SMOKE_RESPONSE'}, 'finish_reason': 'stop'}]}
         body = ('data: ' + json.dumps(data) + '\n\ndata: [DONE]\n\n').encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
@@ -113,11 +104,6 @@ with tempfile.TemporaryDirectory(prefix='bone-skills-pty-') as temp:
         assert 'Available skills' in encoded and 'Smoke demo' in encoded, encoded
         wait_for(lambda: 'SMOKE_RESPONSE' in capture(), 'response not rendered')
         assert 'GLOBAL_BODY_MARKER' not in encoded, 'global skill incorrectly won'
-        assert len(requests) == 3, 'expected reference and traversal tool calls'
-        results = [m for m in requests[-1]['messages'] if m['role'] == 'tool']
-        assert len(results) == 2, results
-        assert 'REFERENCE_MARKER' in results[0]['content'], results
-        assert 'invalid file path' in results[1]['content'], results
         tmux('resize-window', '-t', 'smoke', '-x', '80', '-y', '24')
         assert 'SMOKE_RESPONSE' in capture()
         tmux('send-keys', '-t', 'smoke', 'C-c')

@@ -1,7 +1,7 @@
 -- Shared, read-only skill resolver. GNU realpath is required for path guards.
 local M = {}
 
-local MAX_DIRS, MAX_SKILLS, MAX_INDEX, MAX_SKILL, MAX_REF = 1000, 100, 16 * 1024, 64 * 1024, 256 * 1024
+local MAX_DIRS, MAX_SKILL, MAX_REF = 1000, 64 * 1024, 256 * 1024
 local WORK = 8 * 1024 * 1024
 local function normalize(path)
   path = tostring(path or ".")
@@ -177,7 +177,7 @@ local function discover(ctx, requested)
     if scan_error then warn(ctx, diagnostics, "cannot scan " .. root .. ": " .. scan_error) end
     for _, entry in ipairs(entries or {}) do
       examined = examined + 1
-      if examined > MAX_DIRS or (not requested and #order >= MAX_SKILLS) then
+      if examined > MAX_DIRS then
         warn(ctx, diagnostics, "skill discovery limit reached; additional skills omitted")
         return finish()
       end
@@ -211,7 +211,6 @@ function M.list(ctx)
   local found, order, diagnostics = discover(ctx)
   local out = {}
   for _, name in ipairs(order) do
-    if #out == MAX_SKILLS then break end
     out[#out + 1] = {name=name, description=found[name].description, dir=found[name].dir}
   end
   return out, table.concat(diagnostics, "\n")
@@ -260,11 +259,9 @@ end
 function M.index_block(ctx)
   local skills = M.list(ctx)
   if #skills == 0 then return nil end
-  local lines = {"Available skills (use the skill tool to list/read them):"}
+  local lines = {"Available skills (use read_file to read SKILL.md):"}
   for _, item in ipairs(skills) do
-    local line = "- " .. item.name .. ": " .. item.description
-    if #table.concat(lines, "\n") + 1 + #line > MAX_INDEX then break end
-    lines[#lines + 1] = line
+    lines[#lines + 1] = "- " .. item.name .. ": " .. item.description .. " (" .. item.dir .. "/SKILL.md)"
   end
   return table.concat(lines, "\n")
 end

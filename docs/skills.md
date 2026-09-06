@@ -1,10 +1,11 @@
 # Skills catalog feature
 
-`tools/skill.lua` installs the read-only `skill` tool and a `before_turn` index;
+`tools/skill.lua` installs a `before_turn` hook that injects a skill index into
+the system prompt each turn; the model reads skills with `read_file`.
 `commands/skill.lua` provides display-only `/skill` listing/errors and submits
 `/skill NAME` as the next model prompt. The shared resolver puts the directory
 header (including capped `references` and `scripts` entries) into every full
-skill read, so the tool and command have identical content. The catalog item
+skill read, so the command has identical content to the index. The catalog item
 bundles `lib/skill.lua` and the command; the command is intentionally not a
 separate catalog item. Installing it copies Lua source; reading skills never
 runs their scripts.
@@ -27,7 +28,7 @@ accepted. Descriptions are limited to 512 bytes and cannot contain control
 characters.
 
 `SKILL.md` is limited to 64 KiB; referenced files are limited to 256 KiB;
-indexes contain at most 100 skills and 16 KiB; discovery examines at most 1,000
+indexes have no count or byte-size cap; discovery examines at most 1,000
 entries; diagnostics are capped at 10 messages of 512 bytes each; and each
 discovery has an 8 MiB aggregate read budget. Directory enumeration is delegated to the
 native `ctx.fs.read_dir` API, whose underlying native enumeration is not made

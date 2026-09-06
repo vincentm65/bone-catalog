@@ -50,17 +50,15 @@ local denied_explicit, denied_err=skill.read(noexec,"local"); assert(denied_expl
 local symlink=ctx_for({escape=true}); assert(skill.read(symlink,"local")==nil, "canonical escape must be rejected")
 local badread=ctx_for({read_fail=true}); assert(#skill.list(badread)==0)
 
-local registered, command, hook
-bone={tool={register=function(s) registered=s end}, command={register=function(n,s) command=s end}, on=function(n,h) assert(n=="before_turn"); hook=h end}
+local command, hook
+bone={command={register=function(n,s) command=s end}, on=function(n,h) assert(n=="before_turn"); hook=h end}
 package.loaded["skill"]=skill
 assert(loadfile("tools/skill.lua"))()
-assert(registered and registered.safety=="read_only" and hook)
-assert(registered.execute({action="list"},ctx):find("local: local skill",1,true))
+assert(hook)
 local zero=hook(nil, {cwd="/none",config_dir="/none",fs=ctx.fs,exec=ctx.exec,read_file=ctx.read_file,log=ctx.log})
 assert(zero==nil, "zero skills must not append")
 package.loaded["skill"]=skill
 assert(loadfile("commands/skill.lua"))()
-local notified
 local command_ctx={fs=ctx.fs,exec=ctx.exec,read_file=ctx.read_file,cwd=ctx.cwd,config_dir=ctx.config_dir,log=ctx.log}
 local result=command.handler("",command_ctx); assert(result.submit==false and result.display:find("local",1,true))
 local prompt=command.handler("local",command_ctx)
@@ -76,8 +74,6 @@ local empty_items, empty_diagnostics = skill.list(empty)
 assert(#empty_items == 0 and empty_diagnostics == "")
 assert(command.handler("missing", empty).submit == false)
 assert(command.handler("two names", ctx).submit == false)
-assert(registered.execute({action="bad"}, ctx):find("ERROR", 1, true))
-assert(registered.execute({action="read",name="local",file=false}, ctx):find("ERROR", 1, true))
 assert(hook(nil, ctx).system_prompt_append:find("local: local skill", 1, true))
 
 -- Boundaries are inclusive, and trailing slashes must not bypass HOME.
@@ -129,8 +125,8 @@ assert(not skill.read(capped,"local") and reads == 0)
 capped.fs.metadata = function() return {kind="other",len=0} end
 assert(not skill.read(capped,"local") and reads == 0)
 
--- Native read_dir order is lexical. Build enough fixtures to hit count and
--- index byte limits, then ensure explicit reads still reach unindexed names.
+-- Native read_dir order is lexical. With the count/byte caps removed, a large
+-- skill set lists in full and the index includes every skill.
 local old_files, old_dirs = files, dirs
 files, dirs = {}, {["/global/skills"]={}}
 for i = 1, 110 do
@@ -141,9 +137,10 @@ for i = 1, 110 do
 end
 local many = ctx_for({cwd="/empty"})
 local many_items, many_diagnostics = skill.list(many)
-assert(#many_items == 100 and many_diagnostics:find("limit", 1, true))
-assert(#skill.index_block(many) <= 16 * 1024)
-assert(skill.read(many,"s110"), "explicit reads should not inherit the index count cap")
+assert(#many_items == 110, "all skills are listed; no count cap")
+assert(many_diagnostics:find("limit", 1, true) == nil, "no discovery-limit warning expected")
+assert(skill.index_block(many):find("s110", 1, true), "index includes the last skill")
+assert(skill.read(many,"s110"), "explicit reads reach every name")
 
 -- Invalid candidates still consume the aggregate read budget. Warnings are
 -- bounded, and no content read happens after the 8 MiB budget is exhausted.
