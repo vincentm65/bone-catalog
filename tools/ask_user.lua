@@ -396,7 +396,7 @@ local OPTIONS_PROPERTY = {
     description = "Choices for this question. In multi-question mode, put this array inside "
         .. "the corresponding questions item, not at the top level. Object options may include "
         .. "a description and rich preview; strings are shorthand labels.",
-    items = OPTION_ITEMS,
+    items = { ["$ref"] = "#/$defs/option" },
 }
 local ALLOW_CUSTOM_PROPERTY = {
     type = "boolean",
@@ -457,7 +457,7 @@ local QUESTION_VARIANTS = {
             options = {
                 type = "array",
                 description = "Optional choices for this question; may be empty when custom input is enabled.",
-                items = OPTION_ITEMS,
+                items = { ["$ref"] = "#/$defs/option" },
             },
             allow_custom = {
                 type = "boolean",
@@ -475,35 +475,41 @@ local QUESTION_VARIANTS = {
     },
 }
 
-local QUESTION_SCHEMA = {
-    anyOf = QUESTION_VARIANTS,
-}
-
-local ROOT_VARIANTS = {}
-for _, variant in ipairs(QUESTION_VARIANTS) do ROOT_VARIANTS[#ROOT_VARIANTS + 1] = variant end
-ROOT_VARIANTS[#ROOT_VARIANTS + 1] = {
-    title = "Multiple questions",
+-- Shared pieces live once under $defs; variants reference them with $ref so the
+-- serialized schema stays small without weakening the advertised validation.
+local ROOT_SCHEMA = {
     type = "object",
-    properties = {
-        questions = {
-            type = "array",
-            minItems = 1,
-            description = "Questions to ask sequentially. Each select question must contain its "
-                .. "own options array; do not put options beside the questions array.",
-            items = QUESTION_SCHEMA,
+    ["$defs"] = {
+        preview = PREVIEW_SCHEMA,
+        option = OPTION_ITEMS,
+        question = { anyOf = QUESTION_VARIANTS },
+    },
+    anyOf = {
+        QUESTION_VARIANTS[1],
+        QUESTION_VARIANTS[2],
+        QUESTION_VARIANTS[3],
+        {
+            title = "Multiple questions",
+            type = "object",
+            properties = {
+                questions = {
+                    type = "array",
+                    minItems = 1,
+                    description = "Questions to ask sequentially. Each select question must contain its "
+                        .. "own options array; do not put options beside the questions array.",
+                    items = { ["$ref"] = "#/$defs/question" },
+                },
+            },
+            ["required"] = { "questions" },
+            additionalProperties = false,
         },
     },
-    required = { "questions" },
-    additionalProperties = false,
 }
 
 bone.tool.register({
     name = "ask_user",
     description = "Ask one question directly, or use questions for several. Every select question must contain its own options array unless allow_custom is true.",
-    parameters = {
-        type = "object",
-        anyOf = ROOT_VARIANTS,
-    },
+    parameters = ROOT_SCHEMA,
     safety = "read_only",
     display = {
         show = false,

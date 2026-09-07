@@ -48,6 +48,16 @@ bone = { tool = { register = function(spec) registered = spec end } }
 assert(loadfile("tools/ask_user.lua"))()
 assert(registered, "ask_user tool was not registered")
 
+-- The serialized schema shares pieces via $defs/$ref; resolve those before
+-- asserting on the effective structure.
+local function resolve_ref(schema)
+    if schema and schema["$ref"] then
+        local name = schema["$ref"]:gsub("^#/$defs/", "")
+        return registered.parameters["$defs"][name]
+    end
+    return schema
+end
+
 local variants = registered.parameters.anyOf
 assert(#variants == 4, "schema must expose three single-question modes and one multi-question mode")
 
@@ -59,8 +69,9 @@ assert(select_schema.properties.visible_rows.minimum == 1)
 assert(select_schema.properties.options.minItems == 1)
 assert(select_schema.required[1] == "question" and select_schema.required[2] == "options",
     "select questions must require nested options")
-assert(select_schema.properties.options.items.anyOf, "options must accept strings or objects")
-assert(select_schema.properties.options.items.anyOf[2].properties.preview,
+local option_schema = resolve_ref(select_schema.properties.options.items)
+assert(option_schema.anyOf, "options must accept strings or objects")
+assert(option_schema.anyOf[2].properties.preview,
     "object options must expose rich previews")
 
 local text_schema = variants[2]
@@ -76,12 +87,14 @@ assert(multi_schema.required[1] == "questions")
 assert(multi_schema.properties.options == nil,
     "multi-question mode must reject options beside the questions array")
 assert(multi_schema.properties.questions.minItems == 1)
-assert(multi_schema.properties.questions.items.anyOf[1].properties.options.minItems == 1)
-assert(multi_schema.properties.questions.items.anyOf[1].required[2] == "options",
+local question_schema = resolve_ref(multi_schema.properties.questions.items)
+assert(question_schema.anyOf[1].properties.options.minItems == 1)
+assert(question_schema.anyOf[1].required[2] == "options",
     "nested select questions must require their own options")
-assert(multi_schema.properties.questions.items.anyOf[1].properties.options.items.anyOf,
+local nested_option = resolve_ref(question_schema.anyOf[1].properties.options.items)
+assert(nested_option.anyOf,
     "nested question options must accept strings or objects")
-assert(multi_schema.properties.questions.items.anyOf[1].properties.visible_rows.minimum == 1)
+assert(question_schema.anyOf[1].properties.visible_rows.minimum == 1)
 
 local ctx = { ui = {} }
 local function run(params, mocked)
