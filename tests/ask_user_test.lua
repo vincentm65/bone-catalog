@@ -48,28 +48,25 @@ bone = { tool = { register = function(spec) registered = spec end } }
 assert(loadfile("tools/ask_user.lua"))()
 assert(registered, "ask_user tool was not registered")
 
--- The serialized schema shares pieces via $defs/$ref; resolve those before
--- asserting on the effective structure.
-local function resolve_ref(schema)
-    if schema and schema["$ref"] then
-        local name = schema["$ref"]:gsub("^#/$defs/", "")
-        return registered.parameters["$defs"][name]
-    end
-    return schema
-end
+-- The advertised schema must be provider-safe: fully self-contained, with no
+-- $ref/$defs for the provider to resolve. What is sent is what is validated.
+local encoded_schema = cjson.encode(registered.parameters)
+assert(not encoded_schema:find('"$ref"', 1, true), "schema must not use $ref")
+assert(not encoded_schema:find('"$defs"', 1, true), "schema must not use $defs")
 
 local variants = registered.parameters.anyOf
-assert(#variants == 4, "schema must expose three single-question modes and one multi-question mode")
+assert(#variants == 3, "schema must expose select, text, and multi-question modes")
 
 local select_schema = variants[1]
 assert(select_schema.properties.type.enum[1] == "single_select")
+assert(select_schema.properties.type.enum[2] == "multi_select")
 assert(select_schema.properties.default.type == "integer")
 assert(select_schema.properties.default.minimum == 1)
 assert(select_schema.properties.visible_rows.minimum == 1)
-assert(select_schema.properties.options.minItems == 1)
-assert(select_schema.required[1] == "question" and select_schema.required[2] == "options",
-    "select questions must require nested options")
-local option_schema = resolve_ref(select_schema.properties.options.items)
+assert(select_schema.required[1] == "question")
+assert(#select_schema.required == 1,
+    "select questions must not force options in the advertised schema")
+local option_schema = select_schema.properties.options.items
 assert(option_schema.anyOf, "options must accept strings or objects")
 assert(option_schema.anyOf[2].properties.preview,
     "object options must expose rich previews")
@@ -78,23 +75,19 @@ local text_schema = variants[2]
 assert(text_schema.properties.type.enum[1] == "text_input")
 assert(text_schema.properties.options == nil, "text questions must not advertise options")
 
-local custom_schema = variants[3]
-assert(custom_schema.properties.allow_custom.enum[1] == true)
-assert(custom_schema.required[3] == "allow_custom")
-
-local multi_schema = variants[4]
+local multi_schema = variants[3]
 assert(multi_schema.required[1] == "questions")
 assert(multi_schema.properties.options == nil,
     "multi-question mode must reject options beside the questions array")
 assert(multi_schema.properties.questions.minItems == 1)
-local question_schema = resolve_ref(multi_schema.properties.questions.items)
-assert(question_schema.anyOf[1].properties.options.minItems == 1)
-assert(question_schema.anyOf[1].required[2] == "options",
-    "nested select questions must require their own options")
-local nested_option = resolve_ref(question_schema.anyOf[1].properties.options.items)
-assert(nested_option.anyOf,
+local question_schema = multi_schema.properties.questions.items
+assert(question_schema.anyOf, "nested questions must be an anyOf of question modes")
+assert(question_schema.anyOf[1].properties.options,
+    "nested select questions must accept options")
+assert(question_schema.anyOf[1].properties.options.items.anyOf,
     "nested question options must accept strings or objects")
 assert(question_schema.anyOf[1].properties.visible_rows.minimum == 1)
+assert(question_schema.anyOf[2].properties.type.enum[1] == "text_input")
 
 local ctx = { ui = {} }
 local function run(params, mocked)

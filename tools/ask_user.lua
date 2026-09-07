@@ -326,13 +326,13 @@ end
 
 local PREVIEW_SCHEMA = {
     type = "object",
-    ["description"] = "Optional rich preview shown beside this option when it is highlighted.",
+    ["description"] = "Optional rich preview shown beside the highlighted option.",
     properties = {
-        title = { type = "string", ["description"] = "Optional heading shown above the preview." },
+        title = { type = "string", ["description"] = "Optional heading." },
         lines = {
             type = "array",
             minItems = 1,
-            ["description"] = "Preview content. Plain strings preserve whitespace; styled lines contain spans.",
+            ["description"] = "Preview content; each line is a string or an object with styled spans.",
             items = {
                 anyOf = {
                     { type = "string" },
@@ -346,7 +346,7 @@ local PREVIEW_SCHEMA = {
                                     type = "object",
                                     properties = {
                                         text = { type = "string" },
-                                        fg = { type = "string", ["description"] = "Optional named or hex foreground color." },
+                                        fg = { type = "string", ["description"] = "Foreground color (named or hex)." },
                                         modifiers = {
                                             type = "array",
                                             items = { type = "string", enum = { "bold", "dim", "italic", "strike" } },
@@ -356,7 +356,7 @@ local PREVIEW_SCHEMA = {
                                     additionalProperties = false,
                                 },
                             },
-                            bg = { type = "string", ["description"] = "Optional named or hex line background color." },
+                            bg = { type = "string", ["description"] = "Background color (named or hex)." },
                         },
                         required = { "spans" },
                         additionalProperties = false,
@@ -375,9 +375,9 @@ local OPTION_ITEMS = {
         {
             type = "object",
             properties = {
-                label = { type = "string", ["description"] = "The option text shown to the user." },
-                value = { type = "string", ["description"] = "Optional value returned instead of the label." },
-                description = { type = "string", ["description"] = "Optional one-line explanation of this option." },
+                label = { type = "string", ["description"] = "Option text shown to the user." },
+                value = { type = "string", ["description"] = "Value returned instead of the label." },
+                description = { type = "string", ["description"] = "One-line explanation." },
                 preview = PREVIEW_SCHEMA,
             },
             required = { "label" },
@@ -392,11 +392,9 @@ local QUESTION_PROPERTY = {
 }
 local OPTIONS_PROPERTY = {
     type = "array",
-    minItems = 1,
-    description = "Choices for this question. In multi-question mode, put this array inside "
-        .. "the corresponding questions item, not at the top level. Object options may include "
-        .. "a description and rich preview; strings are shorthand labels.",
-    items = { ["$ref"] = "#/$defs/option" },
+    description = "Choices; in multi-question mode put this inside the matching questions item. "
+        .. "Each option is a string or an object with label, value, description, and preview.",
+    items = OPTION_ITEMS,
 }
 local ALLOW_CUSTOM_PROPERTY = {
     type = "boolean",
@@ -413,81 +411,45 @@ local VISIBLE_ROWS_PROPERTY = {
     description = "Requested menu height in rows. Defaults to 12.",
 }
 
--- Separate answer-mode variants make invalid select questions structurally
+-- Separate answer-mode variants keep invalid select questions structurally
 -- invalid in the advertised schema instead of leaving that rule to execute().
-local QUESTION_VARIANTS = {
-    {
-        title = "Select question with choices",
-        type = "object",
-        properties = {
-            question = QUESTION_PROPERTY,
-            options = OPTIONS_PROPERTY,
-            allow_custom = ALLOW_CUSTOM_PROPERTY,
-            type = {
-                type = "string",
-                enum = { "single_select", "multi_select" },
-                description = "Selection type. Omit for single_select; use multi_select for checkboxes.",
-            },
-            default = DEFAULT_PROPERTY,
-            visible_rows = VISIBLE_ROWS_PROPERTY,
+-- Shared property tables are referenced (not $ref'd) so the schema the provider
+-- receives is fully self-contained and needs no $defs resolution.
+local SELECT_VARIANT = {
+    title = "Selection question",
+    type = "object",
+    properties = {
+        question = QUESTION_PROPERTY,
+        type = {
+            type = "string",
+            enum = { "single_select", "multi_select" },
+            description = "Omit for single_select; use multi_select for checkboxes.",
         },
-        required = { "question", "options" },
-        additionalProperties = false,
+        options = OPTIONS_PROPERTY,
+        allow_custom = ALLOW_CUSTOM_PROPERTY,
+        default = DEFAULT_PROPERTY,
+        visible_rows = VISIBLE_ROWS_PROPERTY,
     },
-    {
-        title = "Text question",
-        type = "object",
-        properties = {
-            question = QUESTION_PROPERTY,
-            type = {
-                type = "string",
-                enum = { "text_input" },
-                description = "Text input type. This may be omitted when no options are provided.",
-            },
-            visible_rows = VISIBLE_ROWS_PROPERTY,
-        },
-        required = { "question" },
-        additionalProperties = false,
-    },
-    {
-        title = "Custom-only selection question",
-        type = "object",
-        properties = {
-            question = QUESTION_PROPERTY,
-            options = {
-                type = "array",
-                description = "Optional choices for this question; may be empty when custom input is enabled.",
-                items = { ["$ref"] = "#/$defs/option" },
-            },
-            allow_custom = {
-                type = "boolean",
-                enum = { true },
-                description = "Must be true when a selection question has no choices.",
-            },
-            type = {
-                type = "string",
-                enum = { "single_select", "multi_select" },
-            },
-            visible_rows = VISIBLE_ROWS_PROPERTY,
-        },
-        required = { "question", "type", "allow_custom" },
-        additionalProperties = false,
-    },
+    required = { "question" },
+    additionalProperties = false,
 }
-
--- Shared pieces live once under $defs; variants reference them with $ref so the
--- serialized schema stays small without weakening the advertised validation.
+local TEXT_VARIANT = {
+    title = "Text question",
+    type = "object",
+    properties = {
+        question = QUESTION_PROPERTY,
+        type = { type = "string", enum = { "text_input" } },
+        visible_rows = VISIBLE_ROWS_PROPERTY,
+    },
+    required = { "question" },
+    additionalProperties = false,
+}
+local QUESTION_VARIANTS = { SELECT_VARIANT, TEXT_VARIANT }
 local ROOT_SCHEMA = {
     type = "object",
-    ["$defs"] = {
-        preview = PREVIEW_SCHEMA,
-        option = OPTION_ITEMS,
-        question = { anyOf = QUESTION_VARIANTS },
-    },
     anyOf = {
-        QUESTION_VARIANTS[1],
-        QUESTION_VARIANTS[2],
-        QUESTION_VARIANTS[3],
+        SELECT_VARIANT,
+        TEXT_VARIANT,
         {
             title = "Multiple questions",
             type = "object",
@@ -497,10 +459,10 @@ local ROOT_SCHEMA = {
                     minItems = 1,
                     description = "Questions to ask sequentially. Each select question must contain its "
                         .. "own options array; do not put options beside the questions array.",
-                    items = { ["$ref"] = "#/$defs/question" },
+                    items = { anyOf = QUESTION_VARIANTS },
                 },
             },
-            ["required"] = { "questions" },
+            required = { "questions" },
             additionalProperties = false,
         },
     },
