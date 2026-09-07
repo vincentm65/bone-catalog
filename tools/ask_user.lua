@@ -392,7 +392,6 @@ local QUESTION_PROPERTY = {
 }
 local OPTIONS_PROPERTY = {
     type = "array",
-    minItems = 1,
     description = "Choices for this question. In multi-question mode, put this array inside "
         .. "the corresponding questions item, not at the top level. Object options may include "
         .. "a description and rich preview; strings are shorthand labels.",
@@ -413,88 +412,39 @@ local VISIBLE_ROWS_PROPERTY = {
     description = "Requested menu height in rows. Defaults to 12.",
 }
 
--- Separate answer-mode variants make invalid select questions structurally
--- invalid in the advertised schema instead of leaving that rule to execute().
-local QUESTION_VARIANTS = {
-    {
-        title = "Select question with choices",
-        type = "object",
-        properties = {
-            question = QUESTION_PROPERTY,
-            options = OPTIONS_PROPERTY,
-            allow_custom = ALLOW_CUSTOM_PROPERTY,
-            type = {
-                type = "string",
-                enum = { "single_select", "multi_select" },
-                description = "Selection type. Omit for single_select; use multi_select for checkboxes.",
-            },
-            default = DEFAULT_PROPERTY,
-            visible_rows = VISIBLE_ROWS_PROPERTY,
-        },
-        required = { "question", "options" },
-        additionalProperties = false,
+-- Flat schema: no root-level anyOf. llama-server's JSON-schema -> GBNF grammar
+-- conversion drops per-branch `required` inside a root anyOf, which makes `{}`
+-- grammar-valid and lets the 27B emit empty arguments. Runtime validation below
+-- still enforces exactly-one-of question|questions and per-question option rules.
+local QUESTION_PROPERTIES = {
+    question = QUESTION_PROPERTY,
+    options = OPTIONS_PROPERTY,
+    allow_custom = ALLOW_CUSTOM_PROPERTY,
+    type = {
+        type = "string",
+        enum = QUESTION_TYPES,
+        description = "Answer type. Omit for single_select; use multi_select for checkboxes "
+            .. "or text_input to accept a free-text answer.",
     },
-    {
-        title = "Text question",
-        type = "object",
-        properties = {
-            question = QUESTION_PROPERTY,
-            type = {
-                type = "string",
-                enum = { "text_input" },
-                description = "Text input type. This may be omitted when no options are provided.",
-            },
-            visible_rows = VISIBLE_ROWS_PROPERTY,
-        },
-        required = { "question" },
-        additionalProperties = false,
-    },
-    {
-        title = "Custom-only selection question",
-        type = "object",
-        properties = {
-            question = QUESTION_PROPERTY,
-            options = {
-                type = "array",
-                description = "Optional choices for this question; may be empty when custom input is enabled.",
-                items = OPTION_ITEMS,
-            },
-            allow_custom = {
-                type = "boolean",
-                enum = { true },
-                description = "Must be true when a selection question has no choices.",
-            },
-            type = {
-                type = "string",
-                enum = { "single_select", "multi_select" },
-            },
-            visible_rows = VISIBLE_ROWS_PROPERTY,
-        },
-        required = { "question", "type", "allow_custom" },
-        additionalProperties = false,
-    },
+    default = DEFAULT_PROPERTY,
+    visible_rows = VISIBLE_ROWS_PROPERTY,
 }
 
-local QUESTION_SCHEMA = {
-    anyOf = QUESTION_VARIANTS,
-}
-
-local ROOT_VARIANTS = {}
-for _, variant in ipairs(QUESTION_VARIANTS) do ROOT_VARIANTS[#ROOT_VARIANTS + 1] = variant end
-ROOT_VARIANTS[#ROOT_VARIANTS + 1] = {
-    title = "Multiple questions",
+local QUESTION_ITEM_SCHEMA = {
     type = "object",
-    properties = {
-        questions = {
-            type = "array",
-            minItems = 1,
-            description = "Questions to ask sequentially. Each select question must contain its "
-                .. "own options array; do not put options beside the questions array.",
-            items = QUESTION_SCHEMA,
-        },
-    },
-    required = { "questions" },
+    properties = QUESTION_PROPERTIES,
+    required = { "question" },
     additionalProperties = false,
+}
+
+local ROOT_PROPERTIES = {}
+for key, value in pairs(QUESTION_PROPERTIES) do ROOT_PROPERTIES[key] = value end
+ROOT_PROPERTIES.questions = {
+    type = "array",
+    minItems = 1,
+    description = "Questions to ask sequentially. Each select question must contain its "
+        .. "own options array; do not put options beside the questions array.",
+    items = QUESTION_ITEM_SCHEMA,
 }
 
 bone.tool.register({
@@ -502,7 +452,8 @@ bone.tool.register({
     description = "Ask one question directly, or use questions for several. Every select question must contain its own options array unless allow_custom is true.",
     parameters = {
         type = "object",
-        anyOf = ROOT_VARIANTS,
+        properties = ROOT_PROPERTIES,
+        additionalProperties = false,
     },
     safety = "read_only",
     display = {
