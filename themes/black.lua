@@ -7,9 +7,9 @@ return {
   },
   shell = { program = "#9ece6a", flag = "#7aa2f7", string = "#9ece6a", variable = "#bb9af7", comment = "#666666", path = "#7dcfff" },
   syntax = { text = "#eeeeee", comment = "#666666", string = "#9ece6a", number = "#ff9e64", constant = "#bb9af7", keyword = "#bb9af7", keyword_control = "#bb9af7", type = "#2ac3de", function_name = "#7aa2f7", variable = "#eeeeee", tag = "#f7768e", attribute = "#e0af68", punctuation = "#a0a0a0", subtle = "#666666", markup = "#7dcfff", invalid = "#f7768e" },
-  -- Diff preview: Codex-style red/green text (the terminal's own ANSI colors)
-  -- over two near-identical dark grey bands. The darker added band matches the
-  -- input-field fill (palette.selection) so the bands stay close in tone.
-  diff_removed = "red", diff_removed_bg = "#222222",
-  diff_added = "green", diff_added_bg = "#1a1a1a",
+  -- Diff preview: muted red/green text over two near-identical dark grey bands.
+  -- The darker added band matches the input-field fill (palette.selection), and
+  -- the text colors are desaturated so they read clearly without being vivid.
+  diff_removed = "#c56a6a", diff_removed_bg = "#222222",
+  diff_added = "#6fae7a", diff_added_bg = "#1a1a1a",
 }
