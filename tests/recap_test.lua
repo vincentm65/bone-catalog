@@ -19,7 +19,7 @@ bone = {
    end,
 }
 
-assert(loadfile("commands/recap.lua"))()
+assert(loadfile("plugins/recap/init.lua"))()
 assert(commands.recap, "recap command was not registered")
 assert(turn_end_handler, "recap turn_end handler was not registered")
 

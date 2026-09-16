@@ -13,3 +13,5 @@ if not bone._skill_before_turn_registered then
     return nil
   end)
 end
+
+require("commands.skill")

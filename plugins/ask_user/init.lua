@@ -4,12 +4,10 @@
 -- Questions are rendered in the bottom pane with keyboard-driven
 -- selection, optional custom text input, and optional per-option rich previews.
 --
--- Two calling modes:
---   1. Single question: { question, options, allow_custom, type, default }
---   2. Multi-question:  { questions = { {question, options, allow_custom, type, default}, ... } }
---      Asks each question sequentially with backtracking navigation.
---      After answering, user can go back to previous questions or proceed.
--- catalog_description = "Ask one question directly, or use questions for several. Every select question must contain its own nested options array unless allow_custom is true."
+-- Always call with { questions = { { question, type, options }, ... } }.
+-- Questions are asked sequentially with backtracking and review.
+-- Legacy flat calls remain accepted at runtime for existing callers.
+-- catalog_description = "Ask one or more questions using a questions array. Each choice question needs its own options array; text_input needs no options."
 
 local menu = require("ui.menu")
 
@@ -116,7 +114,9 @@ local function validate_question(q, index)
 
     local qtype = get_qtype(q)
     if qtype ~= "text_input" and option_count == 0 and q.allow_custom ~= true then
-        fail(index, "options", "select questions require options unless allow_custom is true")
+        fail(index, "options", string.format(
+            'questions[%d].options is missing or empty. Add "options": ["Coding", "Gaming"] inside this question, or set "allow_custom": true for custom-only input.',
+            index - 1))
     end
     if q.default ~= nil then
         if qtype == "text_input" then fail(index, "default", "does not apply to text_input") end
@@ -140,9 +140,12 @@ local function validate_params(params)
         error("fields 'question' and 'questions' are mutually exclusive", 0)
     end
     if not has_question and not has_questions then
-        error("exactly one of 'question' or 'questions' is required", 0)
+        error('questions is required. Put every question inside {"questions": [{"question": "Your question", "type": "text_input"}]}.', 0)
     end
     if has_question then return { validate_question(params, 1) }, false end
+    if params.options ~= nil then
+        error('options must be inside each questions item, not beside questions. Example: {"questions":[{"question":"Pick","type":"single_select","options":["A","B"]}]}', 0)
+    end
 
     local total = array_length(params.questions, 1, "questions")
     if total == 0 then error("field 'questions' must contain at least one question", 0) end
@@ -412,10 +415,8 @@ local VISIBLE_ROWS_PROPERTY = {
     description = "Requested menu height in rows. Defaults to 12.",
 }
 
--- Flat schema: no root-level anyOf. llama-server's JSON-schema -> GBNF grammar
--- conversion drops per-branch `required` inside a root anyOf, which makes `{}`
--- grammar-valid and lets the 27B emit empty arguments. Runtime validation below
--- still enforces exactly-one-of question|questions and per-question option rules.
+-- Keep one root object with a required questions array. Question variants
+-- carry their own required fields so choice options cannot be omitted.
 local QUESTION_PROPERTIES = {
     question = QUESTION_PROPERTY,
     options = OPTIONS_PROPERTY,
@@ -423,36 +424,60 @@ local QUESTION_PROPERTIES = {
     type = {
         type = "string",
         enum = QUESTION_TYPES,
-        description = "Answer type. Omit for single_select; use multi_select for checkboxes "
-            .. "or text_input to accept a free-text answer.",
+        description = "Required answer type: single_select for one choice, multi_select for checkboxes, text_input for free text.",
     },
     default = DEFAULT_PROPERTY,
     visible_rows = VISIBLE_ROWS_PROPERTY,
 }
 
-local QUESTION_ITEM_SCHEMA = {
-    type = "object",
-    properties = QUESTION_PROPERTIES,
-    required = { "question" },
-    additionalProperties = false,
-}
+local function question_variant(types, custom_only)
+    local properties = {}
+    for key, value in pairs(QUESTION_PROPERTIES) do properties[key] = value end
+    properties.type = { type = "string", enum = types }
+    local required = { "question", "type" }
+    if types[1] == "text_input" then
+        properties.default = nil
+        properties.options = nil
+        properties.allow_custom = nil
+    elseif custom_only then
+        properties.allow_custom = { type = "boolean", enum = { true } }
+        required[#required + 1] = "allow_custom"
+    else
+        properties.options = {
+            type = "array", minItems = 1, items = OPTION_ITEMS,
+            description = "Required choices for THIS question, for example [\"Coding\", \"Gaming\"].",
+        }
+        required[#required + 1] = "options"
+    end
+    return { type = "object", properties = properties, required = required, additionalProperties = false }
+end
 
-local ROOT_PROPERTIES = {}
-for key, value in pairs(QUESTION_PROPERTIES) do ROOT_PROPERTIES[key] = value end
-ROOT_PROPERTIES.questions = {
-    type = "array",
-    minItems = 1,
-    description = "Questions to ask sequentially. Each select question must contain its "
-        .. "own options array; do not put options beside the questions array.",
-    items = QUESTION_ITEM_SCHEMA,
+local ROOT_PROPERTIES = {
+    questions = {
+        type = "array",
+        minItems = 1,
+        description = "Always put every question here, even when asking only one. Each choice question contains its own options.",
+        items = {
+            anyOf = {
+                question_variant({ "single_select", "multi_select" }),
+                question_variant({ "text_input" }),
+                question_variant({ "single_select", "multi_select" }, true),
+            },
+        },
+    },
 }
 
 bone.tool.register({
     name = "ask_user",
-    description = "Ask one question directly, or use questions for several. Every select question must contain its own options array unless allow_custom is true.",
+    description = 'Ask one or more questions. Always use {"questions": [...]}, even for one question. '
+        .. 'Each question needs question and type. Each single_select or multi_select needs its own options array '
+        .. '(unless allow_custom is true); text_input needs no options. Never put options outside a question. '
+        .. 'Example: {"questions":[{"question":"Which activities do you enjoy?","type":"multi_select",'
+        .. '"options":["Coding","Gaming","Music"]},{"question":"What are you building?","type":"text_input"}]}',
     parameters = {
         type = "object",
         properties = ROOT_PROPERTIES,
+        required = { "questions" },
         additionalProperties = false,
     },
     safety = "read_only",

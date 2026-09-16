@@ -20,7 +20,7 @@ local function load_case(depth, agents)
         },
     }
 
-    assert(loadfile("tools/subagent.lua"))()
+    assert(loadfile("plugins/subagent/init.lua"))()
     return commands, tools
 end
 
@@ -66,7 +66,7 @@ assert(subagent_tool.description:find("resolved provider", 1, true),
 assert(not subagent_tool.description:find("max_concurrency", 1, true),
     "tool description must not advertise agent-level concurrency")
 
-local file = assert(io.open("tools/subagent.lua", "r"))
+local file = assert(io.open("plugins/subagent/init.lua", "r"))
 local source = file:read("*a")
 file:close()
 assert(not source:find("max_concurrency", 1, true),

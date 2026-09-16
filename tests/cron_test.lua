@@ -1,7 +1,7 @@
 -- Run with: lua tests/cron_test.lua
 local registered
 bone = { tool = { register = function(spec) registered = spec end } }
-assert(loadfile("tools/cron.lua"))()
+assert(loadfile("plugins/cron/init.lua"))()
 assert(registered, "cron tool was not registered")
 assert(registered.safety == "danger")
 

@@ -1,7 +1,7 @@
 -- Run with: lua tests/web_search_test.lua
 local registered
 bone = { tool = { register = function(spec) registered = spec end } }
-assert(loadfile("tools/web_search.lua"))()
+assert(loadfile("plugins/web_search/init.lua"))()
 assert(registered and registered.name == "web_search")
 assert(registered.parameters.properties.query.minLength == 1)
 

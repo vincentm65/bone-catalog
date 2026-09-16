@@ -27,7 +27,7 @@ cjson = {
     end,
 }
 
-assert(loadfile("tools/task_loop.lua"))()
+assert(loadfile("plugins/task_loop/init.lua"))()
 assert(registered and registered.name == "task_loop")
 assert(registered.stateful == true)
 

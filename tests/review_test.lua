@@ -10,7 +10,7 @@ bone = {
   },
 }
 
-assert(loadfile("commands/review.lua"))()
+assert(loadfile("plugins/review/init.lua"))()
 assert(command)
 
 local function shell_result(stdout, stderr, exit_code)

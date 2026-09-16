@@ -1,8 +1,8 @@
 -- Standalone: lua5.4 tests/skill_filesystem_test.lua   (run from repo root)
--- Real-filesystem harness for lib/skill.lua: real temp dirs, real GNU realpath
+-- Real-filesystem harness for plugins/skill/lib/skill.lua: real temp dirs, real GNU realpath
 -- (spawned via io.popen with safely shell-quoted argv), real stat/ls for ctx.fs.
 -- Creates only its own mktemp directory and removes it on exit.
-package.path = "./lib/?.lua;" .. package.path
+package.path = "./plugins/skill/lib/?.lua;" .. package.path
 local skill = require("skill")
 
 local function die(msg) error("FAIL: " .. tostring(msg), 0) end

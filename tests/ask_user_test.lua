@@ -45,7 +45,7 @@ function menu.clear() calls[#calls + 1] = { kind = "clear" } end
 
 package.loaded["ui.menu"] = menu
 bone = { tool = { register = function(spec) registered = spec end } }
-assert(loadfile("tools/ask_user.lua"))()
+assert(loadfile("plugins/ask_user/init.lua"))()
 assert(registered, "ask_user tool was not registered")
 
 -- The advertised schema must be provider-safe: fully self-contained, with no
@@ -54,8 +54,12 @@ local encoded_schema = cjson.encode(registered.parameters)
 assert(not encoded_schema:find('"$ref"', 1, true), "schema must not use $ref")
 assert(not encoded_schema:find('"$defs"', 1, true), "schema must not use $defs")
 
-local variants = registered.parameters.anyOf
-assert(#variants == 3, "schema must expose select, text, and multi-question modes")
+local root = registered.parameters
+assert(root.anyOf == nil, "root must have one calling format")
+assert(root.required[1] == "questions")
+assert(root.properties.question == nil and root.properties.options == nil)
+local variants = root.properties.questions.items.anyOf
+assert(#variants == 3, "nested schema must expose choices, text, and custom-only choices")
 
 local select_schema = variants[1]
 assert(select_schema.properties.type.enum[1] == "single_select")
@@ -64,8 +68,9 @@ assert(select_schema.properties.default.type == "integer")
 assert(select_schema.properties.default.minimum == 1)
 assert(select_schema.properties.visible_rows.minimum == 1)
 assert(select_schema.required[1] == "question")
-assert(#select_schema.required == 1,
-    "select questions must not force options in the advertised schema")
+assert(select_schema.required[2] == "type" and select_schema.required[3] == "options",
+    "select questions must require their own options")
+assert(select_schema.properties.options.minItems == 1)
 local option_schema = select_schema.properties.options.items
 assert(option_schema.anyOf, "options must accept strings or objects")
 assert(option_schema.anyOf[2].properties.preview,
@@ -75,7 +80,9 @@ local text_schema = variants[2]
 assert(text_schema.properties.type.enum[1] == "text_input")
 assert(text_schema.properties.options == nil, "text questions must not advertise options")
 
-local multi_schema = variants[3]
+assert(variants[3].required[3] == "allow_custom")
+assert(variants[3].properties.allow_custom.enum[1] == true)
+local multi_schema = root
 assert(multi_schema.required[1] == "questions")
 assert(multi_schema.properties.options == nil,
     "multi-question mode must reject options beside the questions array")
@@ -236,5 +243,15 @@ expect_error({ questions = {
     { value = "A", selected = 1 },
     function() error("transport down", 0) end,
 })
+
+expect_error({}, "questions is required")
+local missing = expect_error({ questions = {
+    { question = "Which of these do you enjoy?", type = "multi_select", visible_rows = 5 },
+    { question = "What's a fun fact about you?", type = "text_input" },
+} }, "questions[0].options is missing or empty")
+assert(missing:find('"options": ["Coding", "Gaming"]', 1, true))
+assert(#calls == 0, "missing options must fail before opening UI")
+expect_error({ questions = { { question = "Pick", type = "multi_select" } }, options = { "A" } },
+    "options must be inside each questions item")
 
 print("ask_user tests passed")

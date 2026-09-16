@@ -75,7 +75,7 @@ bone = {
    },
 }
 
-assert(loadfile("commands/history.lua"))()
+assert(loadfile("plugins/history/init.lua"))()
 assert(captured_command, "history command was not registered")
 local notices = {}
 local ctx = {

@@ -20,7 +20,7 @@ bone = {
   },
 }
 
-assert(loadfile("commands/goal.lua"))()
+assert(loadfile("plugins/goal/init.lua"))()
 assert(command and hooks.before_turn and hooks.turn_end)
 
 local files = {}

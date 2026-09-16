@@ -28,7 +28,7 @@ local env = setmetatable({
     },
 }, { __index = _G })
 
-local files = { "commands/compact.lua", "commands/memory.lua" }
+local files = { "plugins/compact/init.lua", "plugins/memory/init.lua" }
 assert(files[1] < files[2], "fixture must match the loader's sorted filename order")
 for _, path in ipairs(files) do
     loading = path
@@ -36,9 +36,9 @@ for _, path in ipairs(files) do
 end
 
 assert(#handlers == 2)
-assert(handlers[1].owner == "commands/memory.lua",
+assert(handlers[1].owner == "plugins/memory/init.lua",
     "memory injection must precede automatic compaction")
-assert(handlers[2].owner == "commands/compact.lua")
+assert(handlers[2].owner == "plugins/compact/init.lua")
 assert(handlers[1].priority > handlers[2].priority)
 
 local base_prompt = "normal provider system prompt"

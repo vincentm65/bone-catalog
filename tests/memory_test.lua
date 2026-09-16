@@ -150,7 +150,7 @@ local ctx = {
    log = { warn = function(message) warnings[#warnings + 1] = message end },
 }
 
-assert(loadfile("commands/memory.lua"))()
+assert(loadfile("plugins/memory/init.lua"))()
 assert(command, "memory command was not registered")
 assert(command.description:find("global and current%-project memory"))
 assert(command.description:find("both are injected into every turn", 1, true))

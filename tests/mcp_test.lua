@@ -46,7 +46,7 @@ cjson = {
     end,
 }
 
-assert(loadfile("tools/mcp.lua"))()
+assert(loadfile("plugins/mcp/init.lua"))()
 assert(settings_page and settings_page.fields.command.default == "")
 assert(registered.mcp_list and registered.mcp_call)
 assert(registered.mcp_list.safety == "read_only")

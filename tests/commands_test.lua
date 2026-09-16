@@ -38,8 +38,8 @@ local function config(values)
    }
 end
 
-assert(loadfile("commands/compact.lua"))()
-assert(loadfile("commands/usage.lua"))()
+assert(loadfile("plugins/compact/init.lua"))()
+assert(loadfile("plugins/usage/init.lua"))()
 
 assert(commands.compact, "compact command was not registered")
 assert(commands.usage, "usage command was not registered")
@@ -796,7 +796,7 @@ package.preload["ui.menu"] = function()
    }
    return menu_stub
 end
-assert(loadfile("commands/themes.lua"))()
+assert(loadfile("plugins/themes/init.lua"))()
 local theme_ctx = {
    ui = {
       notify = function(message, level)

@@ -13,7 +13,7 @@ bone = {
   },
 }
 
-assert(loadfile("commands/shotgun.lua"))()
+assert(loadfile("plugins/shotgun/init.lua"))()
 assert(command, "shotgun command was not registered")
 assert(page and page.namespace == "shotgun")
 assert(#page.fields == 1 and page.fields[1].key == "targets")

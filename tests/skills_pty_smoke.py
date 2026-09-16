@@ -48,7 +48,7 @@ with tempfile.TemporaryDirectory(prefix='bone-skills-pty-') as temp:
         'version: 1\nactive: smoke\nproviders:\n  smoke:\n'
         '    label: Smoke\n    handler: openai\n    model: smoke\n'
         f'    base_url: http://127.0.0.1:{server.server_port}\n')
-    for relative in ('lib/skill.lua', 'tools/skill.lua', 'commands/skill.lua'):
+    for relative in ('plugins/skill/init.lua', 'plugins/skill/lib/skill.lua', 'plugins/skill/commands/skill.lua'):
         destination = cfg / 'lua' / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(catalog / relative, destination)

@@ -1,5 +1,5 @@
 -- Standalone: lua tests/skill_test.lua
-package.path = "./lib/?.lua;" .. package.path
+package.path = "./plugins/skill/?.lua;./plugins/skill/lib/?.lua;" .. package.path
 local files = {
   ["/home/p/.agents/skills/local/SKILL.md"] = "---\nname: local\ndescription: local skill\n---\nLocal body",
   ["/global/skills/local/SKILL.md"] = "---\nname: local\ndescription: global skill\n---\nGlobal body",
@@ -53,12 +53,12 @@ local badread=ctx_for({read_fail=true}); assert(#skill.list(badread)==0)
 local command, hook
 bone={command={register=function(n,s) command=s end}, on=function(n,h) assert(n=="before_turn"); hook=h end}
 package.loaded["skill"]=skill
-assert(loadfile("tools/skill.lua"))()
+assert(loadfile("plugins/skill/init.lua"))()
 assert(hook)
 local zero=hook(nil, {cwd="/none",config_dir="/none",fs=ctx.fs,exec=ctx.exec,read_file=ctx.read_file,log=ctx.log})
 assert(zero==nil, "zero skills must not append")
 package.loaded["skill"]=skill
-assert(loadfile("commands/skill.lua"))()
+assert(loadfile("plugins/skill/commands/skill.lua"))()
 local command_ctx={fs=ctx.fs,exec=ctx.exec,read_file=ctx.read_file,cwd=ctx.cwd,config_dir=ctx.config_dir,log=ctx.log}
 local result=command.handler("",command_ctx); assert(result.submit==false and result.display:find("local",1,true))
 local prompt=command.handler("local",command_ctx)
