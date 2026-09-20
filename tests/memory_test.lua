@@ -156,13 +156,11 @@ assert(command.description:find("global and current%-project memory"))
 assert(command.description:find("both are injected into every turn", 1, true))
 assert(before_turn, "before_turn hook was not registered")
 
--- Cheap capture queues explicit preference-like user messages.
+-- before_turn injects memory but does not automatically capture user messages.
 history = { { role = "user", content = "Please remember that I prefer concise answers." } }
 local action = before_turn(nil, ctx)
 assert(action.system_prompt_append == nil)
-local inbox = files["/config/memory/inbox.jsonl"]
-assert(inbox and inbox:find("I prefer concise answers", 1, true))
-assert(inbox:find('"source":"before_turn"', 1, true))
+assert(files["/config/memory/inbox.jsonl"] == nil)
 
 -- Manual remember accepts scope, merges queued data, stores scoped files, and clears inbox.
 local result = command.handler("remember --global Avoid filler", ctx)
@@ -191,10 +189,9 @@ assert(result.display == "Memory updated.")
 assert(agent_prompts[#agent_prompts]:find('"scope":"project"', 1, true))
 assert(files["/config/memory/projects/_work_project.md"]:find("test first", 1, true))
 
--- The inbox remains bounded without evicting existing complete records.
-local overflowed = false
+-- Repeated preference-like user messages do not mutate the inbox in before_turn.
+local inbox_before = files["/config/memory/inbox.jsonl"]
 for i = 1, 30 do
-   local before = files["/config/memory/inbox.jsonl"]
    history = {
       {
          role = "user",
@@ -202,25 +199,11 @@ for i = 1, 30 do
       },
    }
    before_turn(nil, ctx)
-   if files["/config/memory/inbox.jsonl"] == before then
-      overflowed = true
-      assert(warnings[#warnings]:find("inbox is full", 1, true))
-      break
-   end
 end
-local bounded_inbox = files["/config/memory/inbox.jsonl"]
-assert(overflowed, "the test must fill the bounded inbox")
-assert(#bounded_inbox <= 40000, #bounded_inbox)
-assert(not bounded_inbox:find("batch%-30"),
-   "a rejected append must not evict older entries")
-for line in bounded_inbox:gmatch("[^\n]+") do
-   assert(line:sub(1, 1) == "{" and line:sub(-1) == "}", "partial JSONL record")
-   assert(utf8.len(line) <= 1900, "record exceeds the safe edit limit")
-end
+assert(files["/config/memory/inbox.jsonl"] == inbox_before)
 history = {}
-assert(command.handler("", ctx).display == "No changes.")
 
--- Append retries from a fresh snapshot and does not lose a concurrent writer.
+-- Explicit remember retries from a fresh snapshot and does not lose a concurrent writer.
 local other_entry = encode({
    ts = "2026-07-16T00:00:00Z", cwd = "/work/other",
    content = "Use the other workflow", scope = "project", source = "manual",
@@ -235,11 +218,16 @@ after_read_snapshot = function(path)
    files[path] = files[path] .. concurrent_entry .. "\n"
    return true
 end
-history = { { role = "user", content = "Please remember direct answers." } }
-before_turn(nil, ctx)
+local append_agent_run = ctx.agent.run
+ctx.agent.run = function()
+   return { ok = false, error = "temporary provider failure" }
+end
+result = command.handler("remember --global Prefer direct answers", ctx)
+assert(result.display:find("merge failed", 1, true), result.display)
 assert(after_read_snapshot == nil)
 assert(files["/config/memory/inbox.jsonl"]:find("Prefer concurrent safety", 1, true))
-assert(files["/config/memory/inbox.jsonl"]:find("remember direct answers", 1, true))
+assert(files["/config/memory/inbox.jsonl"]:find("Prefer direct answers", 1, true))
+ctx.agent.run = append_agent_run
 
 -- A consume conflict is fail-closed; both original and concurrent records remain.
 local late_entry = encode({

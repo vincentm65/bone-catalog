@@ -2,8 +2,8 @@
 --
 -- Keeps global memory updated from prior user messages and maintains explicit
 -- per-project preferences without turning the main chat into a memory-maintenance
--- turn. Cheap before_turn capture only queues explicit preference-like user
--- messages; model work happens when /memory is run.
+-- turn. before_turn only injects saved memory; capture happens when /memory is
+-- run or through explicit /memory remember.
 
 local EXTRACT_BUDGET_CHARS = 80000
 local MAX_MSG_CHARS = 4000
@@ -606,35 +606,8 @@ local function parse_remember(arg)
     return text, scope, nil
 end
 
-local function capture_candidate(text)
-    local lower = text:lower()
-    local patterns = {
-        "remember", "forget", "always", "never", "i prefer", "i like", "i hate",
-        "don't", "do not", "stop", "instead", "going forward"
-    }
-    for _, pat in ipairs(patterns) do
-        if lower:find(pat, 1, true) then
-            return true
-        end
-    end
-    return false
-end
-
 bone.on("before_turn", function(_, ctx)
     local p = paths(ctx)
-    local history = ctx.conversation.history()
-    if type(history) == "table" and #history > 0 then
-        local msg = history[#history]
-        if msg and msg.role == "user" then
-            local content = trim(msg.content or "")
-            if content ~= "" and #content <= 2000 and capture_candidate(content) then
-                local ok, err = append_inbox(ctx, p, content, nil, "before_turn")
-                if not ok then
-                    ctx.log.warn("memory: inbox append failed: " .. tostring(err))
-                end
-            end
-        end
-    end
     return { system_prompt_append = memory_prompt(ctx, p) }
 end)
 
