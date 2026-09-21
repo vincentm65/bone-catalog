@@ -136,6 +136,14 @@ end
 local recap_seq = 0
 local pending_timer = nil
 
+local function cancel_auto_recap()
+    recap_seq = recap_seq + 1
+    if pending_timer and pending_timer.cancel then
+        pcall(pending_timer.cancel)
+    end
+    pending_timer = nil
+end
+
 local function run_recap(ctx)
     local text, err = do_recap(ctx)
     if not text then
@@ -157,12 +165,9 @@ end
 local function schedule_auto_recap(ctx, idle_ms)
     if not ctx.time or not ctx.time.after then return end
 
-    recap_seq = recap_seq + 1
+    cancel_auto_recap()
     local my_seq = recap_seq
 
-    if pending_timer and pending_timer.cancel then
-        pcall(pending_timer.cancel)
-    end
     pending_timer = ctx.time.after(idle_ms, function()
         if my_seq ~= recap_seq then return end
         if recap_disabled_in_config(ctx) then return end
@@ -171,7 +176,20 @@ local function schedule_auto_recap(ctx, idle_ms)
     end)
 end
 
-bone.on("turn_end", function(_, ctx)
+-- Invalidate the previous idle timer before the next model turn starts. A
+-- timer is deliberately allowed to outlive turn_end so it can wait while the
+-- conversation is idle, but it must never fire during the following turn.
+bone.on("turn_start", function()
+    cancel_auto_recap()
+end)
+
+bone.on("turn_end", function(event, ctx)
+    -- Driver emits Finished before a successful turn_end. Do not start an idle
+    -- timer for failed/cancelled turns, which have no final model output.
+    if not event or event.ok ~= true then
+        cancel_auto_recap()
+        return
+    end
     if recap_disabled_in_config(ctx) then return end
     if not recap_auto_enabled(ctx) then return end
 

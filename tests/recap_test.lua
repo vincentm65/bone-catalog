@@ -1,5 +1,6 @@
 -- Run with: lua tests/recap_test.lua
 local commands = {}
+local turn_start_handler
 local turn_end_handler
 local registered_settings
 
@@ -15,12 +16,14 @@ bone = {
       end,
    },
    on = function(event, handler)
+      if event == "turn_start" then turn_start_handler = handler end
       if event == "turn_end" then turn_end_handler = handler end
    end,
 }
 
 assert(loadfile("plugins/recap/init.lua"))()
 assert(commands.recap, "recap command was not registered")
+assert(turn_start_handler, "recap turn_start handler was not registered")
 assert(turn_end_handler, "recap turn_end handler was not registered")
 
 -- 0) The idle default is 15 min, and the cap allows at least that much.
@@ -170,7 +173,7 @@ local auto_ctx = {
       return { ok = true, content = "Fixed the login bug.", tool_calls = {} }
    end },
 }
-turn_end_handler({}, auto_ctx)
+turn_end_handler({ ok = true }, auto_ctx)
 assert(#scheduled == 1, "turn_end should schedule exactly one deferred recap")
 assert(scheduled[1].delay == 60000, "idle delay should be 60s in ms")
 assert(notices[1] == nil, "no recap notice before the idle timer fires")
@@ -205,15 +208,34 @@ local auto_ctx2 = {
       return { ok = true, content = "Recap A.", tool_calls = {} }
    end },
 }
-turn_end_handler({}, auto_ctx2)
-turn_end_handler({}, auto_ctx2)
-assert(#scheduled2 == 2, "each turn_end schedules a timer")
+turn_end_handler({ ok = true }, auto_ctx2)
+assert(#scheduled2 == 1, "the completed turn should schedule a timer")
+turn_start_handler({}, auto_ctx2)
+turn_end_handler({ ok = true }, auto_ctx2)
+assert(#scheduled2 == 2, "the next completed turn should schedule a timer")
 assert(notices2[1] == nil, "no notice before any timer fires")
 scheduled2[1]()
-assert(notices2[1] == nil, "stale timer callback should be a no-op")
+assert(notices2[1] == nil, "timer cancelled at turn_start should be a no-op")
 scheduled2[2]()
 assert(#notices2 == 1, "the latest timer should produce one notice")
 assert(notices2[1] == "*Recap: Recap A.*",
    "stale-timer notice should be per-line markdown emphasis, got: " .. tostring(notices2[1]))
+
+-- 5) Failed/cancelled turns do not start an idle timer.
+local scheduled3 = {}
+local auto_ctx3 = {
+   config = auto_ctx2.config,
+   time = { after = function(_, cb)
+      table.insert(scheduled3, cb)
+      return { cancel = function() end }
+   end },
+   ui = { notice = function() end },
+   conversation = auto_ctx2.conversation,
+   llm = auto_ctx2.llm,
+}
+turn_end_handler({ ok = false }, auto_ctx3)
+assert(#scheduled3 == 0, "failed turns must not schedule a recap")
+turn_end_handler({ cancelled = true }, auto_ctx3)
+assert(#scheduled3 == 0, "cancelled turns must not schedule a recap")
 
 print("recap_test: ok")
