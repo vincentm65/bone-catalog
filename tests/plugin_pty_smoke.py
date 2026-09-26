@@ -106,7 +106,6 @@ try:
         # --- Phase A: seed legacy flat installs, then run the catalog UI. ---
         legacy = {
             'lua/tools/web_search.lua': 'plugins/web_search/init.lua',
-            'lua/commands/memory.lua': 'plugins/memory/init.lua',
             'lua/tools/skill.lua': 'plugins/skill/init.lua',
             'lua/lib/skill.lua': 'plugins/skill/lib/skill.lua',
             'lua/commands/skill.lua': 'plugins/skill/commands/skill.lua',
@@ -141,7 +140,7 @@ try:
             assert (plugins / name / 'init.lua').is_file(), f'{name}/init.lua missing'
         installed = {p.name for p in plugins.iterdir()}
         assert installed == {'ask_user', 'compact', 'cron', 'goal', 'history', 'mcp',
-                             'memory', 'recap', 'review', 'shotgun', 'skill', 'subagent',
+                             'recap', 'review', 'shotgun', 'skill', 'subagent',
                              'task_loop', 'themes', 'usage', 'web_search'}, installed
         # Legacy files migrated byte-verbatim into the package layout.
         for dest, source in legacy.items():

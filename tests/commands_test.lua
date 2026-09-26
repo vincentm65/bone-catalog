@@ -708,59 +708,12 @@ assert(usage.display:find("125 total", 1, true))
 assert(plain(usage.display):find("Cached:       40", 1, true))
 assert(plain(usage.display):find("Cache rate:   40.0% of input", 1, true))
 assert(plain(usage.display):find("New input:    60", 1, true))
-assert(not usage.display:find("Memory total:", 1, true))
 assert(plain(usage.display):find("Tools:        2 tools · ~10 tokens", 1, true))
 assert(plain(usage.display):find("System:       ~20 tokens", 1, true))
 assert(plain(usage.display):find("Known total:  ~30 tokens", 1, true),
    "prompt total should include tool and system overhead")
-assert(not plain(usage.display):find("Global:", 1, true))
-assert(not plain(usage.display):find("Project:", 1, true))
 assert(not plain(usage.display):find("chars", 1, true),
    "prompt overhead should omit noisy character counts")
-
-local memory_files = {
-   ["/config/memory/global.md"] = "  global preference  ",
-   ["/config/memory/projects/_work_project.md"] = "project preference",
-}
-usage = commands.usage.handler(nil, usage_ctx(memory_files))
-local usage_text = plain(usage.display)
-assert(usage_text:find("Memory total: ~41 tokens", 1, true),
-   "usage should label the complete injected memory overhead")
-assert(usage_text:find("  Global:     ~5 tokens · memory/global.md", 1, true),
-   "usage should show indented global memory tokens and path")
-assert(usage_text:find("  Project:    ~5 tokens · memory/projects/_work_project.md", 1, true),
-   "usage should show indented current-project memory tokens and path")
-assert(usage_text:find("  Framing:    ~31 tokens", 1, true),
-   "usage should explain memory wrapper and heading overhead")
-assert(usage_text:find("Known total:  ~71 tokens", 1, true),
-   "prompt total should include reconstructed memory overhead")
-assert(not usage_text:find("chars", 1, true))
-
-memory_files["/config/memory/global.md"] = nil
-memory_files["/config/memory.md"] = "legacy preference"
-memory_files["/config/memory/projects/_work_project.md"] = nil
-usage = commands.usage.handler(nil, usage_ctx(memory_files))
-usage_text = plain(usage.display)
-assert(usage_text:find("Global:", 1, true), "legacy memory should be labeled global")
-assert(usage_text:find("memory.md", 1, true), "usage should report legacy global memory fallback")
-assert(not usage_text:find("Project:", 1, true), "usage should omit absent project memory")
-
-memory_files["/config/memory/global.md"] = ""
-memory_files["/config/memory.md"] = "must not be injected"
-memory_files["/config/memory/projects/_work_project.md"] = "project preference"
-usage = commands.usage.handler(nil, usage_ctx(memory_files))
-usage_text = plain(usage.display)
-assert(not usage_text:find("memory.md", 1, true),
-   "an existing scoped global file should suppress legacy fallback")
-assert(not usage_text:find("Global:", 1, true), "usage should omit empty global memory")
-assert(usage_text:find("Project:", 1, true))
-assert(usage_text:find("memory/projects/_work_project.md", 1, true))
-
-memory_files["/config/memory/global.md"] = string.rep("x", 2100)
-memory_files["/config/memory/projects/_work_project.md"] = nil
-usage = commands.usage.handler(nil, usage_ctx(memory_files))
-assert(plain(usage.display):find("  Global:     ~527 tokens · memory/global.md", 1, true),
-   "usage should apply the same memory truncation as prompt injection")
 
 local loaded_themes = {}
 local previewed_themes = {}
