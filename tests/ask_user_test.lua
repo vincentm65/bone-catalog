@@ -134,7 +134,7 @@ assert(result:find('"question":"Pick one"', 1, true))
 assert(result:find('"value":"B"', 1, true))
 assert(calls[1].kind == "select" and calls[1].spec.default == 2)
 assert(calls[1].spec.visible_rows == 18)
-assert(calls[1].spec.options[1] == "A", "string options should pass through to ui.menu")
+assert(calls[1].spec.options[1].label == "A" and calls[1].spec.options[1].value == "A", "string options should normalize for ui.menu")
 assert(calls[1].spec.options[2].value == "B")
 assert(calls[1].spec.options[2].description == "second")
 assert(calls[1].spec.options[2].preview.title == "Bee diagram")
@@ -193,12 +193,13 @@ assert(calls[7].spec.default == 2, "multi-select highlight was not restored")
 assert(calls[7].spec.initial_checked[1] == "B", "multi-select checks were not restored")
 assert(calls[7].spec.initial == "old custom", "multi-select custom text was not restored")
 assert(calls[9].spec.initial == "old\ntext", "text input was not restored")
-assert(result:find('"value":"C"', 1, true), result)
-assert(result:find('"values":["D","new custom"]', 1, true), result)
-assert(result:find('"value":"new\\ntext"', 1, true), result)
-assert(not result:find('"value":"A"', 1, true), "revised answer was not replaced")
+assert(result:find("\"value\":\"C\"", 1, true), result)
+assert(result:find("\"values\":[\"D\"]", 1, true), result)
+assert(result:find("\"custom\":\"new custom\"", 1, true), result)
+assert(result:find("\"value\":\"new\\ntext\"", 1, true), result)
+assert(not result:find("\"value\":\"A\"", 1, true), "revised answer was not replaced")
 
-local long_question = string.rep("é", 30)
+local long_question = string.rep("é", 100)
 local long_answer = string.rep("界", 20)
 result = run({ questions = {
     { question = long_question, options = { { label = "Long", value = long_answer } } },
@@ -210,7 +211,7 @@ result = run({ questions = {
 })
 local review_label = calls[3].spec.options[2].label
 assert(utf8.len(review_label), "review truncation produced invalid UTF-8")
-assert(review_label:find("...", 1, true), "long review labels should be truncated")
+assert(review_label:find("…", 1, true), "long review labels should be truncated")
 
 expect_error({ question = "Bad", type = "single", options = { "A" } },
     "question 1 field 'type'")
@@ -239,8 +240,10 @@ assert(#calls == 0, "validation must finish before opening or clearing UI")
 
 expect_error({ questions = {
     { question = "First", options = { "A" } },
+    { question = "Second", options = { "B" } },
 } }, "review menu failed: transport down", {
     { value = "A", selected = 1 },
+    { value = "B", selected = 1 },
     function() error("transport down", 0) end,
 })
 
