@@ -111,9 +111,17 @@ local function editor_options(draft, is_new)
     }
 end
 
+local function draft_key(draft)
+    return table.concat({
+        tostring(draft.name), tostring(draft.description), tostring(draft.system_prompt),
+        tostring(draft.provider), tostring(draft.model), tostring(draft.approval),
+        tostring(draft.timeout_ms), tostring(draft.enabled),
+    }, "\0")
+end
 local function edit_agent(ctx, agent)
     local is_new = agent == nil
     local draft = copy_agent(agent)
+    local original = draft_key(draft)
     local selected = 1
     while true do
         local result = ask(ctx, {
@@ -123,7 +131,20 @@ local function edit_agent(ctx, agent)
             default = selected,
             visible_rows = 14,
         })
-        if not result then return false end
+        if not result then
+            -- Esc saves pending changes (like the config menu); unchanged drafts just close.
+            if draft_key(draft) == original then return false end
+            draft.description = trim(draft.description)
+            local problem = validate(draft)
+            if problem then
+                notify(ctx, "Not saved: " .. problem, "warn")
+                return false
+            end
+            local ok, err = pcall(ctx.config.upsert_subagent, draft)
+            if ok then return true end
+            notify(ctx, "Could not save agent: " .. tostring(err), "error")
+            return false
+        end
         selected = result.selected or selected
         local field = result.value
         if field == "name" then
