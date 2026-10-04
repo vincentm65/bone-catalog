@@ -13,7 +13,6 @@ Lua runtime.
 | `mcp` | copied native example | Uses Bone 3's MCP manager rather than the old one-shot client. |
 | `recap` | `tui.lua` | Runs a model call outside the session and adds a local chat item. |
 | `review` | copied native example | Native changed-file panel; the old verification-first review prompt is a follow-up. |
-| `shotgun` | `tui.lua` | Fans out model-only calls and synthesizes their answers. |
 | `skill` | copied native example | Uses the Bone 3 skill registry and `skill` tool. |
 | `subagent` | `core.lua`, `tui.lua` | First port is model-only; nested tool-running agents need a protocol extension. |
 | `task_loop` | `core.lua`, `tui.lua` | Persistent checklist plus queue-driven continuation. |

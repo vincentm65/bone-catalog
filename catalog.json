@@ -222,31 +222,6 @@
     ]
   },
   {
-    "name": "shotgun",
-    "kind": "plugin",
-    "version": "1.0.0",
-    "description": "Ask several configured providers and synthesize their answers",
-    "min_bone_version": "0.1.0",
-    "capabilities": [
-      "command",
-      "model"
-    ],
-    "files": [
-      {
-        "path": "README.md",
-        "sha256": "302fba0b185e8f5c54a2fa552e8fec8fd0d735afbf3f27fc6289b945fd17c05d"
-      },
-      {
-        "path": "manifest.json",
-        "sha256": "1dab8a004d1247d24fef7ec148a568548b3921a896181bbed3392d4f699aa4a1"
-      },
-      {
-        "path": "tui.lua",
-        "sha256": "84d2bfbb34e15bc09eb2d827b9a0af7a38fd34177893ee54e49d9508d33afeaf"
-      }
-    ]
-  },
-  {
     "name": "skill",
     "kind": "plugin",
     "version": "1.0.0",
