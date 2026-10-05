@@ -56,11 +56,12 @@ bone.tool.register({
     return render()
   end,
 })
-bone.hook("turn_start", function(ev)
+bone.hook("context", function(ev)
   reload()
   if not state.active or #state.tasks == 0 then return end
-  return { text = ev.text .. "\n\nTask loop:\n" .. render() ..
-    "\nAdvance the current task, then call task_loop with action=advance when verified." }
+  table.insert(ev.messages, 2, { role = "system", content = "Task loop:\n" .. render() ..
+    "\nAdvance the current task, then call task_loop with action=advance when verified." })
+  return { messages = ev.messages }
 end)
 bone.hook("turn_end", function(ev)
   reload()
