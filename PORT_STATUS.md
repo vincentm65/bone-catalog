@@ -5,8 +5,7 @@ Lua runtime.
 
 | Package | Bone 3 entry points | Notes |
 | --- | --- | --- |
-| `ask_user` | `core.lua`, `tui.lua` | Uses `bone.ask`; choices use `bone.ui.select`, text answers use a popup editor. |
-| `compact` | copied native example | Uses session checkpoints and `request_error`. |
+| `ask_user` | `core.lua`, `tui.lua` | Uses `bone.ask`; questions are asked in the input field (a region in place of the prompt). |
 | `cron` | `core.lua` | Requires `BONE3_CRON_COMMAND` when the default headless launcher is not suitable. |
 | `goal` | `core.lua`, `tui.lua` | Uses `turn_start`, `turn_end`, `bone.queue`, and persistent state. |
 | `history` | `tui.lua` | Alias around the built-in session picker. |
@@ -23,3 +22,6 @@ Lua runtime.
 The port is intentionally additive: no package is loaded by default. Install a
 package, then use `/plugin load <name>` or reload the core/TUI. Package Lua is
 trusted code, just like `core.lua` and `tui.lua`.
+
+Compaction is built into Bone 3 (`/compact`, `bone.config.compact`), so the
+old `compact` package is gone.

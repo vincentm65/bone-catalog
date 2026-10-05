@@ -1,12 +1,19 @@
--- Interactive questions use Bone 3's transport-level ask mechanism.  Any
--- client can answer them; the catalog TUI supplies the richer popup.
-local function question_spec(q)
-  local out = { kind = "ask_user", text = q.question or q.text or "Question" }
+-- Interactive questions use Bone 3's transport-level ask mechanism. Any
+-- client can answer them; the catalog TUI asks them in the prompt.
+--
+-- An answer is a string (older clients; multi-select values comma-separated)
+-- or a table: { value, label, index } for a pick, { values, labels } for
+-- multi-select, { value, custom = true } for a typed answer. "cancelled"
+-- (or nil, when the turn is cancelled) stops asking.
+local function question_spec(q, index, total)
+  local out = { kind = "ask_user", text = q.question or q.text or "Question", index = index, total = total }
   out.type = q.type or (q.options and "single_select" or "text_input")
   out.options = q.options or {}
   out.allow_custom = q.allow_custom == true
   return out
 end
+
+local ANSWER_FIELDS = { "value", "values", "label", "labels", "index", "custom" }
 
 bone.tool.register({
   name = "ask_user",
@@ -50,14 +57,20 @@ bone.tool.register({
       if type(q) ~= "table" or type(q.question) ~= "string" then
         return nil, "question " .. tostring(i) .. " must have question text"
       end
-      local answer = bone.ask(question_spec(q))
-      if answer == nil then
+      local spec = question_spec(q, i, #args.questions)
+      local answer = bone.ask(spec)
+      if answer == nil or answer == "cancelled" or (type(answer) == "table" and answer.cancelled) then
         return { cancelled = true, answers = answers, cancelled_at = i }
       end
-      if answer == "cancelled" then
-        return { cancelled = true, answers = answers, cancelled_at = i }
+      local entry = { question = q.question, type = spec.type }
+      if type(answer) == "table" then
+        for _, k in ipairs(ANSWER_FIELDS) do
+          entry[k] = answer[k]
+        end
+      else
+        entry.value = answer
       end
-      answers[#answers + 1] = { question = q.question, type = q.type or "text_input", value = answer }
+      answers[#answers + 1] = entry
     end
     return { cancelled = false, answers = answers }
   end,

@@ -2,8 +2,8 @@
   {
     "name": "ask_user",
     "kind": "plugin",
-    "version": "1.0.0",
-    "description": "Ask the user one or more interactive questions",
+    "version": "1.1.0",
+    "description": "Ask the user questions in the prompt, like the first bone",
     "min_bone_version": "0.1.0",
     "capabilities": [
       "tool",
@@ -13,49 +13,19 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "98f024527aa263bbfa8512f3756cbcaa8d471d402aef660496e48b16e7a711f6"
+        "sha256": "6de8e7a4a2df7c2289d1f31fe9ecf90ff6e2c82f6341a782a94be93170fda432"
       },
       {
         "path": "core.lua",
-        "sha256": "dbbb97ef709df3b780356dd7e99e7942f5c2ab359d0ac05cd9662953755fece6"
+        "sha256": "0863b0249b2b4e46b175875a135f0018e61f2e603143b8d73df3e482f02c3ec7"
       },
       {
         "path": "manifest.json",
-        "sha256": "443d4de1e6fd6146d6cd8f3e285de20833405b52220fad101e0c3cc48ff8e813"
+        "sha256": "8fda8302bb899f1cecdef8d9871403e5e7d4bf55b27e8c3a04b07488dbbfd11c"
       },
       {
         "path": "tui.lua",
-        "sha256": "9643160f5c32b1d845c68fbc68de11e5a00d8bdff14c93d21d1d90328e6f4a0f"
-      }
-    ]
-  },
-  {
-    "name": "compact",
-    "kind": "plugin",
-    "version": "1.0.0",
-    "description": "Compact conversation context",
-    "min_bone_version": "0.1.0",
-    "capabilities": [
-      "hook",
-      "model",
-      "session"
-    ],
-    "files": [
-      {
-        "path": "README.md",
-        "sha256": "a1e9e40ea72b905826bd90be0697b5e3f920adcf7292f6d1bf26ecf8f22b32c1"
-      },
-      {
-        "path": "core.lua",
-        "sha256": "127e7345755ea2e293a0ece3b9eea9d35aa82469b90251223742e714fd1f8345"
-      },
-      {
-        "path": "manifest.json",
-        "sha256": "be4c7dcc91e773d15ac074ba7371b14c7fb1a7c00f11bddc92affaf948f1ac50"
-      },
-      {
-        "path": "tui.lua",
-        "sha256": "d3393c15bcb3b81edc50ebfa1e0379798dae80ee7c89c0a3140a1e7df5c9a887"
+        "sha256": "602dbf76e15b5dc36a1358498dfae733caa186926a27c7315c3ec93e9ec1f8b4"
       }
     ]
   },
@@ -384,8 +354,8 @@
   {
     "name": "usage",
     "kind": "plugin",
-    "version": "1.0.0",
-    "description": "Show token, session, and tool usage",
+    "version": "1.1.0",
+    "description": "Full-screen usage dashboard: tokens, models, tools, activity",
     "min_bone_version": "0.1.0",
     "capabilities": [
       "command",
@@ -394,15 +364,15 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "b86b5be5fbc4752b1490c4c98d4823553ecb0ade9d1eda545de119cbe678ca0e"
+        "sha256": "82319d0ba9ffd1e434fa46c094f72bb386d8d387fbe963654f2f54523c5cbddd"
       },
       {
         "path": "manifest.json",
-        "sha256": "f30ea9f40c81f60127901bda7755eba90d159f4bf914d238dc437ca6c6ee7010"
+        "sha256": "b882bc9afda5526faa9c16b3c1f03e04ca3303f7a2cbe8de59b2842447d00ba8"
       },
       {
         "path": "tui.lua",
-        "sha256": "75efe17544b7220e9ba24ab22cb6cc1378c847a32d6e8475ae9027d09d4f7280"
+        "sha256": "73d91776c1c4de9d41b0e6fa93ae56b24eb1bf4ee699263a35f9f3e5aa8a29d7"
       }
     ]
   },

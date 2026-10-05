@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 errors = []
 for path in sorted((ROOT / "plugins").rglob("*.lua")):
-    result = subprocess.run(["luajit", "-bl", str(path)], capture_output=True, text=True)
+    result = subprocess.run(["luajit", "-bl", str(path)], capture_output=True, text=True, errors="replace")
     if result.returncode:
         errors.append(f"{path}: {result.stderr.strip()}")
 if errors:
