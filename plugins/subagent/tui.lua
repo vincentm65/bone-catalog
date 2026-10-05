@@ -1,17 +1,45 @@
--- /agents shows configured subagents in a small region directly below the
--- prompt, so their availability stays visible while the chat is in use.
-local visible = false
-local lines = {}
+-- Show live subagent tool calls in a small region directly below the prompt.
+-- The region follows the old Bone jobs pane: it appears while agents run and
+-- disappears again when the last call finishes.
+local visible = true
+local running = {}
+local order = {}
 local region_name = "agents"
 
 local function install_region()
   bone.ui.regions[region_name] = {
     size = "auto",
-    max = 5,
-    render = function()
-      return visible and lines or {}
+    max = 6,
+    render = function(ctx)
+      if not visible or #order == 0 then
+        return {}
+      end
+
+      local width = (ctx and tonumber(ctx.width)) or 80
+      local out = {
+        {
+          { "  Agents (" .. #order .. ")", "Accent" },
+          { "  running", "Dim" },
+        },
+      }
+      for _, id in ipairs(order) do
+        local item = running[id]
+        if item then
+          local task = (item.prompt or "working"):gsub("%s+", " ")
+          local prefix = "  ◑ " .. item.name .. "  "
+          local suffix = "  running"
+          local room = math.max(width - #prefix - #suffix, 1)
+          out[#out + 1] = {
+            { prefix, "Accent" },
+            { bone.text.truncate(task, room), "Dim" },
+            { suffix, "Dim" },
+          }
+        end
+      end
+      return out
     end,
   }
+
   local layout = bone.ui.layout
   if type(layout) ~= "table" then
     return
@@ -35,38 +63,70 @@ local function install_region()
   bone.ui.layout = updated
 end
 
-local function refresh()
-  bone.rpc.call("subagent/list", {}, function(list, err)
-    if err then
-      lines = { { { "  subagent: " .. tostring(err), "ErrorMsg" } } }
-    else
-      lines = {}
-      if #(list or {}) > 0 then
-        lines[#lines + 1] = {
-          { "  configured agents", "Accent" },
-          { ("  %d"):format(#list), "Dim" },
-        }
-        for _, item in ipairs(list) do
-          lines[#lines + 1] = {
-            { "  " .. item.name, "Accent" },
-            { "  " .. tostring(item.provider or "current"), "Dim" },
-          }
-        end
-      else
-        lines[1] = { { "  no subagents configured in core.lua", "Dim" } }
-      end
+local function remove(id)
+  if not running[id] then
+    return false
+  end
+  running[id] = nil
+  for i, current in ipairs(order) do
+    if current == id then
+      table.remove(order, i)
+      break
     end
+  end
+  return true
+end
+
+local function arguments(call)
+  if type(call and call.arguments) == "table" then
+    return call.arguments
+  end
+  if type(call and call.arguments) == "string" then
+    local ok, decoded = pcall(bone.json.decode, call.arguments)
+    if ok and type(decoded) == "table" then
+      return decoded
+    end
+  end
+  return {}
+end
+
+local function redraw()
+  if visible then
     bone.ui.refresh()
-  end)
+  end
 end
 
 install_region()
+
+bone.on("tool/started", function(ev)
+  local call = ev and ev.call
+  if not call or call.name ~= "subagent" or not call.id then
+    return
+  end
+  local args = arguments(call)
+  running[call.id] = {
+    name = tostring(args.name or "default"),
+    prompt = tostring(args.prompt or "working"),
+    started_at = ev.started_at,
+  }
+  for _, id in ipairs(order) do
+    if id == call.id then
+      redraw()
+      return
+    end
+  end
+  order[#order + 1] = call.id
+  redraw()
+end)
+
+bone.on("tool/finished", function(ev)
+  if ev and ev.call_id and remove(ev.call_id) then
+    redraw()
+  end
+end)
+
 bone.cmd.create("agents", function()
   install_region()
   visible = not visible
-  if visible then
-    refresh()
-  else
-    bone.ui.refresh()
-  end
-end, { desc = "show configured subagents below the prompt" })
+  bone.ui.refresh()
+end, { desc = "show or hide running subagents below the prompt" })
