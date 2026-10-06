@@ -25,7 +25,7 @@
       },
       {
         "path": "tui.lua",
-        "sha256": "602dbf76e15b5dc36a1358498dfae733caa186926a27c7315c3ec93e9ec1f8b4"
+        "sha256": "1c62c8c4b1bfe70e08080cbf4e9fc6a36344c032b550d03baec30d0610dfe1ca"
       }
     ]
   },
@@ -263,7 +263,7 @@
       },
       {
         "path": "core.lua",
-        "sha256": "095c3b4ae845a00e15a52fb085fe822bd9e7dc5a2ca6b8414e4569b9721732c6"
+        "sha256": "2ee4abab22f6228e261229cdb10c23294996c41759f7f472bce4a098dbfcd284"
       },
       {
         "path": "manifest.json",
