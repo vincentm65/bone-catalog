@@ -8,8 +8,10 @@ Codex backend, so turns count against your ChatGPT plan. Give it an
 - core half: yes
 - TUI half: no
 
-Install with `python3 install.py codex` from the repository root, then add a
-provider in `~/.bone/core.lua`:
+Install with `python3 install.py codex` from the repository root. If you are
+logged in to the Codex CLI, a `codex` provider (`gpt-6.1-sol`) appears in
+your provider list; pick it in `/config` → Providers. To change it, define
+your own in `~/.bone/core.lua` (or edit it in `/config`):
 
 ```lua
 bone.config.providers.codex = {

@@ -195,3 +195,9 @@ local function complete(req, emit)
 end
 
 bone.provider.register("codex", { complete = complete })
+
+-- With a Codex login, list a `codex` provider unless settings.json already
+-- has one; core.lua loads after plugins and may change or replace it.
+if not bone.config.providers.codex and codex_auth() then
+  bone.config.providers.codex = { type = "codex", model = "gpt-6.1-sol" }
+end
