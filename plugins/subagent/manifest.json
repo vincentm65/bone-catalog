@@ -1,1 +1,1 @@
-{"version":"1.0.0","description":"Run a named, model-only sub-agent","capabilities":["tool","model"]}
+{"version":"2.0.0","description":"Delegate tasks to sub-agents that run in sessions of their own","capabilities":["tool"]}

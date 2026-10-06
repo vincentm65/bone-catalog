@@ -224,29 +224,24 @@
   {
     "name": "subagent",
     "kind": "plugin",
-    "version": "1.0.0",
-    "description": "Run a named, model-only sub-agent",
+    "version": "2.0.0",
+    "description": "Delegate tasks to sub-agents that run in sessions of their own",
     "min_bone_version": "0.1.0",
     "capabilities": [
-      "tool",
-      "model"
+      "tool"
     ],
     "files": [
       {
         "path": "README.md",
-        "sha256": "2de7065840b28b1d5c68b9cf8eb194b8d3b77152f38cf88dd8ae3fa033b3eb95"
+        "sha256": "24ec6f09490b59e0b329d2cf1454a77683ddd72f1a886754e5be9f6b85430321"
       },
       {
         "path": "core.lua",
-        "sha256": "21936f2592ef32809bf24bb49fa6acaa130aa1e0d1085e789ae85c8fded1dce1"
+        "sha256": "095c3b4ae845a00e15a52fb085fe822bd9e7dc5a2ca6b8414e4569b9721732c6"
       },
       {
         "path": "manifest.json",
-        "sha256": "b1f69acc71ecaab6872e2068ffdc48e5aec7b4d7dcb5bc6c1bf75c02e3e98d33"
-      },
-      {
-        "path": "tui.lua",
-        "sha256": "af1ea0388267dbc53547072f3634e1f56f1676f85551916cfcb69ef665adde42"
+        "sha256": "5d46211ce6a3ecbd930969bd5ce963d968599ca2c94cc4ea6dc658d4db59d5c5"
       }
     ]
   },

@@ -13,7 +13,7 @@ Lua runtime.
 | `recap` | `tui.lua` | Runs a model call outside the session and adds a local chat item. |
 | `review` | copied native example | Native changed-file panel; the old verification-first review prompt is a follow-up. |
 | `skill` | copied native example | Uses the Bone 3 skill registry and `skill` tool. |
-| `subagent` | `core.lua`, `tui.lua` | First port is model-only; nested tool-running agents need a protocol extension. |
+| `subagent` | `core.lua` | Sub-agents run as owned child sessions (`bone.session.create`/`run`); the TUI lists and opens them. |
 | `task_loop` | `core.lua`, `tui.lua` | Persistent checklist plus queue-driven continuation. |
 | `themes` | `tui.lua`, `colors/*.lua` | Old palette files were converted to Bone 3 highlight groups. |
 | `usage` | copied stats example | `/usage` is canonical and `/stats` remains an alias. |
