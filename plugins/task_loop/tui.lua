@@ -1,4 +1,4 @@
--- tasks: a task list in a panel beside the chat, kept between sessions.
+-- tasks: a task list in a panel beside the chat, saved for that session.
 --
 --   /task fix the parser     add a task
 --   /tasks                   show or hide the panel (it reopens next time)
@@ -7,13 +7,42 @@
 -- In the panel: up/down select, enter or space toggles done, s puts the
 -- task in the prompt, d deletes it, x clears done ones, esc goes back.
 
-local st = bone.state.load("task_loop", { shared = true })
-st.tasks = st.tasks or {}
+local store = require("task_loop.state")
+local prefs = bone.plugin.state() -- Only sidebar visibility is a UI preference.
+local st = { tasks = {}, active = false }
+local session_id
 local sel = 1
 local panel
+local title
+
+-- Session switches have no dedicated event. Check at render time and before
+-- every panel action, so even a key pressed before redraw targets this chat.
+local function sync(force)
+  local id = (bone.chat.session() or {}).session_id
+  local switched = id ~= session_id
+  if switched or force then
+    session_id = id
+    st = id and store.load(id) or { tasks = {}, active = false }
+    if switched then
+      sel = 1
+      local info = panel and panel:info()
+      if info then panel:scroll(-info.top) end
+    end
+    if panel then panel:update({ title = title() }) end
+  end
+end
+
+local function editable()
+  sync(true)
+  if session_id then return true end
+  bone.notify("task_loop: send a message to create this session before adding tasks", "info")
+  return false
+end
 
 local function save()
-  bone.state.save("task_loop", st, { shared = true })
+  -- Reloading before edits preserves the core's latest active flag.
+  st.active = st.active and store.pending(st)
+  store.save(session_id, st)
 end
 
 local function clamp()
@@ -35,6 +64,7 @@ local function follow()
 end
 
 local function render(ctx)
+  sync()
   if #st.tasks == 0 then
     return { { { "nothing to do", "Dim" } }, { { "/task text adds one", "Dim" } } }
   end
@@ -51,12 +81,13 @@ local function render(ctx)
 end
 
 local function move(by)
+  sync()
   sel = sel + by
   clamp()
   follow()
 end
 
-local function title()
+title = function()
   local open = 0
   for _, t in ipairs(st.tasks) do
     if not t.done then
@@ -81,6 +112,7 @@ local keys = {
     move(1)
   end,
   enter = function()
+    if not editable() then return end
     local t = st.tasks[sel]
     if t then
       t.done = not t.done
@@ -88,6 +120,7 @@ local keys = {
     end
   end,
   d = function()
+    if not editable() then return end
     if st.tasks[sel] then
       table.remove(st.tasks, sel)
       clamp()
@@ -95,6 +128,7 @@ local keys = {
     end
   end,
   x = function()
+    if not editable() then return end
     local keep = {}
     for _, t in ipairs(st.tasks) do
       if not t.done then
@@ -106,6 +140,7 @@ local keys = {
     changed()
   end,
   s = function()
+    sync(true)
     local t = st.tasks[sel]
     if t then
       bone.prompt.set(t.text)
@@ -116,6 +151,7 @@ local keys = {
 keys.space = keys.enter
 
 local function show()
+  sync(true)
   if panel and panel:is_open() then
     panel:show()
   else
@@ -128,16 +164,16 @@ local function show()
       keys = keys,
     })
   end
-  st.open = true
-  save()
+  prefs.open = true
+  bone.plugin.save_state()
 end
 
 local function hide()
   if panel then
     panel:hide()
   end
-  st.open = false
-  save()
+  prefs.open = false
+  bone.plugin.save_state()
 end
 
 bone.cmd.create("tasks", function()
@@ -154,10 +190,11 @@ bone.cmd.create("task", function(c)
     panel:focus()
     return
   end
+  if not editable() then return end
   table.insert(st.tasks, { text = c.args, done = false })
   sel = #st.tasks
-  show()
   changed()
+  show()
   follow()
 end, { desc = "add a task (no text: focus the list)" })
 
@@ -171,14 +208,14 @@ bone.cmd.create("task_loop", function(c)
   end
 end, { desc = "show or add to the autonomous task loop" })
 
-if st.open then
+if prefs.open then
   show()
 end
 
 -- Keep the panel in sync when the model updates the core half.
 bone.on("tool/finished", function(ev)
-  if not ev or ev.name ~= "task_loop" then return end
-  local latest = bone.state.load("task_loop", { shared = true })
-  st.tasks, st.active = latest.tasks or {}, latest.active == true
-  if panel then panel:update({ title = title() }) end
+  -- tool/finished has a call_id, not a tool name. Only reload this chat;
+  -- background sessions must not replace the displayed checklist.
+  if not ev or ev.session_id ~= (bone.chat.session() or {}).session_id then return end
+  sync(true)
 end)

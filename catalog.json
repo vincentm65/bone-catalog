@@ -274,8 +274,8 @@
   {
     "name": "task_loop",
     "kind": "plugin",
-    "version": "1.0.0",
-    "description": "Maintain a visible autonomous checklist and continue it between turns",
+    "version": "1.1.0",
+    "description": "Maintain a visible autonomous checklist per session and continue it between turns",
     "min_bone_version": "0.1.0",
     "capabilities": [
       "tool",
@@ -287,19 +287,23 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "2d90ecbd20c9929bdf93ed1b190740d26e6aae2b49fa8c3a9f92d54ce0096323"
+        "sha256": "171cbc66712fb8f380aa4b9a634753c0395c44a08fcf27933338b650ca0d2885"
       },
       {
         "path": "core.lua",
-        "sha256": "07d1b535afb93cf794a747b3850bdbba25aeaa7193d4ac75b69abe813d7a959c"
+        "sha256": "e47a3d74cbc7d5cb157f68cf8f1af810540bfc2700ba4137065e40ad47d8d1e4"
+      },
+      {
+        "path": "lua/task_loop/state.lua",
+        "sha256": "29d12cdb55cc97aa1e26e1693b19ead5f68ed8e72e107d870d8ac355a5915753"
       },
       {
         "path": "manifest.json",
-        "sha256": "22d8b84aa8b2aab98a2e9b4556bec13355d30e0040d45e53f9672c1f86900370"
+        "sha256": "70c6247159ffbacac3b770a35cc555c21b2c77cce319954c4b16a3e7a59d7898"
       },
       {
         "path": "tui.lua",
-        "sha256": "86bb164fb7a050097aee48dc3e27514ff640f6b18aa017ba0fc93b62afb026bf"
+        "sha256": "9fa73dd3c38cb3ace9aed0d80c793a4a84dc6c7b5fac75002c62978752916779"
       }
     ]
   },

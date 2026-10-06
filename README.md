@@ -49,6 +49,15 @@ catalog core half through that headless binary:
 BONE_BIN=/path/to/bone3 python3 runtime-check.py
 ```
 
+Check task-loop isolation in both plugin halves and through concurrent Bone 3
+turns (a local scripted provider, with no model calls):
+
+```sh
+luajit tests/task_loop_test.lua
+BONE_BIN=/path/to/bone3 python3 tests/task_loop_runtime_test.py
+BONE_BIN=/path/to/bone3 python3 tests/task_loop_tmux_test.py
+```
+
 The previous catalog, including its index, packages and tests, is archived under
 [`legacy/`](legacy/). The root index and installer target Bone 3. See
 [PORT_STATUS.md](PORT_STATUS.md) for remaining differences from the old plugins.

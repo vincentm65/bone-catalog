@@ -14,7 +14,7 @@ Lua runtime.
 | `review` | copied native example | Native changed-file panel; the old verification-first review prompt is a follow-up. |
 | `skill` | copied native example | Uses the Bone 3 skill registry and `skill` tool. |
 | `subagent` | `core.lua` | Sub-agents run as owned child sessions (`bone.session.create`/`run`); the TUI lists and opens them. |
-| `task_loop` | `core.lua`, `tui.lua` | Persistent checklist plus queue-driven continuation. |
+| `task_loop` | `core.lua`, `tui.lua` | Each session has its own persistent checklist, active flag and queue-driven continuation; the sidebar follows the selected session. |
 | `themes` | `tui.lua`, `colors/*.lua` | Old palette files were converted to Bone 3 highlight groups. |
 | `usage` | copied stats example | `/usage` is canonical and `/stats` remains an alias. |
 | `web_search` | `core.lua` | Real DuckDuckGo search through `ddgs` when `uv` is installed (as the old package did); otherwise DuckDuckGo's Instant Answer endpoint through `bone.http`, which only knows encyclopedia-style topics. |
