@@ -67,7 +67,7 @@ bone.hook("request", function(ev)
   for _, t in ipairs(ev.tools or {}) do
     if t.name == "subagent" then
       if not deep then
-        t.description = t.description .. roster()
+        t.description = t.description .. roster(); t.parameters.properties.name = next(bone.config.subagents) and t.parameters.properties.name or nil
         tools[#tools + 1] = t
       end
     elseif allowed(spec, t.name) then
