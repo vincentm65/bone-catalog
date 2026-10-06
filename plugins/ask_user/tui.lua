@@ -375,7 +375,6 @@ local function close()
   restore(saved)
   bone.keymap.clear()
   table.remove(queue, 1)
-  bone.ui.refresh()
   open_next()
 end
 
@@ -412,7 +411,6 @@ function open_next()
   end
   bone.prompt.set("")
   bone.keymap.focus(CONTEXT)
-  bone.ui.refresh()
 end
 
 local function submit()
@@ -470,9 +468,7 @@ local function map(key, fn)
     if not cur then
       return false
     end
-    local r = fn()
-    bone.ui.refresh()
-    return r
+    return fn()
   end, { context = CONTEXT })
 end
 
