@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "title": "Codex",
+  "description": "Model provider for OpenAI's Responses API: your ChatGPT plan through the Codex CLI login, or an OpenAI API key",
+  "capabilities": [
+    "provider",
+    "network"
+  ]
+}

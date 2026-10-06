@@ -30,6 +30,31 @@
     ]
   },
   {
+    "name": "codex",
+    "kind": "plugin",
+    "version": "1.0.0",
+    "description": "Model provider for OpenAI's Responses API: your ChatGPT plan through the Codex CLI login, or an OpenAI API key",
+    "min_bone_version": "0.1.0",
+    "capabilities": [
+      "provider",
+      "network"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "ee8434d712d825d8fe37e1f720c37a984750676ca7fee82d82e5bd55d83e726e"
+      },
+      {
+        "path": "core.lua",
+        "sha256": "e790f7183458a68aced9e48e495d7de604992b7a0bcadf9b43cc10a42923780c"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "df44a41d89644f72bffb84d731b8d8bdfb4fea0dc1a86bd6a603938d0d004108"
+      }
+    ]
+  },
+  {
     "name": "cron",
     "kind": "plugin",
     "version": "1.0.0",
