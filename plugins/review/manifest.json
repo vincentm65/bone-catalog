@@ -1,1 +1,1 @@
-{"version": "1.0.0", "description": "Review files changed in the current session", "capabilities": ["panel", "chat", "job"]}
+{"version":"2.0.0","description":"Submit verification-first Git reviews of unstaged/untracked or branch changes with bounded turn-only context and selectable effort","capabilities":["hooks","system","command","prompt","action"]}

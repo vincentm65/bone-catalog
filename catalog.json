@@ -194,26 +194,32 @@
   {
     "name": "review",
     "kind": "plugin",
-    "version": "1.0.0",
-    "description": "Review files changed in the current session",
+    "version": "2.0.0",
+    "description": "Submit verification-first Git reviews of unstaged/untracked or branch changes with bounded turn-only context and selectable effort",
     "min_bone_version": "0.1.0",
     "capabilities": [
-      "panel",
-      "chat",
-      "job"
+      "hooks",
+      "system",
+      "command",
+      "prompt",
+      "action"
     ],
     "files": [
       {
         "path": "README.md",
-        "sha256": "279e7834ca88c6086a2f87f6d22fc008b64b38a7e7fd0e33f11cb7bde5aa3939"
+        "sha256": "dd4b11458df40e2b879961598f46dc279a2b55c91377a3b7375a766557aa9102"
+      },
+      {
+        "path": "core.lua",
+        "sha256": "107f69d3c6138ae7d8b00434d2fe3a97d7e8c3c3a875a0f412ed7d4d9f860ee9"
       },
       {
         "path": "manifest.json",
-        "sha256": "4ca0491a8de0c8526b2999c8f237cfea839a7ec0c6010f5b5e8fcb8629ea74e3"
+        "sha256": "4d80622923b2613f518191e8b5a466b77f0d8656b091cc90e54b6c3384e535ab"
       },
       {
         "path": "tui.lua",
-        "sha256": "e88d1f195cb0970c2419145b4ea03e7a0695c6e131edb016707519d1cd61c258"
+        "sha256": "7f50e568be1d2817990f8346ffd43c9de7220dbf56a156599579f020738f0371"
       }
     ]
   },
