@@ -11,6 +11,8 @@ python3 install.py usage
 `month`, `year`, `all` or `/usage 2026-09-01..2026-09-30` pick another
 period. It shows:
 
+- current conversation lifetime tokens, input, output, cached (hit rate),
+  requests, user turns and tool calls, independent of the selected period;
 - cards for tokens, input, output, cached (hit rate), requests, sessions and
   tool calls, each with the change from the period before;
 - tokens per hour, day, week or month as a column chart, with the peak and
@@ -23,7 +25,9 @@ period. It shows:
 
 Keys: `1`-`5` or `←`/`→` (also `d w m y a`) switch period, `t` types a date
 range, `j`/`k`, page keys and the wheel scroll, `r` refreshes, `q`/`esc`
-closes. Wide terminals (110+ columns) get two columns.
+closes. Wide terminals (110+ columns) get two columns. Scrolling reuses the
+rendered page; period switches reuse all-history activity until `r`, a new
+day, or reopening the page.
 
 Usage is recorded per model call from the version that added it on; older
 sessions show tool calls but no tokens. It is only TUI Lua: read-only SQL

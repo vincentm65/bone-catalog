@@ -449,7 +449,7 @@
   {
     "name": "usage",
     "kind": "plugin",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "Full-screen usage dashboard: tokens, models, tools, activity",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -459,15 +459,15 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "82319d0ba9ffd1e434fa46c094f72bb386d8d387fbe963654f2f54523c5cbddd"
+        "sha256": "cf5b1a8c407bd8a0177afabbb2e87252b3579b5bc80a01216e195161a28a0262"
       },
       {
         "path": "manifest.json",
-        "sha256": "b882bc9afda5526faa9c16b3c1f03e04ca3303f7a2cbe8de59b2842447d00ba8"
+        "sha256": "b77250597c286978aa83c6cc0172980c9d5f4e117d46c2506d9f4c7fbf9fbf7f"
       },
       {
         "path": "tui.lua",
-        "sha256": "73d91776c1c4de9d41b0e6fa93ae56b24eb1bf4ee699263a35f9f3e5aa8a29d7"
+        "sha256": "5e61669ba94148451b65eb6969f23a017764b1fbd5f02aa16a31286e6aa28e5f"
       }
     ]
   },

@@ -116,9 +116,16 @@ local function buckets(r, first_key)
   return out
 end
 
-local function queries(r)
+local function queries(r, session_id)
   local b = BUCKET_SQL[r.bucket]
   return {
+    conversation = session_id and [[
+      SELECT count(*), sum(input_tokens), sum(output_tokens), sum(cached_tokens),
+             (SELECT count(*) FROM messages WHERE session_id = ?1 AND role = 'user'),
+             count(DISTINCT date(at, 'unixepoch', 'localtime')),
+             (SELECT count(*) FROM tool_calls WHERE session_id = ?1),
+             (SELECT sum(coalesce(is_error, 0)) FROM tool_calls WHERE session_id = ?1)
+      FROM usage WHERE session_id = ?1]] or nil,
     totals = [[
       SELECT count(*), sum(input_tokens), sum(output_tokens), sum(cached_tokens),
              count(DISTINCT nullif(session_id, '')),
@@ -143,11 +150,12 @@ local function queries(r)
       SELECT date(at, 'unixepoch', 'localtime') AS d, sum(input_tokens + output_tokens)
       FROM usage WHERE at >= ?1 AND at < ?2 GROUP BY d]],
     sessions = [[
-      SELECT coalesce(s.renamed, s.title, '(untitled)'), s.cwd,
-             sum(u.input_tokens + u.output_tokens), count(*)
-      FROM usage u JOIN sessions s ON s.id = u.session_id
-      WHERE u.at >= ?1 AND u.at < ?2
-      GROUP BY u.session_id ORDER BY sum(u.input_tokens + u.output_tokens) DESC LIMIT 6]],
+      SELECT coalesce(s.renamed, s.title, '(untitled)'), s.cwd, u.tokens, u.calls
+      FROM (
+        SELECT session_id, sum(input_tokens + output_tokens) AS tokens, count(*) AS calls
+        FROM usage WHERE at >= ?1 AND at < ?2 GROUP BY session_id
+      ) u JOIN sessions s ON s.id = u.session_id
+      ORDER BY u.tokens DESC LIMIT 6]],
     tools = [[
       SELECT name, count(*), sum(coalesce(is_error, 0)), avg(output_chars)
       FROM tool_calls WHERE at >= ?1 AND at < ?2 GROUP BY name ORDER BY count(*) DESC]],
@@ -316,7 +324,8 @@ local function cards(d, r, w)
     { "Output", num(t[3]), p and delta(t[3], p[3], true), num((tonumber(t[3]) or 0) / math.max(calls, 1)) .. "/request" },
     { "Cached", num(t[4]), p and delta(t[4], p[4], true), cache and string.format("%.0f%% of input", cache) or "no input" },
     { "Requests", num(calls), p and delta(calls, p[1], true), num(tokens / math.max(calls, 1)) .. " avg" },
-    { "Sessions", num(t[5]), p and delta(t[5], p[5], true), num(calls / math.max(tonumber(t[5]) or 1, 1)) .. " req avg" },
+    { d.current and "User turns" or "Sessions", num(t[5]), p and delta(t[5], p[5], true),
+      num(calls / math.max(tonumber(t[5]) or 1, 1)) .. (d.current and " req/turn" or " req avg") },
     { "Tool calls", num(tool_calls), nil,
       tool_calls > 0 and string.format("%.1f%% failed", tool_fail * 100 / tool_calls) or "none" },
   }
@@ -697,6 +706,11 @@ end
 local function body(d, r, w, h)
   local out = {}
   local inner = w - 2
+  if d.conversation then
+    append(out, { title("Current conversation", inner, "lifetime · r refresh") })
+    append(out, cards(d.conversation, { bucket = "day" }, inner))
+    append(out, { title("All conversations", inner, r.label) }, true)
+  end
   append(out, cards(d, r, inner))
   local two = inner >= 110
   append(out, chart(d, r, inner, math.max(6, math.min(two and 16 or 10, h - (two and 46 or 30)))), true)
@@ -743,24 +757,30 @@ local function open(period, custom)
     end
   end
 
-  local function load()
+  local function load(refresh)
     st.gen = st.gen + 1
     local gen = st.gen
     local r = span(st.period, st.custom)
     st.loading, st.err = true, nil
     local results, pending, failed = {}, 0, nil
-    local qs = queries(r)
+    local session_id = (bone.chat.session() or {}).session_id
+    local qs = queries(r, session_id)
+    -- Activity is period-independent; refresh it explicitly or on a new day.
+    local day = ymd(os.time())
+    if not refresh and st.daily_day == day then
+      results.daily, qs.daily = st.daily_rows, nil
+    end
     for _ in pairs(qs) do
       pending = pending + 1
     end
     for name, sql in pairs(qs) do
-      -- Every query takes exactly ?1 and ?2: the span, the span before it,
-      -- or (for the calendar) everything.
       local params = { r.from, r.to }
       if name == "prev" then
         params = { r.prev_from, r.prev_to }
       elseif name == "daily" then
         params = { 0, os.time() + DAY }
+      elseif name == "conversation" then
+        params = { session_id }
       end
       bone.request("store/query", { sql = sql, params = params }, function(res, err)
         if gen ~= st.gen then
@@ -781,6 +801,10 @@ local function open(period, custom)
           return redraw()
         end
         local data = {
+          conversation = results.conversation and {
+            totals = results.conversation[1] or {}, current = true,
+            tools = { { "", (results.conversation[1] or {})[7], (results.conversation[1] or {})[8] } },
+          },
           totals = results.totals[1] or {},
           prev = results.prev and results.prev[1],
           series = {},
@@ -799,6 +823,7 @@ local function open(period, custom)
             data.daily[tostring(row[1])] = tonumber(row[2])
           end
         end
+        st.daily_rows, st.daily_day = results.daily, day
         st.data, st.span, st.updated = data, r, os.time()
         redraw()
       end)
@@ -865,7 +890,11 @@ local function open(period, custom)
     elseif not st.data then
       lines = { { { "  loading…", "Dim" } } }
     else
-      lines = body(st.data, st.span, w, h)
+      local size = w .. ":" .. h .. os.date("%Y-%m-%d %H")
+      if st.body_data ~= st.data or st.body_size ~= size then
+        st.body, st.body_data, st.body_size = body(st.data, st.span, w, h), st.data, size
+      end
+      lines = st.body
     end
     st.max_scroll = math.max(#lines - view_h, 0)
     st.scroll = math.max(0, math.min(st.scroll, st.max_scroll))
@@ -929,7 +958,7 @@ local function open(period, custom)
       local r = st.span or span(st.period, st.custom)
       st.input = (r.from > 0 and ymd(r.from) or "") .. ".." .. ymd(r.to - 1)
     elseif k == "r" then
-      load()
+      load(true)
     elseif k == "down" or k == "j" or k == "wheeldown" then
       st.scroll = st.scroll + (k == "wheeldown" and 3 or 1)
     elseif k == "up" or k == "k" or k == "wheelup" then
