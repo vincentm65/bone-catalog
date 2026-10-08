@@ -7,7 +7,7 @@
 --   /usage today|week|month|year|all
 --   /usage 2026-09-01..2026-09-30
 --
--- Keys: 1-5 or ←→ period · t dates · j/k scroll · r refresh · q close.
+-- Keys: 1-5 or ←→ period · Tab/Enter filter · c clear · t dates · r refresh.
 
 local PERIODS = { "today", "week", "month", "year", "all" }
 local TITLES = { today = "Today", week = "Week", month = "Month", year = "Year", all = "All" }
@@ -50,8 +50,9 @@ local function span(period, custom)
   local r
   if custom then
     local days = math.floor((custom.to - custom.from) / DAY + 0.5)
-    r = { from = custom.from, to = custom.to, bucket = days <= 62 and "day" or (days <= 400 and "week" or "month") }
+    r = { from = custom.from, to = custom.to, bucket = days < 1 and "hour" or (days <= 62 and "day" or (days <= 400 and "week" or "month")) }
     r.label = ymd(custom.from) .. " → " .. ymd(custom.to - 1)
+    if days < 1 then r.label = os.date("%Y-%m-%d %H:%M", r.from) .. " → " .. os.date("%H:%M", r.to) end
   elseif period == "today" then
     r = { from = midnight(now), to = now + 1, bucket = "hour", label = os.date("%a %b %d") }
     r.prev_from, r.prev_to = r.from - DAY, now - DAY
@@ -116,9 +117,9 @@ local function buckets(r, first_key)
   return out
 end
 
-local function queries(r, session_id)
+local function queries(r, session_id, filters)
   local b = BUCKET_SQL[r.bucket]
-  return {
+  local qs = {
     conversation = session_id and [[
       SELECT count(*), sum(input_tokens), sum(output_tokens), sum(cached_tokens),
              (SELECT count(*) FROM messages WHERE session_id = ?1 AND role = 'user'),
@@ -150,7 +151,7 @@ local function queries(r, session_id)
       SELECT date(at, 'unixepoch', 'localtime') AS d, sum(input_tokens + output_tokens)
       FROM usage WHERE at >= ?1 AND at < ?2 GROUP BY d]],
     sessions = [[
-      SELECT coalesce(s.renamed, s.title, '(untitled)'), s.cwd, u.tokens, u.calls
+      SELECT coalesce(s.renamed, s.title, '(untitled)'), s.cwd, u.tokens, u.calls, s.id
       FROM (
         SELECT session_id, sum(input_tokens + output_tokens) AS tokens, count(*) AS calls
         FROM usage WHERE at >= ?1 AND at < ?2 GROUP BY session_id
@@ -160,6 +161,15 @@ local function queries(r, session_id)
       SELECT name, count(*), sum(coalesce(is_error, 0)), avg(output_chars)
       FROM tool_calls WHERE at >= ?1 AND at < ?2 GROUP BY name ORDER BY count(*) DESC]],
   }
+  local f = filters or {}
+  local scope = (f.session and " AND session_id = ?3" or "")
+  local model = f.model and " AND coalesce(nullif(provider, ''), '?') = ?4 AND model = ?5" or ""
+  for name, sql in pairs(qs) do
+    if name ~= "conversation" then
+      qs[name] = sql:gsub("at >= %?1 AND at < %?2", "%0" .. scope .. (name == "tools" and "" or model))
+    end
+  end
+  return qs
 end
 
 -- Text helpers ---------------------------------------------------------------
@@ -306,7 +316,7 @@ local function delta(now, before, has_prev)
   return (d > 0 and "▲" or "▼") .. string.format("%.0f%%", math.abs(d))
 end
 
-local function cards(d, r, w)
+local function metrics(d, r)
   local t, p = d.totals, d.prev
   local tokens = (tonumber(t[2]) or 0) + (tonumber(t[3]) or 0)
   local calls = tonumber(t[1]) or 0
@@ -317,7 +327,7 @@ local function cards(d, r, w)
   end
   local ptok = p and ((tonumber(p[2]) or 0) + (tonumber(p[3]) or 0))
   local cache = pct(t[4], t[2])
-  local list = {
+  return {
     { "Tokens", num(tokens), delta(tokens, ptok, p),
       r.bucket == "hour" and "in + out" or (num(tokens / math.max(tonumber(t[6]) or 1, 1)) .. "/day") },
     { "Input", num(t[2]), p and delta(t[2], p[2], true), string.format("%.0f%% of total", pct(t[2], tokens) or 0) },
@@ -327,13 +337,19 @@ local function cards(d, r, w)
     { d.current and "User turns" or "Sessions", num(t[5]), p and delta(t[5], p[5], true),
       num(calls / math.max(tonumber(t[5]) or 1, 1)) .. (d.current and " req/turn" or " req avg") },
     { "Tool calls", num(tool_calls), nil,
-      tool_calls > 0 and string.format("%.1f%% failed", tool_fail * 100 / tool_calls) or "none" },
+      d.model_filter and "model unfiltered" or (tool_calls > 0 and string.format("%.1f%% failed", tool_fail * 100 / tool_calls) or "none") },
   }
-  -- As many per row as fit at 16+ columns, spread over the width.
+end
+
+local function cards(d, r, w)
+  local list = metrics(d, r)
+  local current = d.conversation and metrics(d.conversation, { bucket = "day" })
+  local gutter = current and 8 or 0
+  w = w - gutter
   local per = math.max(1, math.min(#list, math.floor(w / 16)))
   local out = {}
   for start = 1, #list, per do
-    local lines = { {}, {}, {}, {} }
+    local lines = current and { {}, {}, {}, {}, {}, {}, {} } or { {}, {}, {}, {} }
     local function put(li, text, hl)
       local l = lines[li]
       local last = l[#l]
@@ -348,23 +364,28 @@ local function cards(d, r, w)
       local c = list[i]
       local cw = (i - start + 1 == per) and (w - base * (per - 1)) or base
       local inner = cw - 2
-      local label = cut(c[1], inner - 3)
+      local label = cut(current and i == 6 and "Turns/Sessions" or c[1], inner - 3)
       put(1, "╭ ", "WinSeparator")
       put(1, label, "Dim")
       put(1, " " .. string.rep("─", math.max(inner - width(label) - 2, 0)) .. "╮", "WinSeparator")
-      local value = cut(c[2], inner - 2)
-      local dl = c[3] and cut(" " .. c[3], math.max(inner - 2 - width(value), 0)) or ""
-      put(2, "│ ", "WinSeparator")
-      put(2, value, "UsageValue")
-      put(2, dl, c[3] and c[3]:find("▲") and "Notice" or "Dim")
-      put(2, string.rep(" ", math.max(inner - 1 - width(value) - width(dl), 0)) .. "│", "WinSeparator")
-      local sub = cut(c[4] or "", inner - 2)
-      put(3, "│ ", "WinSeparator")
-      put(3, sub, "Dim")
-      put(3, string.rep(" ", math.max(inner - 1 - width(sub), 0)) .. "│", "WinSeparator")
-      put(4, "╰" .. string.rep("─", math.max(inner, 0)) .. "╯", "WinSeparator")
+      for scope, metric in ipairs(current and { current[i], c } or { c }) do
+        local row = scope == 2 and 5 or 2
+        local value = cut(metric[2], inner - 2)
+        local dl = metric[3] and cut(" " .. metric[3], math.max(inner - 2 - width(value), 0)) or ""
+        put(row, "│ ", "WinSeparator")
+        put(row, value, "UsageValue")
+        put(row, dl, metric[3] and metric[3]:find("▲") and "Notice" or "Dim")
+        put(row, string.rep(" ", math.max(inner - 1 - width(value) - width(dl), 0)) .. "│", "WinSeparator")
+        local sub = cut(metric[4] or "", inner - 2)
+        put(row + 1, "│ ", "WinSeparator")
+        put(row + 1, sub, "Dim")
+        put(row + 1, string.rep(" ", math.max(inner - 1 - width(sub), 0)) .. "│", "WinSeparator")
+      end
+      if current then put(4, "├" .. string.rep("─", math.max(inner, 0)) .. "┤", "WinSeparator") end
+      put(#lines, "╰" .. string.rep("─", math.max(inner, 0)) .. "╯", "WinSeparator")
     end
-    for _, l in ipairs(lines) do
+    for row, l in ipairs(lines) do
+      if current then table.insert(l, 1, { pad(row == 2 and "Current" or (row == 5 and "All" or ""), gutter), "Dim" }) end
       out[#out + 1] = l
     end
   end
@@ -375,6 +396,28 @@ local BLOCKS = { "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" }
 
 -- Columns per bucket, scaled in eighths of a row, with a value axis on the
 -- left and labels under it. The current bucket is drawn in the accent.
+-- Hit ranges stay with their rendered line through stacking and two columns.
+local function hit(line, x, last, action, label)
+  line.hits = line.hits or {}
+  line.hits[#line.hits + 1] = { x = x, last = last, action = action, label = label }
+end
+
+local function bucket_range(r, key)
+  local from, to
+  if r.bucket == "hour" then
+    local d = os.date("*t", r.from)
+    from = os.time({ year = d.year, month = d.month, day = d.day, hour = tonumber(key) })
+    to = from + 3600
+  elseif r.bucket == "month" then
+    from = parse_date(key .. "-01")
+    local d = os.date("*t", from)
+    to = os.time({ year = d.year, month = d.month + 1, day = 1, hour = 0 })
+  else
+    from = parse_date(key)
+    to = midnight(noon_plus(from, r.bucket == "week" and 7 or 1))
+  end
+  return { from = from, to = to }
+end
 local function chart(d, r, w, h)
   local list = buckets(r, d.series_first)
   local axis_w = 7
@@ -414,7 +457,8 @@ local function chart(d, r, w, h)
     local tick = (row == h and num(max)) or (row == math.ceil(h / 2) and num(max * (row - 0.5) / h)) or ""
     add(lpad(tick, axis_w - 2) .. " ", "Dim")
     add(tick ~= "" and "┤" or "│", "WinSeparator")
-    for _, b in ipairs(list) do
+    for i, b in ipairs(list) do
+      hit(l, axis_w + (i - 1) * cw + 1, axis_w + i * cw, { range = bucket_range(r, b.key) }, b.key)
       local eighths = b.v > 0 and math.max(1, math.floor(b.v / max * h * 8 + 0.5)) or 0
       local fill = math.max(0, math.min(8, eighths - (row - 1) * 8))
       add(string.rep(fill == 0 and " " or BLOCKS[fill], bw), b.key == now_key and "Accent" or heat(b.v, max))
@@ -490,6 +534,7 @@ local function models(d, w)
       a(bar(total > 0 and tok / total or 0, share_w - 2), "UsageBar")
     end
     out[#out + 1] = l
+    hit(l, 1, w, { model = { m[1], m[2] } }, m[1] .. " / " .. m[2])
   end
   return out
 end
@@ -500,6 +545,7 @@ local function tools(d, w, limit)
     calls, fails = calls + (tonumber(t[2]) or 0), fails + (tonumber(t[3]) or 0)
   end
   local out = { title("Tools", w, calls > 0 and string.format("%s calls · %s failed", num(calls), num(fails)) or nil) }
+  if d.model_filter then out[#out + 1] = { { "  unfiltered by model (not attributable)", "Dim" } } end
   if #d.tools == 0 then
     out[#out + 1] = { { "  no tool calls in this period", "Dim" } }
     return out
@@ -612,7 +658,7 @@ local function calendar(d, w)
     max = math.max(max, d.daily[keys[i]] or 0)
   end
   local cur, best, active = streaks(d.daily)
-  local out = { title("Activity", w, string.format("streak %dd · best %dd · %d day%s", cur, best, active, active == 1 and "" or "s")) }
+  local out = { title("Activity · all time", w, string.format("streak %dd · best %dd · %d day%s", cur, best, active, active == 1 and "" or "s")) }
   -- Month names over the week a month starts in.
   local axis = {}
   for i = 1, 4 + weeks * 2 do
@@ -640,6 +686,7 @@ local function calendar(d, w)
         add("  ", "Normal")
       else
         add("■ ", heat(d.daily[k], max))
+        hit(l, 5 + wk * 2, 5 + wk * 2, { range = { from = parse_date(k), to = midnight(parse_date(k), -1) } }, k)
       end
     end
     out[#out + 1] = l
@@ -671,6 +718,7 @@ local function sessions(d, w)
       add(lpad(cut(tostring(s[2] or ""):match("[^/]+$") or "", dir_w), dir_w), "ToolPath")
     end
     out[#out + 1] = l
+    if s[5] then hit(l, 1, w, { session = { s[5], s[1] } }, s[1]) end
   end
   return out
 end
@@ -686,6 +734,11 @@ local function beside(left, lw, right, gap)
     l[#l + 1] = { string.rep(" ", lw - line_width(left[i] or {}) + gap), "Normal" }
     for _, sp in ipairs(right[i] or {}) do
       l[#l + 1] = sp
+    end
+    for _, side in ipairs({ { left[i], 0 }, { right[i], lw + gap } }) do
+      for _, v in ipairs(side[1] and side[1].hits or {}) do
+        hit(l, v.x + side[2], v.last + side[2], v.action, v.label)
+      end
     end
     out[#out + 1] = l
   end
@@ -707,9 +760,7 @@ local function body(d, r, w, h)
   local out = {}
   local inner = w - 2
   if d.conversation then
-    append(out, { title("Current conversation", inner, "lifetime · r refresh") })
-    append(out, cards(d.conversation, { bucket = "day" }, inner))
-    append(out, { title("All conversations", inner, r.label) }, true)
+    append(out, { { { "Current: this chat, all time (unfiltered)", "Dim" } }, { { d.filtered and "All: filtered chats, selected period" or "All: all chats, selected period", "Dim" } } })
   end
   append(out, cards(d, r, inner))
   local two = inner >= 110
@@ -733,6 +784,7 @@ local function body(d, r, w, h)
   end
   for _, l in ipairs(out) do
     table.insert(l, 1, { " ", "Normal" })
+    for _, v in ipairs(l.hits or {}) do v.x, v.last = v.x + 1, v.last + 1 end
   end
   return out
 end
@@ -748,7 +800,7 @@ end
 
 local function open(period, custom)
   setup_colors()
-  local st = { period = period, custom = custom, scroll = 0, gen = 0 }
+  local st = { period = period, custom = custom, scroll = 0, gen = 0, filters = {} }
   local id
 
   local function redraw()
@@ -758,15 +810,17 @@ local function open(period, custom)
   end
 
   local function load(refresh)
+    st.focus = nil
     st.gen = st.gen + 1
     local gen = st.gen
     local r = span(st.period, st.custom)
     st.loading, st.err = true, nil
     local results, pending, failed = {}, 0, nil
     local session_id = (bone.chat.session() or {}).session_id
-    local qs = queries(r, session_id)
-    -- Activity is period-independent; refresh it explicitly or on a new day.
-    local day = ymd(os.time())
+    local qs = queries(r, session_id, st.filters)
+    -- Activity ignores the period, but follows model/session filters.
+    local f = st.filters
+    local day = ymd(os.time()) .. ":" .. (f.session and f.session[1] or "") .. ":" .. (f.model and table.concat(f.model, "\0") or "")
     if not refresh and st.daily_day == day then
       results.daily, qs.daily = st.daily_rows, nil
     end
@@ -781,6 +835,11 @@ local function open(period, custom)
         params = { 0, os.time() + DAY }
       elseif name == "conversation" then
         params = { session_id }
+      end
+      if name ~= "conversation" then
+        -- Numbered placeholders leave gaps when only one filter is active.
+        if f.session or (f.model and name ~= "tools") then params[3] = f.session and f.session[1] or "" end
+        if f.model and name ~= "tools" then params[4], params[5] = f.model[1], f.model[2] end
       end
       bone.request("store/query", { sql = sql, params = params }, function(res, err)
         if gen ~= st.gen then
@@ -813,6 +872,8 @@ local function open(period, custom)
           daily = {},
           sessions = results.sessions,
           tools = results.tools,
+          filtered = f.session or f.model,
+          model_filter = f.model,
         }
         for _, row in ipairs(results.series) do
           data.series[tostring(row[1])] = { row[2], row[3] }
@@ -841,16 +902,32 @@ local function open(period, custom)
     tab(" ")
     for i, p in ipairs(PERIODS) do
       local on = not st.custom and st.period == p
+      local x = line_width(l2) + 1
       tab(" " .. i .. " ", on and "Accent" or "Dim")
       tab(TITLES[p] .. " ", on and "Selection" or "Normal")
       tab(" ")
+      hit(l2, x, line_width(l2), { period = p }, TITLES[p])
     end
     local dates = st.custom and (r.label .. " ") or "Dates "
     if line_width(l2) + 3 + width(dates) <= w then
+      local x = line_width(l2) + 1
       tab(" t ", st.custom and "Accent" or "Dim")
       tab(dates, st.custom and "Selection" or "Normal")
+      hit(l2, x, line_width(l2), { dates = true }, "Dates")
     end
-    return { l1, l2, { { string.rep("─", w), "WinSeparator" } } }
+    local out = { l1, l2 }
+    for _, kind in ipairs({ "range", "model", "session", "clear" }) do
+      local f = st.filters[kind]
+      if kind == "range" then f = st.custom end
+      if f or (kind == "clear" and (st.custom or next(st.filters))) then
+        local label = kind == "range" and r.label or (kind == "model" and (f[1] .. "/" .. f[2]) or (kind == "session" and f[2] or "Clear all"))
+        local l = { { " [" .. cut(label, w - 6) .. (kind == "clear" and "]" or " ×]"), "Accent" } }
+        hit(l, 2, math.min(line_width(l), w), { remove = kind }, label)
+        out[#out + 1] = l
+      end
+    end
+    out[#out + 1] = { { string.rep("─", w), "WinSeparator" } }
+    return out
   end
 
   local function footer(w)
@@ -863,7 +940,8 @@ local function open(period, custom)
     elseif st.note then
       add(" " .. st.note, "ErrorMsg")
     else
-      local hints = { { "1-5 ←→", "period" }, { "t", "dates" }, { "j/k", "scroll" }, { "r", "refresh" }, { "q", "close" } }
+      local hints = { { "Tab/Enter", "filter" }, { "c", "clear" }, { "1-5 ←→", "period" }, { "t", "dates" }, { "j/k", "scroll" }, { "r", "refresh" }, { "q", "close" } }
+      if st.focus then add(" " .. cut(st.focus.label, math.floor(w / 3)), "Selection") end
       for i, h in ipairs(hints) do
         if line_width(l) + 3 + width(h[1] .. " " .. h[2]) > w then
           break
@@ -898,11 +976,54 @@ local function open(period, custom)
     end
     st.max_scroll = math.max(#lines - view_h, 0)
     st.scroll = math.max(0, math.min(st.scroll, st.max_scroll))
+    st.targets, st.visible = {}, {}
+    local seen = {}
+    local function collect(line, row, body_row)
+      for _, v in ipairs(line.hits or {}) do
+        if v.x <= ctx.width then
+          local a = v.action
+          local key = a.period or (a.dates and "dates") or (a.remove and "remove:" .. a.remove)
+            or (a.model and "model:" .. table.concat(a.model, "\0")) or (a.session and "session:" .. a.session[1])
+            or ("range:" .. a.range.from .. ":" .. a.range.to)
+          local target = { x = v.x, last = math.min(v.last, ctx.width), action = v.action, label = v.label, key = key, body_row = body_row }
+          if not seen[key] then st.targets[#st.targets + 1], seen[key] = target, true end
+          if row then
+            st.visible[row] = st.visible[row] or {}
+            st.visible[row][#st.visible[row] + 1] = target
+          end
+        end
+      end
+    end
+    for row, line in ipairs(out) do collect(line, row) end
+    for row, line in ipairs(lines) do
+      local visible = row > st.scroll and row <= st.scroll + view_h
+      collect(line, visible and (#out + row - st.scroll) or nil, row)
+    end
+    st.view_h = view_h
+    if st.focus then
+      local focus
+      for _, v in ipairs(st.targets) do if v.key == st.focus.key then focus = v; break end end
+      st.focus = focus
+    end
     for i = st.scroll + 1, st.scroll + view_h do
       out[#out + 1] = lines[i] or {}
     end
     for _, l in ipairs(footer(w)) do
       out[#out + 1] = l
+    end
+    -- Highlight overlapping spans without changing the cached page.
+    for row, targets in pairs(st.visible) do
+      for _, v in ipairs(targets) do
+        if st.focus and v.key == st.focus.key then
+          local l, col = {}, 1
+          for _, sp in ipairs(out[row]) do
+            local n = width(sp[1])
+            l[#l + 1] = { sp[1], col <= v.last and col + n > v.x and "Selection" or sp[2] }
+            col = col + n
+          end
+          out[row] = l
+        end
+      end
     end
     return out
   end
@@ -914,6 +1035,25 @@ local function open(period, custom)
     end
   end
 
+  local function activate(a)
+    if st.loading or st.input then return end
+    st.focus = nil
+    if a.period then return set_period(a.period) end
+    if a.dates then
+      local r = st.span or span(st.period, st.custom)
+      st.input = (r.from > 0 and ymd(r.from) or "") .. ".." .. ymd(r.to - 1)
+      return redraw()
+    end
+    if a.range then st.custom = a.range
+    elseif a.remove then
+      if a.remove == "range" then st.custom = nil
+      elseif a.remove == "clear" then st.custom, st.filters = nil, {}
+      else st.filters[a.remove] = nil end
+    elseif a.model then st.filters.model = a.model
+    elseif a.session then st.filters.session = a.session end
+    st.scroll = 0
+    load()
+  end
   local SHORT = { d = "today", w = "week", m = "month", y = "year", a = "all" }
   local function on_key(k)
     st.note = nil
@@ -946,6 +1086,19 @@ local function open(period, custom)
     end
     if k == "esc" or k == "q" or k == "ctrl+c" then
       bone.ui.close(id)
+    elseif k == "tab" or k == "shift+tab" then
+      local targets, idx = st.targets or {}, 0
+      for i, v in ipairs(targets) do if st.focus and v.key == st.focus.key then idx = i end end
+      if #targets > 0 then
+        if idx == 0 and k == "shift+tab" then idx = 1 end
+        st.focus = targets[((idx + (k == "tab" and 1 or -1) - 1) % #targets) + 1]
+        local row = st.focus.body_row
+        if row then st.scroll = math.max(0, math.min(st.scroll, row - 1)); st.scroll = math.max(st.scroll, row - st.view_h) end
+      end
+    elseif k == "enter" and st.focus then
+      activate(st.focus.action)
+    elseif k == "c" then
+      activate({ remove = "clear" })
     elseif k:match("^[1-5]$") then
       set_period(PERIODS[tonumber(k)])
     elseif SHORT[k] then
@@ -985,6 +1138,23 @@ local function open(period, custom)
     width = 10000,
     height = 10000,
   })
+  local mouse, closed
+  mouse = bone.on("mouse", function(ev)
+    if ev.popup ~= id or not ev.popup_focused then return end
+    if ev.button == "left" and ev.action == "down" then
+      for _, v in ipairs((st.visible or {})[ev.popup_row] or {}) do
+        if ev.popup_col >= v.x and ev.popup_col <= v.last then activate(v.action); break end
+      end
+    end
+    return true
+  end)
+  closed = bone.on("panel/closed", function(ev)
+    if ev.id == id then
+      st.gen = st.gen + 1
+      bone.off(mouse)
+      bone.off(closed)
+    end
+  end)
   return id
 end
 

@@ -7,7 +7,7 @@ sql = subprocess.check_output(
 )
 original = """
 SELECT coalesce(s.renamed, s.title, '(untitled)'), s.cwd,
-       sum(u.input_tokens + u.output_tokens), count(*)
+       sum(u.input_tokens + u.output_tokens), count(*), s.id
 FROM usage u JOIN sessions s ON s.id = u.session_id
 WHERE u.at >= ?1 AND u.at < ?2
 GROUP BY u.session_id ORDER BY sum(u.input_tokens + u.output_tokens) DESC LIMIT 6
