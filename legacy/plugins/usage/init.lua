@@ -1,128 +1,47 @@
-local function comma(n)
-  n = math.floor(tonumber(n) or 0)
-  local s = tostring(n)
-  local sign = ""
-  if s:sub(1, 1) == "-" then
-    sign = "-"
-    s = s:sub(2)
-  end
-  local out = s
-  while true do
-    local next_out, changed = out:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
-    out = next_out
-    if changed == 0 then break end
-  end
-  return sign .. out
+local data = require("usage_data")
+local view = require("usage_view")
+local page = require("ui.page")
+local function open() return page.open("usage", "stats", {mode=2, scroll=0}) end
+for _, name in ipairs({"stats", "usage"}) do
+   bone.command.register(name, {description="open full-screen token stats dashboard", handler=open})
 end
-
-local tokens = comma
-
-local function money(n)
-  n = tonumber(n) or 0
-  if n <= 0 then return nil end
-  return string.format("$%.4f", n)
-end
-
-local DIM   = "\x1b[2m"
-local CYAN  = "\x1b[36m"
-local WHITE = "\x1b[37m"
-local RESET = "\x1b[0m"
-
-local function heading(title)
-  return string.format("%s%s%s", CYAN, title, RESET)
-end
-
-local function klabel(label)
-  return string.format("%s%-14s%s", DIM, label .. ":", RESET)
-end
-
-local function kvalue(v)
-  return string.format("%s%s%s", WHITE, v, RESET)
-end
-
-local function kdim(v)
-  return string.format("%s%s%s", DIM, v, RESET)
-end
-
-local function sep()
-  return string.format("%s%s%s", DIM, string.rep("─", 52), RESET)
-end
-
-bone.command.register("usage", {
-  description = "Show token usage for current conversation",
-  handler = function(_, ctx)
-    local usage = ctx.usage and ctx.usage.snapshot and ctx.usage.snapshot() or nil
-    if not usage then
-      return { display = "Usage data is unavailable in this context.", submit = false }
-    end
-
-    local total = (usage.sent or 0) + (usage.received or 0)
-    local lines = {
-      heading("Conversation usage"),
-      sep(),
-      klabel("Requests") .. kvalue(comma(usage.request_count)),
-      klabel("Tokens")   .. kvalue(tokens(total) .. " total"),
-      klabel("Input")    .. kvalue(tokens(usage.sent)),
-      klabel("Output")   .. kvalue(tokens(usage.received)),
-      klabel("Context")  .. kvalue(tokens(usage.context_length) .. " current"),
-    }
-
-    local sent = usage.sent or 0
-    local cached = usage.cached or 0
-    if sent > 0 or cached > 0 then
-      table.insert(lines, klabel("Cached") .. kvalue(tokens(cached)))
-      local cache_rate = sent > 0 and (cached * 100 / sent) or 0
-      table.insert(lines, klabel("Cache rate") .. kvalue(string.format("%.1f%% of input", cache_rate)))
-      if cached > 0 and cached < sent then
-        table.insert(lines, klabel("New input") .. kvalue(tokens(sent - cached)))
-      end
-    end
-    local cost = money(usage.cost)
-    if cost then
-      table.insert(lines, klabel("Cost") .. kvalue(cost))
-    end
-    if (usage.request_count or 0) > 0 then
-      table.insert(lines, klabel("Avg/req") .. kvalue(tokens((usage.sent or 0) / usage.request_count) .. " in / " .. tokens((usage.received or 0) / usage.request_count) .. " out"))
-    end
-
-    table.insert(lines, "")
-    table.insert(lines, heading("Known prompt overhead"))
-    table.insert(lines, sep())
-    table.insert(lines, klabel("Tools")
-      .. kvalue(comma(usage.tool_count) .. " tools · ~" .. tokens(usage.tool_schema_tokens) .. " tokens"))
-    table.insert(lines, klabel("System")
-      .. kvalue("~" .. tokens(usage.system_prompt_tokens) .. " tokens"))
-
-    local overhead_tokens = (usage.tool_schema_tokens or 0)
-      + (usage.system_prompt_tokens or 0)
-    table.insert(lines, klabel("Known total") .. kvalue("~" .. tokens(overhead_tokens) .. " tokens"))
-
-    if usage.by_provider and #usage.by_provider > 1 then
-      table.insert(lines, "")
-      table.insert(lines, heading("By provider/model"))
-      table.insert(lines, sep())
-      for _, p in ipairs(usage.by_provider) do
-        local row = string.format(
-          "  %s / %s — %s in / %s out",
-          kdim(p.provider or "unknown"),
-          kvalue(p.model or "unknown"),
-          tokens(p.prompt_tokens),
-          tokens(p.completion_tokens)
-        )
-        if (p.cached_tokens or 0) > 0 then
-          local p_sent = p.prompt_tokens or 0
-          local p_rate = p_sent > 0 and (p.cached_tokens * 100 / p_sent) or 0
-          row = row .. " / " .. tokens(p.cached_tokens)
-            .. " cached (" .. string.format("%.1f%%", p_rate) .. ")"
-        end
-        local provider_cost = money(p.cost)
-        if provider_cost then
-          row = row .. " / " .. kvalue(provider_cost)
-        end
-        table.insert(lines, row)
-      end
-    end
-
-    return { display = table.concat(lines, "\n"), submit = false }
-  end,
-})
+page.register("usage", "stats", function(event, ctx)
+   local s = event.state
+   if type(s) ~= "table" then s = {} end
+   s.mode, s.scroll = s.mode or 2, s.scroll or 0
+   local key = event.key
+   local k = key and (key.code == "Char" and key.char or key.code)
+   local reload, custom = not s.data, s.custom
+   if s.picker then
+      local p = s.picker
+      local field = p.field == 1 and "start" or "finish"
+      if k == "Esc" then s.picker, s.error = nil, nil
+      elseif k == "Tab" or k == "BackTab" or k == "Up" or k == "Down" then p.field = 3-p.field
+      elseif k == "Backspace" then p[field] = p[field]:sub(1,-2)
+      elseif k == "Enter" then custom, reload = {start=p.start, finish=p.finish}, true
+      elseif k and k:match("^[%d%-]$") and #p[field] < 10 then p[field] = p[field] .. k end
+   elseif k == "q" or k == "Esc" then
+      return {close=true}
+   elseif k == "t" then
+      local activity = s.data and s.data.activity or {}
+      s.picker = {start=activity[1] and activity[1].label or "", finish=activity[#activity] and activity[#activity].label or "", field=1}
+   elseif k == "r" then reload = true
+   elseif k == "Down" or k == "j" then s.scroll = s.scroll+1
+   elseif k == "Up" or k == "k" then s.scroll = math.max(s.scroll-1,0)
+   elseif k == "PageDown" then s.scroll = s.scroll+8
+   elseif k == "PageUp" then s.scroll = math.max(s.scroll-8,0)
+   else
+      local mode = ({d=1,w=2,m=3,y=4,a=5,["1"]=1,["2"]=2,["3"]=3,["4"]=4,["5"]=5})[k]
+      if k == "Left" or k == "h" then mode = (s.mode+3)%5+1 end
+      if k == "Right" or k == "l" then mode = s.mode%5+1 end
+      if mode then s.mode,s.scroll,custom,reload = mode,0,nil,true end
+   end
+   if reload then
+      local ok, result = pcall(data.load, ctx, s.mode, custom)
+      if ok then
+         s.data,s.custom,s.picker,s.error,s.refreshed = result,custom,nil,nil,os.time()
+         s.scroll = 0
+      else s.error = tostring(result) end
+   end
+   return {state=s,body=view.draw(event,s)}
+end)

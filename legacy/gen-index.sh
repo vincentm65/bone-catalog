@@ -34,11 +34,11 @@ extract_desc() {
   # descriptions before its registered tool/command description.
   local d
   d=$(grep -oE 'catalog_description[[:space:]]*=[[:space:]]*"[^"]*"' "$file" | head -1 \
-        | sed -E 's/.*catalog_description[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
+        | sed -E 's/.*catalog_description[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/' || true)
   if [[ -n "$d" ]]; then printf '%s' "$d"; return; fi
   # Prefer `description = "..."`.
   d=$(grep -oE 'description[[:space:]]*=[[:space:]]*"[^"]*"' "$file" | head -1 \
-        | sed -E 's/.*description[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/')
+        | sed -E 's/.*description[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/' || true)
   if [[ -n "$d" ]]; then printf '%s' "$d"; return; fi
   # Else the first non-empty `--` comment line.
   grep -m1 -E '^\s*--' "$file" | sed -E 's/^\s*-+\s*//'
@@ -54,10 +54,15 @@ for init in plugins/*/init.lua; do
   name=$(basename "$pkg")
   desc=$(extract_desc "$init" | json_escape)
   sha=$(sha256sum "$init" | cut -d' ' -f1)
+  version="$VERSION"
+  min_bone_version="$MIN_BONE_VERSION"
+  if [[ -f "$pkg/manifest.json" ]]; then
+    read -r version min_bone_version < <(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m.get("version",sys.argv[2]),m.get("min_bone_version",sys.argv[3]))' "$pkg/manifest.json" "$VERSION" "$MIN_BONE_VERSION")
+  fi
   if [[ $first -eq 0 ]]; then echo "," >> "$out"; fi
   first=0
   printf '  { "name": %s, "kind": "plugin", "description": %s, "version": "%s", "min_bone_version": "%s", "sha256": "%s"' \
-    "\"$name\"" "$desc" "$VERSION" "$MIN_BONE_VERSION" "$sha" >> "$out"
+    "\"$name\"" "$desc" "$version" "$min_bone_version" "$sha" >> "$out"
   # Bundled files: everything in the package besides init.lua, sorted,
   # published under its scoped path (plugins/<name>/...).
   bundled_files=()

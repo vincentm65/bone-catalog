@@ -39,6 +39,14 @@ local function config(values)
 end
 
 assert(loadfile("plugins/compact/init.lua"))()
+package.path = "plugins/usage/?.lua;" .. package.path
+local usage_page
+package.preload["ui.page"] = function()
+   return {
+      open = function(name, title, state) return { action="ui.page", page={name=name,title=title,state=state} } end,
+      register = function(name, title, render) usage_page=render end,
+   }
+end
 assert(loadfile("plugins/usage/init.lua"))()
 
 assert(commands.compact, "compact command was not registered")
@@ -676,44 +684,12 @@ assert(shrinking_auto_result and shrinking_auto_result.action == "conversation.r
 assert(nonshrinking_auto_calls == 2,
    "non-shrinking output should not trigger extra summarization calls")
 
-local usage_snapshot = {
-   request_count = 1,
-   sent = 100,
-   received = 25,
-   cached = 40,
-   context_length = 80,
-   tool_count = 2,
-   tool_schema_tokens = 10,
-   tool_schema_chars = 38,
-   system_prompt_tokens = 20,
-   system_prompt_chars = 76,
-}
-local function usage_ctx(files)
-   return {
-      config_dir = "/config",
-      cwd = "/work/project",
-      fs = { is_file = function(path) return files and files[path] ~= nil end },
-      read_file = function(path) return files[path] end,
-      usage = { snapshot = function() return usage_snapshot end },
-   }
+for _, name in ipairs({"usage", "stats"}) do
+   local opened=commands[name].handler()
+   assert(opened.action=="ui.page" and opened.page.name=="usage")
+   assert(opened.page.state.mode==2)
 end
-
-local usage = commands.usage.handler(nil, usage_ctx())
-local function plain(text)
-   return text:gsub("\27%[[0-9;]*m", "")
-end
-assert(usage.submit == false)
-assert(usage.display:find("Conversation usage", 1, true))
-assert(usage.display:find("125 total", 1, true))
-assert(plain(usage.display):find("Cached:       40", 1, true))
-assert(plain(usage.display):find("Cache rate:   40.0% of input", 1, true))
-assert(plain(usage.display):find("New input:    60", 1, true))
-assert(plain(usage.display):find("Tools:        2 tools · ~10 tokens", 1, true))
-assert(plain(usage.display):find("System:       ~20 tokens", 1, true))
-assert(plain(usage.display):find("Known total:  ~30 tokens", 1, true),
-   "prompt total should include tool and system overhead")
-assert(not plain(usage.display):find("chars", 1, true),
-   "prompt overhead should omit noisy character counts")
+assert(usage_page({state={},key={code="Char",char="q"}},{}).close)
 
 local loaded_themes = {}
 local previewed_themes = {}
