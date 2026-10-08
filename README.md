@@ -49,13 +49,12 @@ catalog core half through that headless binary:
 BONE_BIN=/path/to/bone3 python3 runtime-check.py
 ```
 
-Check task-loop isolation in both plugin halves and through concurrent Bone 3
-turns (a local scripted provider, with no model calls):
+Check the `todo` tool and drawer (the tmux test requires `tmux`):
 
 ```sh
-luajit tests/task_loop_test.lua
-BONE_BIN=/path/to/bone3 python3 tests/task_loop_runtime_test.py
-BONE_BIN=/path/to/bone3 python3 tests/task_loop_tmux_test.py
+luajit tests/todo_test.lua
+BONE_BIN=/path/to/bone3 python3 tests/todo_runtime_test.py
+BONE_BIN=/path/to/bone3 python3 tests/todo_tmux_test.py
 ```
 
 The previous catalog, including its index, packages and tests, is archived under

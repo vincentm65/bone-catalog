@@ -145,37 +145,6 @@
     ]
   },
   {
-    "name": "goal",
-    "kind": "plugin",
-    "version": "1.0.0",
-    "description": "Run and inspect an autonomous goal loop",
-    "min_bone_version": "0.1.0",
-    "capabilities": [
-      "tool",
-      "hooks",
-      "queue",
-      "state"
-    ],
-    "files": [
-      {
-        "path": "README.md",
-        "sha256": "96f18c692ae33674bf2c552c7154fc34a0835bd0f765832e6756557614ad220d"
-      },
-      {
-        "path": "core.lua",
-        "sha256": "8a5bda60534116e2b61d3f655c7d23837cbca3aeac3e76aa24f65ec4f6b97acd"
-      },
-      {
-        "path": "manifest.json",
-        "sha256": "1d0f67b665e55aa72e1103f750dff891be43c0abe95736b81cf957cac7499494"
-      },
-      {
-        "path": "tui.lua",
-        "sha256": "29b52088104a3caac2ffd1f1b4b3cf5f0421ae8c9b86ae81eee05d375111e42d"
-      }
-    ]
-  },
-  {
     "name": "history",
     "kind": "plugin",
     "version": "1.0.0",
@@ -350,7 +319,7 @@
   {
     "name": "subagent",
     "kind": "plugin",
-    "version": "2.0.0",
+    "version": "2.2.0",
     "description": "Delegate tasks to sub-agents that run in sessions of their own",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -359,51 +328,19 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "24ec6f09490b59e0b329d2cf1454a77683ddd72f1a886754e5be9f6b85430321"
+        "sha256": "60d350b4b442821be268d3ba9ea7dafd330fd2a5c8f9085f32cc9a34534bcb09"
       },
       {
         "path": "core.lua",
-        "sha256": "2ee4abab22f6228e261229cdb10c23294996c41759f7f472bce4a098dbfcd284"
+        "sha256": "970e329fe191f2bc5b69ab2e8268cfc7be7d777fb3ffc573058ffe0926425461"
       },
       {
         "path": "manifest.json",
-        "sha256": "5d46211ce6a3ecbd930969bd5ce963d968599ca2c94cc4ea6dc658d4db59d5c5"
-      }
-    ]
-  },
-  {
-    "name": "task_loop",
-    "kind": "plugin",
-    "version": "1.1.0",
-    "description": "Maintain a visible autonomous checklist per session and continue it between turns",
-    "min_bone_version": "0.1.0",
-    "capabilities": [
-      "tool",
-      "hooks",
-      "queue",
-      "state",
-      "ui"
-    ],
-    "files": [
-      {
-        "path": "README.md",
-        "sha256": "171cbc66712fb8f380aa4b9a634753c0395c44a08fcf27933338b650ca0d2885"
-      },
-      {
-        "path": "core.lua",
-        "sha256": "e47a3d74cbc7d5cb157f68cf8f1af810540bfc2700ba4137065e40ad47d8d1e4"
-      },
-      {
-        "path": "lua/task_loop/state.lua",
-        "sha256": "29d12cdb55cc97aa1e26e1693b19ead5f68ed8e72e107d870d8ac355a5915753"
-      },
-      {
-        "path": "manifest.json",
-        "sha256": "70c6247159ffbacac3b770a35cc555c21b2c77cce319954c4b16a3e7a59d7898"
+        "sha256": "9592b070f5ba2f7c5424431940a85da2ab4cf62a207a3ed4c741134fc82e9219"
       },
       {
         "path": "tui.lua",
-        "sha256": "9fa73dd3c38cb3ace9aed0d80c793a4a84dc6c7b5fac75002c62978752916779"
+        "sha256": "b9863b486c6e7d71a397c989c607624b4d727e6829518e5117a2ccda37b102ed"
       }
     ]
   },
@@ -473,6 +410,35 @@
       {
         "path": "tui.lua",
         "sha256": "2dab9af5a54a05bd5293285608a8bdd09c99d957fbb9fd92babe48c80c6b97bd"
+      }
+    ]
+  },
+  {
+    "name": "todo",
+    "kind": "plugin",
+    "version": "1.0.0",
+    "description": "A checklist the model keeps for multi-step work, shown in a drawer under the chat it belongs to",
+    "min_bone_version": "0.1.0",
+    "capabilities": [
+      "tool",
+      "ui"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "7d021429104a3c90e1c942354eeef1e54a939320ce4822fdf7b10e731b4f49ae"
+      },
+      {
+        "path": "core.lua",
+        "sha256": "3f0fb8d3b64211aecdbfb0b9e409a48941fe34d2bb19ebc80af0dee3e149c65b"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "9aa2e4f48cc563f3955a4331919e2f499ee87d20b8acab4dc736cdb758312bd0"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "0369ccfad5e593610ea1566f8226a5c6e64457d5aed28f067f774311bfe31892"
       }
     ]
   },

@@ -1,1 +1,41 @@
-{"version":"2.0.0","description":"Delegate tasks to sub-agents that run in sessions of their own","capabilities":["tool"]}
+{
+  "version": "2.2.0",
+  "description": "Delegate tasks to sub-agents that run in sessions of their own",
+  "capabilities": ["tool"],
+  "title": "Subagents",
+  "settings": [
+    {
+      "key": "max_depth",
+      "label": "Maximum nesting depth",
+      "type": "integer",
+      "default": 2,
+      "min": 0,
+      "desc": "0 disables delegation; 1 allows direct subagents only; 2 allows subagents to delegate once. Manage custom agents with /subagents."
+    },
+    {
+      "key": "allow_nested", "label": "Allow nested delegation", "type": "boolean",
+      "default": true, "desc": "When off, only the main agent can delegate. Maximum depth still applies."
+    },
+    {
+      "key": "max_concurrent", "label": "Maximum concurrent subagents", "type": "integer",
+      "default": 8, "min": 0,
+      "desc": "Global limit across sessions, including nested agents. Extra calls fail instead of waiting; 0 means unlimited."
+    },
+    {
+      "key": "provider", "label": "Default provider", "type": "string", "default": "",
+      "desc": "Configured provider entry name; blank uses the session provider. Named agents can override this."
+    },
+    {
+      "key": "model", "label": "Default model", "type": "string", "default": "",
+      "desc": "Model ID for the selected provider; blank uses its configured model. Requires request-hook model support."
+    },
+    {
+      "key": "system", "label": "Default instructions", "type": "string", "default": "",
+      "desc": "Prepended to the normal system prompt; blank uses the built-in subagent role. Use /subagents for custom prompts."
+    },
+    {
+      "key": "tools", "label": "Allowed tools", "type": "string", "default": "",
+      "desc": "Comma-separated tool names. Blank or * allows all; none or [] allows none. Include subagent to permit nested delegation."
+    }
+  ]
+}
