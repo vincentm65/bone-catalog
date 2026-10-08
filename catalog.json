@@ -231,6 +231,36 @@
     ]
   },
   {
+    "name": "md",
+    "kind": "plugin",
+    "version": "1.0.0",
+    "description": "Search project Markdown files and read themed previews in a large popup",
+    "min_bone_version": "0.1.0",
+    "capabilities": [
+      "command",
+      "ui",
+      "system"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "d16d1397eca4332f6c831f714b59ee0bfe7b4bb5dfdab66e24fef694984252a6"
+      },
+      {
+        "path": "lua/md_browser.lua",
+        "sha256": "6fcd2cea471a912610b5abb2deb5fad7140d8b19168b141c765e67238e01d86f"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "38516b25f0d49f7dc3045a04d312a11439cbcaedd8d127a6370fce8aade18d94"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "fba745facce78a9a4de2217cbe26d7c7849601ef62fb7e806e9f16009e642e26"
+      }
+    ]
+  },
+  {
     "name": "recap",
     "kind": "plugin",
     "version": "1.0.0",
