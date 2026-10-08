@@ -30,6 +30,31 @@
     ]
   },
   {
+    "name": "claude-code",
+    "kind": "plugin",
+    "version": "1.1.0",
+    "description": "Claude subscription model provider through your installed Claude Code CLI; Bone retains tools and approvals",
+    "min_bone_version": "3.0.0",
+    "capabilities": [
+      "provider",
+      "command"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "1e9b449bf6b63cf3593702d8d22b375c716ce417916c3d1f0dde391f238f065f"
+      },
+      {
+        "path": "core.lua",
+        "sha256": "637107cecf5c417529a7b50539f5686380c0c8ef8720802869720d7f2d2b2950"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "2a38289ef940fb345f70fa3157e9558b7ffc26b16c31b679b2f89ea28e7866de"
+      }
+    ]
+  },
+  {
     "name": "codex",
     "kind": "plugin",
     "version": "1.1.0",
