@@ -32,7 +32,7 @@
   {
     "name": "claude-code",
     "kind": "plugin",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "Claude subscription model provider through your installed Claude Code CLI; Bone retains tools and approvals",
     "min_bone_version": "3.0.0",
     "capabilities": [
@@ -42,40 +42,45 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "1e9b449bf6b63cf3593702d8d22b375c716ce417916c3d1f0dde391f238f065f"
+        "sha256": "fd1aabd8d0aeccdf9ee1ec90f96c792e27dc50d5d531664b7a687c70a1f52cdd"
       },
       {
         "path": "core.lua",
-        "sha256": "637107cecf5c417529a7b50539f5686380c0c8ef8720802869720d7f2d2b2950"
+        "sha256": "2f2dd56a5817c19179de0f143746affca65e36c7c57d0b72b80ae3871afef110"
       },
       {
         "path": "manifest.json",
-        "sha256": "2a38289ef940fb345f70fa3157e9558b7ffc26b16c31b679b2f89ea28e7866de"
+        "sha256": "4c95966e7ea07ec6e94d04b465a98e0df5f0e503f9b0382f85984196295ae59e"
       }
     ]
   },
   {
     "name": "codex",
     "kind": "plugin",
-    "version": "1.1.0",
+    "version": "1.3.4",
     "description": "Model provider for OpenAI's Responses API: your ChatGPT plan through the Codex CLI login, or an OpenAI API key",
     "min_bone_version": "0.1.0",
     "capabilities": [
       "provider",
+      "command",
       "network"
     ],
     "files": [
       {
         "path": "README.md",
-        "sha256": "dabb95769d629d398182c3cbaf803ada88eded0efe24fe6a1ec9825dd5eefda2"
+        "sha256": "2d8f2095a245f2a53a9abdcb55e1e7a24b1501150fd19a3419bb1c20f415b304"
       },
       {
         "path": "core.lua",
-        "sha256": "0addfd80bc5318efd7b7584908ad4b8cf6b6b14651781acf33674d2ad121e4dd"
+        "sha256": "ad5943cc1889142564ce5d5b026d49ca26bd63f15b5bc53b94c0292955e1b12d"
       },
       {
         "path": "manifest.json",
-        "sha256": "66e6f67b42f9c966febffff5758e785e8d06eda0c1246972f0b13c831ff94975"
+        "sha256": "376e07136892981b0687d7f1d7035c8a6dab9f6c8226929b0e19c1b65cd8a28c"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "d1b5d0e1bad533efd1b829a57145b75f2aa3d89f2da24b1b4eabc5146ea74437"
       }
     ]
   },
@@ -102,6 +107,40 @@
       {
         "path": "manifest.json",
         "sha256": "a9f680ec304fffe89732131eba42b33f2d2c773a4a104fb5b930491c99e87eeb"
+      }
+    ]
+  },
+  {
+    "name": "git-diff",
+    "kind": "plugin",
+    "version": "1.1.3",
+    "description": "Read-only Git diffs in a half-width right sidebar with a clickable file tree using Bone's diff styles",
+    "min_bone_version": "0.1.0",
+    "capabilities": [
+      "command",
+      "ui",
+      "system"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "31d9a424f1a6689fd208b555558617aeb7f59e41eab2a8ad37792918ec270b31"
+      },
+      {
+        "path": "lua/git_diff.lua",
+        "sha256": "ba8ce3fefa99ed6f1f9d144e01daedc6948b31ce41d46690d5aca4883b9334d6"
+      },
+      {
+        "path": "lua/git_diff_tree.lua",
+        "sha256": "c899b0ec80e3028dce5180342f1d07b8c989fc77c957eb9c2a7d2860f3e37944"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "8e20bfa3a2c9b6b69a603efd01d813aa95bb28bf5763af4c6b16946a492908cd"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "f7fec703e5ac7aaae38ae27c5adb3f85ed4b274961a397d4f13d36b0d035d2ab"
       }
     ]
   },

@@ -37,6 +37,8 @@ with open(os.environ['CLAUDE_TEST_CALLS'], 'a') as log:
     log.write('call\\n')
 args = sys.argv[1:]
 assert args[args.index('--tools') + 1] == ''
+assert args[args.index('--output-format') + 1] == 'stream-json'
+assert '--verbose' in args
 assert args[args.index('--setting-sources') + 1] == ''
 assert '--no-session-persistence' not in args
 assert 'ANTHROPIC_API_KEY' not in __import__('os').environ
@@ -90,7 +92,11 @@ elif scenario == 'turn-budget':
 cost_file = __import__('pathlib').Path('mock-cumulative-cost')
 cost = (float(cost_file.read_text()) if '--resume' in args and cost_file.exists() else 0) + .001
 cost_file.write_text(str(cost))
-print(json.dumps({'subtype': 'success', 'is_error': False, 'session_id': 'mock',
+# Multiple calls, repeated blocks, and a synthetic zero-usage message.
+for mid, n in [('first', 50), ('last', 80), ('last', 80), ('synthetic', 0)]:
+    print(json.dumps({'type': 'assistant', 'message': {'id': mid, 'usage': {
+        'input_tokens': 0, 'cache_read_input_tokens': n, 'cache_creation_input_tokens': 0}}}))
+print(json.dumps({'type': 'result', 'subtype': 'success' , 'is_error': False, 'session_id': 'mock',
   'structured_output': output, 'usage': {'input_tokens': 10, 'output_tokens': 5,
   'cache_read_input_tokens': 100, 'cache_creation_input_tokens': 20}, 'total_cost_usd': cost}))
 ''')
@@ -252,7 +258,7 @@ end)
             print('PASS: history-prefix and system-prompt resets in independent sessions', flush=True)
         elif a.scenario != 'happy':
             expected_error = {
-                'malformed': 'claude-code: CLI failed',
+                'malformed': 'claude-code: invalid CLI stream',
                 'unknown-tool': 'claude-code: invalid tool request',
                 'too-many-tools': 'claude-code: invalid tool request',
                 'object-tool-calls': 'claude-code: invalid tool request',
@@ -280,6 +286,7 @@ end)
                 assert u2['cache_read_input_tokens'] > 0, 'No cache hit on repeated stable prefix'
             else:
                 assert u2['cache_read_input_tokens'] == 100
+                assert u1['context_tokens'] == u2['context_tokens'] == 80
             third, u3 = turn(sid, 'Call the cache_probe tool once with word CACHE_OK, then reply with exactly its returned word.')
             assert third[-1]['content'].strip() == 'CACHE_OK', third[-1]
             assert any(m['role'] == 'tool' and m['content'] == 'CACHE_OK' for m in third), third

@@ -68,6 +68,8 @@ local turn_state = {}
 
 local function complete(req, emit)
   local o = req.options
+  local fast = bone.settings.get("codex.fast")
+  if fast == nil then fast = o.fast end
   local instructions, input = convert(req.messages)
   local last = req.messages[#req.messages]
   local sid = req.session_id
@@ -103,7 +105,7 @@ local function complete(req, emit)
     tool_choice = #tools > 0 and "auto" or nil,
     parallel_tool_calls = #tools > 0 and true or nil,
     prompt_cache_key = sid,
-    service_tier = o.fast and "priority" or nil,
+    service_tier = fast and "priority" or nil,
   }
   local headers = {
     ["authorization"] = "Bearer " .. token,
@@ -195,6 +197,45 @@ local function complete(req, emit)
 end
 
 bone.provider.register("codex", { complete = complete })
+
+-- Retry transient Codex failures after 1s, 2s, then 4s.
+-- The core only invokes this hook before text or reasoning has streamed.
+bone.hook("request_error", function(ev)
+  local err = ev.error or ""
+  if not err:find("codex:", 1, true) then return end
+
+  local transient =
+    err:find("An error occurred while processing your request", 1, true)
+    or err:find("codex: HTTP 429", 1, true)
+    or err:match("codex: HTTP 5%d%d")
+
+  if transient and ev.attempt <= 3 then
+    return { retry = 1000 * 2 ^ (ev.attempt - 1) }
+  end
+end)
+
+-- Fetch account quotas on the core; login credentials never reach the TUI.
+bone.rpc.register("codex.usage", function()
+  local token, account = codex_auth()
+  if not token then
+    error("codex: no login found; run `codex login` (usage requires a ChatGPT login, not an API key)", 0)
+  end
+  local res = bone.http({
+    url = "https://chatgpt.com/backend-api/wham/usage",
+    headers = { authorization = "Bearer " .. token, ["chatgpt-account-id"] = account },
+    timeout = 15000,
+  })
+  if not res then return nil end
+  if res.status ~= 200 then
+    error(res.status == 401 and "codex: login expired; run `codex` to refresh it"
+      or ("codex: usage request failed (HTTP " .. res.status .. ")"), 0)
+  end
+  local usage = decode(res.body)
+  if type(usage) ~= "table" then error("codex: invalid usage response", 0) end
+  -- Only expose quota fields, never account details or credentials.
+  return { plan_type = usage.plan_type, rate_limit = usage.rate_limit,
+    code_review_rate_limit = usage.code_review_rate_limit, credits = usage.credits }
+end)
 
 -- With a Codex login, list a `codex` provider unless settings.json already
 -- has one; core.lua loads after plugins and may change or replace it.

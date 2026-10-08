@@ -20,68 +20,49 @@ local function canonical(v)
   return "{" .. table.concat(out, ",") .. "}"
 end
 
--- Decode only member names: keep value ranges in the original CLI JSON so null,
--- empty arrays/objects and argument formatting survive Bone's Lua decoder.
+-- Scan already-decoded JSON for raw argument spans. Lua decoding alone loses
+-- null/empty-collection distinctions. Syntax validation belongs to bone.json.decode.
 local function raw_json(s)
   local pos = 1
-  local function invalid() error("claude-code: invalid tool request", 0) end
   local function space()
-    while s:sub(pos, pos):match("[ \t\r\n]") do pos = pos + 1 end
+    pos = s:find("[^ \t\r\n]", pos) or (#s + 1)
   end
   local function string_end()
-    local start = pos
+    local first = pos
     pos = pos + 1
     while pos <= #s do
       local ch = s:sub(pos, pos)
-      pos = pos + 1
-      if ch == '"' then return start, pos - 1 end
-      if ch == "\\" then pos = pos + 1 end
+      pos = pos + (ch == "\\" and 2 or 1)
+      if ch == '"' then return s:sub(first, pos - 1) end
     end
-    invalid()
+    error("claude-code: invalid tool request", 0)
   end
-  local value
-  value = function(depth)
-    if depth > 128 then invalid() end
+  local function value(depth)
+    if depth > 128 then error("claude-code: invalid tool request", 0) end
     space()
-    local node = { first = pos, kind = s:sub(pos, pos) }
+    local node = { first = pos, kind = s:sub(pos, pos), members = {} }
     if node.kind == "{" or node.kind == "[" then
-      local object = node.kind == "{"
-      local close = object and "}" or "]"
-      node.members = {}
+      local close = node.kind == "{" and "}" or "]"
       pos = pos + 1
       space()
-      if s:sub(pos, pos) ~= close then
-        while true do
-          local key
-          if object then
-            if s:sub(pos, pos) ~= '"' then invalid() end
-            local first, last = string_end()
-            key = bone.json.decode(s:sub(first, last))
-            space()
-            if s:sub(pos, pos) ~= ":" then invalid() end
-            pos = pos + 1
-          else key = #node.members + 1 end
-          node.members[key] = value(depth + 1)
+      while s:sub(pos, pos) ~= close do
+        local key = #node.members + 1
+        if node.kind == "{" then
+          key = bone.json.decode(string_end())
           space()
-          if s:sub(pos, pos) == close then break end
-          if s:sub(pos, pos) ~= "," then invalid() end
-          pos = pos + 1
-          space()
+          pos = pos + 1 -- colon (syntax was validated before scanning)
         end
+        node.members[key] = value(depth + 1)
+        space()
+        if s:sub(pos, pos) == "," then pos = pos + 1; space() end
       end
       pos = pos + 1
     elseif node.kind == '"' then string_end()
-    else
-      while pos <= #s and not s:sub(pos, pos):match("[ \t\r\n,%]%}]") do pos = pos + 1 end
-      if pos == node.first then invalid() end
-    end
+    else pos = s:find("[ \t\r\n,%]%}]", pos) or (#s + 1) end
     node.last = pos - 1
     return node
   end
-  local root = value(0)
-  space()
-  if pos <= #s then invalid() end
-  return root
+  return value(0)
 end
 
 local preamble = [[You are Bone's model backend. Native Claude Code tools are disabled.
@@ -179,7 +160,7 @@ local function complete(req, emit)
   sessions[sid] = s
   s.invocation = (s.invocation or 0) + 1
   local command = auth_env .. quote(o.executable or "claude")
-    .. " -p --output-format json --tools '' --strict-mcp-config --mcp-config '{\"mcpServers\":{}}'"
+    .. " -p --output-format stream-json --verbose --tools '' --strict-mcp-config --mcp-config '{\"mcpServers\":{}}'"
     .. " --setting-sources '' --settings '{\"disableAllHooks\":true}' --disable-slash-commands --no-chrome"
     .. " --effort " .. quote(o.reasoning_effort or "low")
     .. " --model " .. quote(o.model or "claude-haiku-5-5")
@@ -191,10 +172,27 @@ local function complete(req, emit)
     timeout = o.timeout_ms or 120000 })
   -- Never resume an interrupted/failed CLI transcript.
   if not r then discard(sid); return nil end
-  if r.timed_out then discard(sid); error("claude-code: timed out; no automatic retry", 0) end
-  local ok, doc = pcall(bone.json.decode, r.stdout or "")
-  if not ok or type(doc) ~= "table" then
-    discard(sid)
+  if r.timed_out then error("claude-code: timed out; no automatic retry", 0) end
+  -- Result usage sums all internal calls. Context comes from the last real
+  -- assistant message instead; repeated content blocks must not be summed.
+  local doc, result_json, context_tokens
+  for line in (r.stdout or ""):gmatch("[^\r\n]+") do
+    local ok, event = pcall(bone.json.decode, line)
+    if not ok or type(event) ~= "table" then
+        error("claude-code: invalid CLI stream", 0)
+    end
+    if event.type == "assistant" and type(event.message) == "table" then
+      local usage = event.message.usage
+      if type(usage) == "table" then
+        local n = (usage.input_tokens or 0) + (usage.cache_read_input_tokens or 0)
+          + (usage.cache_creation_input_tokens or 0)
+        if n > 0 then context_tokens = n end
+      end
+    elseif event.type == "result" then
+      doc, result_json = event, line
+    end
+  end
+  if not doc then
     error("claude-code: CLI failed (exit " .. tostring(r.code) .. "): " .. (r.stderr or ""):sub(1, 1000), 0)
   end
   local u = doc.usage or {}
@@ -206,25 +204,23 @@ local function complete(req, emit)
     cache_read_input_tokens = read, cache_creation_input_tokens = write,
     output_tokens = u.output_tokens or 0, total_cost_usd = cost, cli_session_cost_usd = doc.total_cost_usd,
     model_usage = doc.modelUsage, subtype = doc.subtype, turn_cost_usd = turn_cost[sid],
-    resumed = resumed, sent_messages = #delta, cli_turns = doc.num_turns }
+    context_tokens = context_tokens, resumed = resumed, sent_messages = #delta, cli_turns = doc.num_turns }
   if r.code ~= 0 or doc.is_error or doc.subtype ~= "success" then
-    discard(sid)
     error("claude-code: " .. tostring(doc.subtype or "CLI error") .. ": "
       .. tostring(doc.result or canonical(doc.errors or {})):sub(1, 1000) .. "; no automatic retry", 0)
   end
   local output = doc.structured_output
   if type(output) ~= "table" or type(output.response) ~= "string" or type(output.tool_calls) ~= "table" then
-    discard(sid)
     error("claude-code: missing structured response; no automatic retry", 0)
   end
-  local raw = raw_json(r.stdout)
+  local raw = raw_json(result_json)
   local structured = raw.kind == "{" and raw.members.structured_output
   local raw_calls = structured and structured.kind == "{" and structured.members.tool_calls
   if not raw_calls or raw_calls.kind ~= "[" or #raw_calls.members > 8 then
     error("claude-code: invalid tool request", 0)
   end
   local result = { content = output.response, tool_calls = {}, usage = {
-    input_tokens = (u.input_tokens or 0) + read + write, output_tokens = u.output_tokens or 0, cached_tokens = read } }
+    input_tokens = (u.input_tokens or 0) + read + write, output_tokens = u.output_tokens or 0, cached_tokens = read, context_tokens = context_tokens } }
   for i, call in ipairs(raw_calls.members) do
     local c = output.tool_calls[i]
     local arguments = call.kind == "{" and call.members.arguments
@@ -232,7 +228,7 @@ local function complete(req, emit)
       error("claude-code: invalid tool request", 0)
     end
     result.tool_calls[i] = { id = "cc_" .. tostring(doc.session_id or "call") .. "_" .. s.invocation .. "_" .. i,
-      name = c.name, arguments = r.stdout:sub(arguments.first, arguments.last) }
+      name = c.name, arguments = result_json:sub(arguments.first, arguments.last) }
   end
   if result.content ~= "" then emit({ text = result.content }) end
   s.cli_id = doc.session_id
