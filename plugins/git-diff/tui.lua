@@ -197,6 +197,7 @@ local function open()
       left = back,
       b = back,
       q = function(p) p:close() end,
+      ["ctrl+d"] = function(p) p:close() end,
     },
     on_close = close,
   })
