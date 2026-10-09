@@ -21,6 +21,16 @@ requires a Bone build supporting `bone.hl.set(..., { strikethrough = true })`
 and a terminal that supports SGR 9.
 The tool never makes the model keep working or queues another turn.
 
+While items are open, the `todo` result ends with a one-line nudge to mark
+items completed as they finish. If the model then runs 8 other tool calls
+without updating the list, the 8th result gets one extra line naming the
+open count and the in-progress item, e.g.
+`[todo: 3 open, in progress "wire up hook". Mark finished items completed.]`,
+and the count starts over. The line is part of that stored tool result, so
+the request prefix and prompt cache are untouched, and nothing is added
+while the list is fresh or finished. The count lives in memory per session;
+after a restart reminders resume with the next `todo` call.
+
 Drawer rendering and visibility do not change model messages or invalidate
 the chat render cache. Adding `title` changes the tool schema once on upgrade,
 so a provider may need to warm its prompt cache again; subsequent UI-only
