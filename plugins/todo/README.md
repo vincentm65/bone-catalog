@@ -6,9 +6,11 @@ list each time; each item has `text` and a `status` (`pending`,
 `in_progress` or `completed`). An optional `title` names the checklist;
 send it with every update.
 
-Nothing is stored. The list is the latest `todo` call in the chat's own
-history, so it never appears in another chat. Sub-agents start empty, and a
-fork keeps its parent's list. The drawer across the bottom of the chat on
+Nothing is stored. The list is the latest *finished, successful* `todo`
+call in the chat's own history, so it never appears in another chat and it
+survives any number of later tool calls. A call that is still running does
+not replace the previous list until it finishes. Sub-agents start empty, and
+a fork keeps its parent's list. The drawer across the bottom of the chat on
 screen shows that chat's list, with a blank row above its title and progress
 count. It hides when the list is empty or every item is completed. `/todo`
 shows an unfinished list again. The drawer is as tall as the list plus its

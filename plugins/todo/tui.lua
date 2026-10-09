@@ -1,5 +1,6 @@
--- Shows the on-screen chat's latest todo call in a drawer under it, and hides
--- when that chat has no unfinished list. /todo syncs it after switching chats.
+-- Shows the on-screen chat's latest finished todo call in a drawer under it,
+-- and hides when that chat has no unfinished list. /todo syncs it after
+-- switching chats.
 local MARK = { pending = "· ", in_progress = "▸ ", completed = "✓ " }
 local HL = { pending = "Normal", in_progress = "TodoActive", completed = "TodoDone" }
 local ICON_HL = { pending = "Dim", in_progress = "Accent", completed = "TodoCheck" }
@@ -9,22 +10,38 @@ bone.hl.set("TodoDone", { link = "Dim", strikethrough = true })
 bone.hl.set("TodoActive", { link = "Normal", bold = true })
 local panel
 
-local function list()
-  local calls = bone.chat.items({ kind = "tool", name = "todo", last = 5 }) or {}
+-- The latest finished, successful todo call in this chat's history. A still
+-- running call is skipped, so the drawer keeps the previous list until the
+-- new one finishes. No window limit: the list must survive any number of
+-- later tool calls. The render runs every frame, so probe only the newest
+-- call first: if it is finished and successful it alone decides, and the whole
+-- history is walked only while a call is running or failed.
+local function scan(calls)
   for i = #calls, 1, -1 do
     local c = calls[i]
-    local args = c.arguments
-    if c.done and not c.is_error and type(args) == "table" and type(args.items) == "table" then
-      local done = 0
-      for _, it in ipairs(args.items) do
-        if it.status == "completed" then done = done + 1 end
+    if c.done then
+      local args = c.arguments
+      if not c.is_error and type(args) == "table" and type(args.items) == "table" then
+        local done = 0
+        for _, it in ipairs(args.items) do
+          if it.status == "completed" then done = done + 1 end
+        end
+        -- Stop at the latest successful call, even if it clears/completes the list.
+        if done == #args.items then return nil end
+        local title = type(args.title) == "string" and args.title:gsub("%s+", " ") or ""
+        return args.items, "Todo " .. done .. "/" .. #args.items .. (title ~= "" and " — " .. title or "")
       end
-      -- Stop at the latest successful call, even if it clears/completes the list.
-      if done == #args.items then return nil end
-      local title = type(args.title) == "string" and args.title:gsub("%s+", " ") or ""
-      return args.items, "Todo " .. done .. "/" .. #args.items .. (title ~= "" and " — " .. title or "")
     end
   end
+end
+
+local function list()
+  local calls = bone.chat.items({ kind = "tool", name = "todo", last = 1 }) or {}
+  local c = calls[1]
+  if c and c.done and not c.is_error and type(c.arguments) == "table" and type(c.arguments.items) == "table" then
+    return scan({ c })
+  end
+  return scan(bone.chat.items({ kind = "tool", name = "todo" }) or {})
 end
 
 local function render()

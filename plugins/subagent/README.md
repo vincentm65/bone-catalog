@@ -31,18 +31,17 @@ Cancelled children retain their slots until their turns finish.
 
 ## Custom agents
 
-Use **`/subagents`** to add, edit, rename, and delete agents without writing Lua.
-Each has a name, description (advertised to the model), system prompt, provider,
-model, and allowed tools. `/subagents add reviewer` creates an agent;
-`/subagents reviewer` opens its editor.
+**`/subagents`** opens a popup: agents on the left, the selected one's settings
+on the right. Every change is saved at once.
 
-- Enter edits a field; arrows/Tab choose fields; **s** or **Ctrl+S** saves.
-- **d** deletes with confirmation; Esc backs out, confirming unsaved changes.
-- System prompts accept multiline paste, or typed `\n` escapes for newlines.
-- Blank optional fields inherit defaults. Tools `*` explicitly allows all even
-  with restricted defaults; `none` or `[]` explicitly allows no tools.
-- Provider means a configured entry name, not an API type; model is an optional
-  model ID for that entry. Blank provider/model fields inherit independently.
+- `n` creates an agent (a name, then its fields); `r` renames, `d` deletes.
+- Enter on an agent moves to its fields: description (advertised to the
+  model), system prompt, provider, model and allowed tools. Enter edits;
+  `x` clears a field so it inherits the default.
+- The system prompt takes multiple lines (enter adds one, ctrl+s saves).
+- Provider is picked from your configured providers.
+- Tools: comma-separated names, `*` for all, `none` for no tools.
+- `/subagents name` opens an agent, or starts creating it.
 
 Agents are stored as an object in `subagent.agents`. Saved agents override Lua
 agents with the same name. Changes are advertised on the next model request and

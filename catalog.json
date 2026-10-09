@@ -172,8 +172,8 @@
   {
     "name": "mcp",
     "kind": "plugin",
-    "version": "1.0.1",
-    "description": "Add local MCP servers and inspect their tools",
+    "version": "1.1.0",
+    "description": "Manage MCP servers: add, sign in (OAuth), reconnect and browse tools",
     "min_bone_version": "0.1.0",
     "capabilities": [
       "mcp",
@@ -183,7 +183,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "140e6d54d1af1679bcc45aa0b17dd6218482b1706fcd5297c78bc8178b00082f"
+        "sha256": "90dae6657f067fc7bf6f17a98db459761248aa45ea8535ae928347df41a5a133"
       },
       {
         "path": "core.lua",
@@ -191,11 +191,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "e6ee527173898623a333da382e96826d0f31f8057cb281bfce78906e74b15be7"
+        "sha256": "0d28bf7757f189524714058c77f54085d1f23d8933df11b7abe54a00dfb79b3d"
       },
       {
         "path": "tui.lua",
-        "sha256": "4ac5393e6a4fb59b089aa0b8d53095d25927917b748fb68a6b8486ca944c1c79"
+        "sha256": "a4459316f1afc1155ba4ba9e1aa1e9acb47051f02ef347dc6cda14ce42e6ec02"
       }
     ]
   },
@@ -319,7 +319,7 @@
   {
     "name": "subagent",
     "kind": "plugin",
-    "version": "2.2.0",
+    "version": "2.3.0",
     "description": "Delegate tasks to sub-agents that run in sessions of their own",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -328,7 +328,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "60d350b4b442821be268d3ba9ea7dafd330fd2a5c8f9085f32cc9a34534bcb09"
+        "sha256": "6953383c46728d2769510147e86c1d048618b479b6ad48a400d76cddb66917aa"
       },
       {
         "path": "core.lua",
@@ -336,11 +336,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "9592b070f5ba2f7c5424431940a85da2ab4cf62a207a3ed4c741134fc82e9219"
+        "sha256": "ed767e957945dba7fec8b31ca14a38bebe29a735ca55a4ecd54eae7338b874ca"
       },
       {
         "path": "tui.lua",
-        "sha256": "b9863b486c6e7d71a397c989c607624b4d727e6829518e5117a2ccda37b102ed"
+        "sha256": "cf871e80a74c1c1160a083be4cff4ba2ede8265ce2f85bdf475a9010a6c8aff1"
       }
     ]
   },
@@ -426,7 +426,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "7d021429104a3c90e1c942354eeef1e54a939320ce4822fdf7b10e731b4f49ae"
+        "sha256": "7ad6ca23ea3d3408fb1bd0d594345a7393f1d57c898b82aeb6d29a7088251576"
       },
       {
         "path": "core.lua",
@@ -438,7 +438,7 @@
       },
       {
         "path": "tui.lua",
-        "sha256": "0369ccfad5e593610ea1566f8226a5c6e64457d5aed28f067f774311bfe31892"
+        "sha256": "7ef8a7f21fe9d958ee17462e69fa2a3d83aa55f3a6b6ab40a48712fb6bf3b3cf"
       }
     ]
   },

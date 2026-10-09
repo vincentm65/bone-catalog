@@ -1,356 +1,366 @@
--- Plugin-owned named-agent editor. Blank optional fields inherit defaults;
--- tools '*' explicitly allows all, and 'none' / '[]' denies all. System prompts
--- use reversible \n / \t / \\ escapes; multiline paste preserves prompts.
+-- /subagents: a popup to create and tune named agents. Agents on the left,
+-- the selected one's settings on the right; every change is saved at once
+-- (subagent.agents in settings). Blank fields inherit the defaults.
 local PATH = "subagent.agents"
 local FIELDS = {
-  { "name", "Name" }, { "description", "Description" },
-  { "system", "System prompt" }, { "provider", "Provider" },
-  { "model", "Model" }, { "tools", "Allowed tools" },
+  { "description", "Description", "what the model reads to decide when to hand work to this agent" },
+  { "system", "System prompt", "instructions placed before the normal system prompt" },
+  { "provider", "Provider", "one of your configured providers (enter to pick)" },
+  { "model", "Model", "model ID on that provider" },
+  { "tools", "Allowed tools", "comma-separated names · * all tools · none no tools" },
 }
-local active_close
-local function trim(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
-local function copy(v)
-  if type(v) ~= "table" then return v end
-  local out = {}; for k, x in pairs(v) do out[k] = copy(x) end; return out
+local id, st
+
+local function trim(s)
+  return (s:gsub("^%s+", ""):gsub("%s+$", ""))
 end
-local function equal(a, b)
-  if type(a) ~= type(b) then return false end
-  if type(a) ~= "table" then return a == b end
-  for k, v in pairs(a) do if not equal(v, b[k]) then return false end end
-  for k in pairs(b) do if a[k] == nil then return false end end
-  return true
+
+local function message(err)
+  return type(err) == "table" and tostring(err.message or err.code) or tostring(err)
 end
-local function errtext(err)
-  return type(err) == "table" and tostring(err.message or err.code or "settings error") or tostring(err)
+
+local function redraw()
+  if id and bone.ui.is_open(id) then
+    bone.ui.update(id, {})
+  end
 end
-local function read_agents()
+
+local function note(text, bad)
+  st.note = text and { { text, bad and "ErrorMsg" or "Dim" } } or nil
+  redraw()
+end
+
+local function tools_text(list)
+  if list == nil then
+    return ""
+  end
+  return #list == 0 and "none" or table.concat(list, ", ")
+end
+
+local function parse_tools(text)
+  text = trim(text)
+  if text == "" then
+    return nil
+  elseif text == "none" or text == "[]" then
+    return {}
+  end
+  local list = {}
+  for tool in (text .. ","):gmatch("(.-),") do
+    tool = trim(tool)
+    if not tool:match("^[%w_*][%w_.:/-]*$") then
+      return nil, "tools are comma-separated names, * or none"
+    end
+    list[#list + 1] = tool
+  end
+  return list
+end
+
+local function names()
+  local out = {}
+  for name in pairs(st.agents) do
+    out[#out + 1] = name
+  end
+  table.sort(out)
+  return out
+end
+
+local function load()
   local agents = bone.settings.get(PATH)
-  if agents == nil then return {} end
-  if type(agents) ~= "table" then return nil, PATH .. " must be an object; refusing to overwrite it" end
-  for name, spec in pairs(agents) do
-    if type(name) ~= "string" or type(spec) ~= "table" then
-      return nil, PATH .. " must map names to agent objects; refusing to overwrite it"
-    end
-    for _, key in ipairs({ "description", "system", "provider", "model" }) do
-      if spec[key] ~= nil and type(spec[key]) ~= "string" then
-        return nil, "Invalid " .. key .. " for " .. name .. "; fix the saved settings first"
-      end
-    end
-    if spec.tools ~= nil then
-      if type(spec.tools) ~= "table" then return nil, "Invalid tools for " .. name end
-      local n = 0
-      for k, tool in pairs(spec.tools) do
-        n = n + 1
-        if type(k) ~= "number" or k < 1 or k % 1 ~= 0 or type(tool) ~= "string" or trim(tool) == "" then
-          return nil, "Tools for " .. name .. " must be a list of nonempty strings"
-        end
-      end
-      if n ~= #spec.tools then return nil, "Tools for " .. name .. " must be a dense list" end
-    end
+  if agents ~= nil and type(agents) ~= "table" then
+    return nil, PATH .. " is not an object; fix settings.json before editing agents"
   end
-  return copy(agents)
+  return agents or {}
 end
-local function encode(s)
-  return (s:gsub("\\", "\\\\"):gsub("\n", "\\n"):gsub("\r", "\\r"):gsub("\t", "\\t"))
-end
-local function decode(s)
-  return (s:gsub("\\(.)", function(c)
-    return ({ n = "\n", r = "\r", t = "\t", ["\\"] = "\\" })[c] or ("\\" .. c)
-  end))
-end
-local function draft(name, spec)
-  return { name = name or "", description = spec.description or "", system = spec.system or "",
-    provider = spec.provider or "", model = spec.model or "",
-    tools = spec.tools and (#spec.tools == 0 and "none" or table.concat(spec.tools, ", ")) or "" }
-end
-local function validate(d, original)
-  local name = trim(d.name)
-  if #name < 1 or #name > 64 or not name:match("^[%w][%w_-]*$") then
-    return nil, "Name: 1–64 ASCII letters/digits, '-' or '_'; start with a letter/digit"
+
+-- Write every agent back; the page keeps its in-memory copy on failure.
+local function save(done)
+  local function after(_, err)
+    note(err and ("not saved: " .. message(err)) or done, err ~= nil)
   end
-  local spec = copy(original or {})
-  for _, key in ipairs({ "description", "system", "provider", "model" }) do
-    local value = key == "system" and d[key] or trim(d[key])
-    spec[key] = trim(value) ~= "" and value or nil
+  if next(st.agents) == nil then
+    bone.settings.reset(PATH, after)
+  else
+    bone.settings.set(PATH, st.agents, after)
   end
-  local tools = trim(d.tools)
-  spec.tools = nil
-  if tools == "*" then spec.tools = { "*" }
-  elseif tools == "none" or tools == "[]" then spec.tools = {}
-  elseif tools ~= "" then
-    local list, seen = {}, {}
-    for tool in (tools .. ","):gmatch("(.-),") do
-      tool = trim(tool)
-      if tool == "" or not tool:match("^[%w_][%w_.:/-]*$") then
-        return nil, "Tools: comma-separated names, blank to inherit, '*' for all, 'none' / '[]' for none; no empty entries"
-      end
-      if not seen[tool] then list[#list + 1], seen[tool] = tool, true end
+end
+
+local function open_field(name, key)
+  local spec = st.agents[name]
+  local value = spec[key]
+  if key == "tools" then
+    value = tools_text(value)
+  end
+  st.input = { name = name, key = key, value = value or "" }
+  st.note = nil
+end
+
+local function accept()
+  local inp = st.input
+  local spec = st.agents[inp.name]
+  local value = inp.value
+  if inp.key == "tools" then
+    local list, err = parse_tools(value)
+    if err then
+      return note(err, true)
     end
     spec.tools = list
-  end
-  return name, spec
-end
--- UTF-8 byte boundaries: cursor is the byte position before the next character.
-local function previous(s, p)
-  p = math.max(1, p - 1)
-  while p > 1 and s:byte(p) >= 128 and s:byte(p) < 192 do p = p - 1 end
-  return p
-end
-local function following(s, p)
-  p = math.min(#s + 1, p + 1)
-  while p <= #s and s:byte(p) >= 128 and s:byte(p) < 192 do p = p + 1 end
-  return p
-end
-local function open(wanted, adding)
-  if active_close and not active_close(false) then return end
-  local agents, err = read_agents()
-  if not agents then return bone.notify(err, "error") end
-  local st = { agents = agents, names = {}, sel = 1, page = "list", rows = 10 }
-  local id, paste_event, opened_event, updated_event, closed_event, focus_event, closed
-  local popup_focus, popup_z, focus_popup = {}, {}, nil
-  local function owns_paste()
-    if focus_popup == false then return false end
-    if type(focus_popup) == "number" then return focus_popup == id end
-    -- bone3 focus/changed currently supplies a boolean popup flag, not its id.
-    -- panel/opened and panel/updated supply { id, kind = 'popup', focus, z };
-    -- bone3 orders focused popups by z, then id (newer wins ties).
-    if popup_focus[id] == false then return false end
-    local own_z = popup_z[id] or 0
-    for other, focused in pairs(popup_focus) do
-      local z = popup_z[other] or 0
-      if focused and (z > own_z or (z == own_z and other > id)) then return false end
+  elseif inp.key == "rename" or inp.key == "new" then
+    value = trim(value)
+    if not value:match("^[%w][%w_-]*$") or #value > 64 then
+      return note("names are letters, digits, - and _ (start with a letter or digit)", true)
     end
-    return true
-  end
-  local function redraw() if id and not closed then bone.ui.update(id, {}) end end
-  local function note(text, failure)
-    st.note = text
-    bone.notify(text, failure and "error" or "info")
-    redraw()
-  end
-  local function names(select)
-    st.names = {}; for name in pairs(st.agents) do st.names[#st.names + 1] = name end
-    table.sort(st.names)
-    st.sel = math.max(1, math.min(st.sel, #st.names))
-    for i, name in ipairs(st.names) do if name == select then st.sel = i end end
-  end
-  local function close(force)
-    if closed then return true end
-    if force == false and (st.busy or (st.draft and (not equal(st.draft, st.initial) or st.input))) then
-      note("Save or discard the current editor before opening another /subagents popup", true)
-      return false
+    if st.agents[value] and value ~= inp.name then
+      return note("there is already an agent named " .. value, true)
     end
-    closed = true
-    if paste_event then bone.off(paste_event) end
-    if opened_event then bone.off(opened_event) end
-    if updated_event then bone.off(updated_event) end
-    if focus_event then bone.off(focus_event) end
-    if closed_event then bone.off(closed_event) end
-    if active_close == close then active_close = nil end
-    if id then bone.ui.close(id) end
-    return true
-  end
-  local function detail(name)
-    st.page, st.sel, st.source = "detail", 1, name
-    st.original = name and copy(st.agents[name]) or nil
-    st.draft = draft(name, st.original or {})
-    st.initial, st.input, st.note = copy(st.draft), nil, nil
-  end
-  local function back()
-    local select = st.source
-    st.page, st.draft, st.input, st.ask, st.note = "list", nil, nil, nil, nil
-    names(select)
-  end
-  local function leave(action)
-    if st.page == "detail" and not equal(st.draft, st.initial) then
-      st.ask = { text = "Discard unsaved changes? y yes · n/esc cancel", action = action }
-    else action() end
-  end
-  local function refresh()
-    local value, failure = read_agents()
-    if not value then return note(failure, true) end
-    st.agents = value; names(); st.note = nil
-  end
-  local function persist(deleting)
-    if st.busy then return end
-    local name, spec
-    if not deleting then
-      name, spec = validate(st.draft, st.original)
-      if not name then return note(spec, true) end
-    end
-    local latest, failure = read_agents()
-    if not latest then return note(failure, true) end
-    if st.source and not equal(latest[st.source], st.original) then
-      return note("Agent changed or was removed elsewhere. Cancel and refresh before saving.", true)
-    end
-    if not deleting and name ~= st.source and latest[name] ~= nil then
-      return note("An agent named '" .. name .. "' already exists; choose a different name", true)
-    end
-    if st.source then latest[st.source] = nil end
-    if not deleting then latest[name] = spec end
-    st.busy = true
-    bone.settings.set(PATH, latest, function(_, save_err)
-      st.busy = false
-      if save_err then return note("Could not save agents: " .. errtext(save_err), true) end
-      bone.notify(deleting and "Deleted agent " .. st.source or "Saved agent " .. name)
-      if closed then return end
-      st.agents = latest
-      if deleting then back() else detail(name) end
-      redraw()
-    end)
-    redraw()
-  end
-  local function edit()
-    local key = FIELDS[st.sel][1]
-    local value = key == "system" and encode(st.draft[key]) or st.draft[key]
-    st.input = { key = key, value = value, cursor = #value + 1 }
-    st.note = nil
-  end
-  local function insert(text)
-    local e = st.input
-    e.value = e.value:sub(1, e.cursor - 1) .. text .. e.value:sub(e.cursor)
-    e.cursor = e.cursor + #text
-  end
-  local function on_key(k)
-    if st.busy then
-      if k == "esc" or k == "ctrl+c" then close() end
-      return true
-    end
-    if st.ask then
-      if k == "y" then local action = st.ask.action; st.ask = nil; action()
-      elseif k == "n" or k == "esc" or k == "ctrl+c" then st.ask = nil end
-    elseif st.input then
-      local e = st.input
-      if k == "esc" then st.input = nil
-      elseif k == "enter" or k == "ctrl+s" then
-        st.draft[e.key] = e.key == "system" and decode(e.value) or e.value
-        st.input = nil
-        if k == "ctrl+s" then persist(false) end
-      elseif k == "shift+enter" and e.key == "system" then insert("\\n")
-      elseif k == "left" then e.cursor = previous(e.value, e.cursor)
-      elseif k == "right" then e.cursor = following(e.value, e.cursor)
-      elseif k == "home" or k == "ctrl+a" then e.cursor = 1
-      elseif k == "end" or k == "ctrl+e" then e.cursor = #e.value + 1
-      elseif k == "ctrl+u" then e.value, e.cursor = "", 1
-      elseif k == "backspace" and e.cursor > 1 then
-        local p = previous(e.value, e.cursor)
-        e.value, e.cursor = e.value:sub(1, p - 1) .. e.value:sub(e.cursor), p
-      elseif k == "delete" then e.value = e.value:sub(1, e.cursor - 1) .. e.value:sub(following(e.value, e.cursor))
-      elseif k == "space" then insert(" ")
-      elseif k:match("^[%z\1-\127\194-\244][\128-\191]*$") and not k:find("[%z\1-\31\127]") then insert(k) end
-    elseif k == "ctrl+c" or k == "q" then leave(close)
-    elseif k == "esc" then leave(st.page == "detail" and back or close)
-    elseif k == "up" or k == "k" or k == "shift+tab" or k == "backtab" or k == "wheelup" then st.sel = math.max(1, st.sel - 1)
-    elseif k == "down" or k == "j" or k == "tab" or k == "wheeldown" then
-      st.sel = math.min(st.page == "list" and math.max(1, #st.names) or #FIELDS, st.sel + 1)
-    elseif k == "pageup" or k == "pagedown" then
-      st.sel = math.max(1, math.min(st.page == "list" and math.max(1, #st.names) or #FIELDS,
-        st.sel + (k == "pageup" and -st.rows or st.rows)))
-    elseif st.page == "list" then
-      if k == "a" then detail(nil); edit()
-      elseif k == "r" then refresh()
-      elseif (k == "enter" or k == "e") and st.names[st.sel] then detail(st.names[st.sel]) end
+    if inp.key == "new" then
+      st.agents[value] = {}
+      st.focus = "fields"
     else
-      if k == "enter" or k == "e" then edit()
-      elseif k == "r" then st.sel = 1; edit()
-      elseif k == "s" or k == "ctrl+s" then persist(false)
-      elseif k == "d" and st.source then
-        st.ask = { text = "Delete '" .. st.source .. "'? y delete · n/esc cancel", action = function() persist(true) end }
-      end
+      st.agents[value], st.agents[inp.name] = spec, nil
     end
-    redraw()
-    return true
+    st.sel_name = value
+  else
+    spec[inp.key] = trim(value) ~= "" and (inp.key == "system" and value or trim(value)) or nil
   end
-  local function render(ctx)
-    local w, h = math.max(1, ctx.width), math.max(1, ctx.height)
-    local out = {}
-    local function line(text, hl)
-      out[#out + 1] = { { bone.text.truncate(text:gsub("[%z\1-\31\127]", " "), w), hl or "Normal" } }
+  st.input = nil
+  save(inp.key == "new" and ("created " .. value) or "saved")
+end
+
+local function pick_provider(name)
+  bone.model.list(function(list, err)
+    if err then
+      return note(message(err), true)
     end
-    line("Subagents · " .. (st.page == "list" and "named agents" or (st.source or "new agent")), "Accent")
-    line("Blank = inherit · tools: names, * = all, none/[] = deny all · save to apply", "Dim")
-    st.rows = math.max(1, h - 6)
-    local total = st.page == "list" and #st.names or #FIELDS
-    local first = math.max(1, st.sel - st.rows + 1)
-    if st.page == "list" and total == 0 then line("No named agents. Press a to add one.", "Dim") end
-    for i = first, math.min(total, first + st.rows - 1) do
-      local text
-      if st.page == "list" then
-        local name = st.names[i]
-        text = name .. (st.agents[name].description and (" — " .. st.agents[name].description) or "")
+    local items = { { name = "", model = "use the session's provider" } }
+    for _, p in ipairs(list or {}) do
+      items[#items + 1] = p
+    end
+    bone.ui.select(items, {
+      prompt = "provider for " .. name,
+      format = function(p) return p.name == "" and "(inherit)" or (p.name .. "  " .. (p.model or "")) end,
+      on_choice = function(p)
+        if p and st.agents[name] then
+          st.agents[name].provider = p.name ~= "" and p.name or nil
+          save("saved")
+        end
+      end,
+    })
+  end)
+end
+
+local function current()
+  local list = names()
+  local name = st.sel_name
+  if not (name and st.agents[name]) then
+    name = list[math.max(1, math.min(st.sel, #list))]
+  end
+  return name, list
+end
+
+local function on_key(k)
+  local name, list = current()
+  local inp = st.input
+  if inp then
+    local multiline = inp.key == "system"
+    if k == "esc" then
+      st.input = nil
+    elseif k == "ctrl+s" or (k == "enter" and not multiline) then
+      accept()
+    elseif k == "enter" or k == "shift+enter" then
+      inp.value = inp.value .. "\n"
+    elseif k == "backspace" then
+      inp.value = inp.value:gsub("[%z\1-\127\194-\244][\128-\191]*$", "")
+    elseif k == "ctrl+u" then
+      inp.value = ""
+    elseif k == "space" then
+      inp.value = inp.value .. " "
+    elseif k == "tab" then
+      inp.value = inp.value .. "\t"
+    elseif #k == 1 or k:match("^[\194-\244][\128-\191]*$") then
+      inp.value = inp.value .. k
+    end
+  elseif st.confirm then
+    st.confirm = nil
+    if k == "y" and name then
+      st.agents[name], st.sel_name = nil, nil
+      st.focus = "list"
+      save("deleted " .. name)
+    end
+  elseif k == "q" or (k == "esc" and st.focus == "list") then
+    bone.ui.close(id)
+  elseif k == "esc" or k == "left" or k == "h" then
+    st.focus = "list"
+  elseif st.focus == "list" then
+    if k == "up" or k == "k" then
+      st.sel, st.sel_name = math.max(1, st.sel - 1), nil
+    elseif k == "down" or k == "j" then
+      st.sel, st.sel_name = math.min(#list, st.sel + 1), nil
+    elseif k == "n" or (k == "enter" and #list == 0) then
+      st.input = { key = "new", name = "", value = "" }
+    elseif (k == "enter" or k == "right" or k == "tab" or k == "l") and name then
+      st.focus, st.field = "fields", 1
+    elseif k == "r" and name then
+      st.input = { key = "rename", name = name, value = name }
+    elseif k == "d" and name then
+      st.confirm = true
+    end
+  else
+    if k == "up" or k == "k" then
+      st.field = math.max(1, st.field - 1)
+    elseif k == "down" or k == "j" or k == "tab" then
+      st.field = math.min(#FIELDS, st.field + 1)
+    elseif k == "enter" or k == "e" then
+      local key = FIELDS[st.field][1]
+      if key == "provider" then
+        pick_provider(name)
       else
-        local key, label = FIELDS[i][1], FIELDS[i][2]
-        local value = key == "system" and encode(st.draft[key]) or st.draft[key]
-        if st.input and i == st.sel then
-          local e = st.input
-          local before = e.value:sub(1, e.cursor - 1)
-          local available = math.max(1, w - bone.text.width(label) - 7)
-          while bone.text.width(before) > available do before = before:sub(following(before, 1)) end
-          value = before .. "▏" .. e.value:sub(e.cursor)
-        elseif value == "" then value = key == "name" and "(required)" or "(inherit)" end
-        text = label .. ": " .. value
+        open_field(name, key)
       end
-      line((i == st.sel and "› " or "  ") .. text, i == st.sel and "Selection" or "Normal")
-    end
-    line(st.busy and "Saving…" or (st.ask and st.ask.text or st.note or ""), st.note and "ErrorMsg" or "Accent")
-    if st.input then
-      line("Enter accept · Esc cancel field · Ctrl+U clear · ←→ Home/End edit · Ctrl+S save", "Dim")
-      line(st.input.key == "system" and "System: \\n newline · \\t tab · \\\\ literal backslash · multiline paste supported"
-        or st.input.key == "tools" and "Tools: blank inherits defaults · * explicitly allows all · none or [] denies all"
-        or "Paste supported · blank fields inherit defaults", "Dim")
-    elseif st.page == "list" then
-      line("↑↓/j/k select · Enter detail/edit · a add · r refresh · q/Esc close", "Dim")
-      line("/subagents [name] · /subagents add [name] · settings: subagent.agents", "Dim")
-    else
-      line("↑↓/Tab field · Enter edit · r rename · s/Ctrl+S save · d delete · Esc back", "Dim")
-      line("System supports multiline paste / escaped \\n; provider/model blanks inherit", "Dim")
-    end
-    -- The renderer must remain within the terminal, including narrow windows.
-    while #out > h do table.remove(out, math.max(1, #out - 3)) end
-    return out
-  end
-  names()
-  if adding then detail(nil); st.draft.name = wanted or ""; edit()
-  elseif wanted and wanted ~= "" then
-    if not st.agents[wanted] then return bone.notify("No saved agent named '" .. wanted .. "'", "error") end
-    detail(wanted)
-  end
-  id = bone.ui.popup({ lines = render, on_key = on_key, width = 90, height = 20 })
-  popup_focus[id] = true
-  active_close = close
-  paste_event = bone.on("paste", function(ev)
-    if closed or ev.context ~= "popup" or not owns_paste() or not st.input or st.busy or st.ask then return end
-    local text = (ev.text or ""):gsub("\r\n", "\n"):gsub("\r", "\n")
-    if text:find("%z") then return note("Paste contains NUL bytes", true) end
-    if st.input.key == "system" then text = encode(text)
-    else text = text:gsub("[\n\t]", " ") end
-    insert(text); redraw()
-  end)
-  local function popup_changed(ev)
-    if ev.kind == "popup" then
-      popup_focus[ev.id] = ev.focus == true
-      popup_z[ev.id] = ev.z or popup_z[ev.id] or 0
+    elseif k == "x" or k == "delete" then
+      st.agents[name][FIELDS[st.field][1]] = nil
+      save("cleared (inherits the default)")
+    elseif k == "r" then
+      st.input = { key = "rename", name = name, value = name }
+    elseif k == "d" then
+      st.confirm = true
     end
   end
-  opened_event = bone.on("panel/opened", popup_changed)
-  updated_event = bone.on("panel/updated", popup_changed)
-  focus_event = bone.on("focus/changed", function(ev)
-    -- Also accept id-bearing events; boolean bone3 events use the stack above.
-    focus_popup = ev.popup_id or ev.popup
-  end)
-  closed_event = bone.on("panel/closed", function(ev)
-    popup_focus[ev.id] = nil
-    popup_z[ev.id] = nil
-    if focus_popup == ev.id then focus_popup = nil end
-    if ev.id == id then close(true) end
-  end)
-  return id
+  redraw()
+  return true
 end
+
+-- Spans clipped or padded to exactly `width` cells (the box wraps otherwise).
+local function fit(spans, width)
+  local used = 0
+  for _, sp in ipairs(spans) do
+    used = used + bone.text.width(sp[1])
+  end
+  local out = used > width and bone.text.clip(spans, width) or { unpack(spans) }
+  out[#out + 1] = { string.rep(" ", math.max(0, width - used)), "Normal" }
+  return out
+end
+
+-- The right side: an agent's fields, the one being edited with a cursor.
+local function detail(name, width, height)
+  local out = {}
+  if not name then
+    return bone.text.wrap({ { "No agents yet. Press n to create one: a name, then a prompt, and the model "
+      .. "can hand it work with the subagent tool.", "Dim" } }, width)
+  end
+  local spec = st.agents[name]
+  out[1] = { { name, "Accent" } }
+  for i, f in ipairs(FIELDS) do
+    local key, label = f[1], f[2]
+    local on = st.focus == "fields" and st.field == i
+    local editing = st.input and st.input.name == name and st.input.key == key
+    out[#out + 1] = {}
+    out[#out + 1] = { { (on and "› " or "  ") .. label, on and "Selection" or "Normal" },
+      { on and ("  " .. f[3]) or "", "Dim" } }
+    local value = editing and (st.input.value .. "▏")
+      or (key == "tools" and tools_text(spec.tools) or spec[key] or "")
+    local hl = "Normal"
+    if value == "" then
+      value, hl = "inherits the default", "Dim"
+    end
+    local shown = {}
+    for line in (value .. "\n"):gmatch("(.-)\n") do
+      for _, l in ipairs(bone.text.wrap({ { line, hl } }, width - 4, { first = "    ", rest = "    " })) do
+        shown[#shown + 1] = l
+      end
+    end
+    local limit = editing and 8 or 4
+    for n, line in ipairs(shown) do
+      if n > limit then
+        out[#out + 1] = { { "    …", "Dim" } }
+        break
+      end
+      out[#out + 1] = line
+    end
+  end
+  return out
+end
+
+local function render(ctx)
+  local w = math.max(48, math.min(ctx.width, 104))
+  local h = math.max(8, math.min(ctx.height, 28)) - 6
+  local inner = w - 4
+  local lw = math.min(26, math.floor(inner / 3))
+  local rw = inner - lw - 3
+  local name, list = current()
+  local right = detail(name, rw, h)
+  -- Keep the field being edited in view.
+  local first = 1
+  for i, l in ipairs(right) do
+    if st.input and l[1] and l[1][1]:find("^›") then
+      first = math.max(1, i - h + 8)
+    end
+  end
+  local rows = {}
+  for i = 1, h do
+    local item = list[i]
+    local l = {}
+    if item then
+      local on = item == name
+      l = { { (on and (st.focus == "list" and "› " or "▸ ") or "  ") .. item, on and st.focus == "list" and "Selection" or "Normal" } }
+    elseif i == #list + 1 then
+      l = { { "  n  new agent", "Dim" } }
+    end
+    local row = fit(l, lw)
+    row[#row + 1] = { " │ ", "Dim" }
+    for _, sp in ipairs(fit(right[i + first - 1] or {}, rw)) do
+      row[#row + 1] = sp
+    end
+    rows[i] = row
+  end
+  rows[#rows + 1] = { { string.rep("─", inner), "Dim" } }
+  if st.input then
+    local k = st.input.key
+    rows[#rows + 1] = { { k == "new" and "New agent name: " or k == "rename" and "New name: " or "Editing: ", "Accent" },
+      { (k == "new" or k == "rename") and (st.input.value .. "▏") or "", "Normal" } }
+    rows[#rows + 1] = { { (k == "system" and "enter newline · ctrl+s save" or "enter save")
+      .. " · ctrl+u clear · esc cancel", "Dim" } }
+  elseif st.confirm then
+    rows[#rows + 1] = { { "Delete " .. tostring(name) .. "?  y yes · any other key cancels", "WarningMsg" } }
+    rows[#rows + 1] = {}
+  else
+    rows[#rows + 1] = st.note or {}
+    rows[#rows + 1] = { { st.focus == "list"
+      and "↑↓ choose · enter edit · n new · r rename · d delete · esc close"
+      or "↑↓ field · enter edit · x inherit · r rename · d delete · esc back", "Dim" } }
+  end
+  return bone.ui.box(rows, { title = "Subagents", width = w })
+end
+
+bone.on("paste", function(ev)
+  if st and id and bone.ui.is_open(id) and st.input then
+    local text = (ev.text or ""):gsub("\r\n?", "\n")
+    if st.input.key ~= "system" then
+      text = text:gsub("%s+", " ")
+    end
+    st.input.value = st.input.value .. text
+    redraw()
+  end
+end)
+
+local function open(arg)
+  if id and bone.ui.is_open(id) then
+    bone.ui.close(id)
+  end
+  local agents, err = load()
+  if not agents then
+    return bone.notify(err, "error")
+  end
+  st = { agents = agents, sel = 1, focus = "list", field = 1 }
+  if arg and arg ~= "" then
+    if st.agents[arg] then
+      st.sel_name, st.focus = arg, "fields"
+    else
+      st.input = { key = "new", name = "", value = arg }
+    end
+  end
+  id = bone.ui.popup({ lines = render, on_key = on_key, width = 104, height = 28 })
+end
+
 bone.cmd.create("subagents", function(c)
-  local arg = trim(c.args or "")
-  if arg == "" or arg == "list" then return open() end
-  if arg == "add" then return open(nil, true) end
-  local name = arg:match("^add%s+(.+)$")
-  if name then return open(trim(name), true) end
-  return open(arg)
-end, { desc = "Edit named subagents: custom prompts, provider/model, allowed tools; [name] or add [name]" })
+  open(trim((c.args or ""):gsub("^add%s*", "")))
+end, { desc = "Create and tune named subagents: prompt, provider, model, tools" })

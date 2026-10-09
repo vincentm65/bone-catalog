@@ -6,7 +6,23 @@ bone = {
   hl = { set = function(name, spec) highlights[name] = spec end },
   tool = { register = function(spec) tools[spec.name] = spec end },
   chat = {
-    items = function() return chats[current] end,
+    items = function(opts)
+      local out = {}
+      for _, c in ipairs(chats[current] or {}) do
+        local kind = c.kind or "tool"
+        local name = c.name or "todo"
+        local kind_ok = (not opts or not opts.kind) or kind == opts.kind
+        local name_ok = (not opts or not opts.name) or name == opts.name
+        if kind_ok and name_ok then out[#out + 1] = c end
+      end
+      if opts and opts.last then
+        local n, cut = #out, math.max(0, #out - opts.last)
+        local tail = {}
+        for i = cut + 1, n do tail[#tail + 1] = out[i] end
+        out = tail
+      end
+      return out
+    end,
   },
   cmd = { create = function(name, fn) events["/" .. name] = fn end },
   on = function(name, fn) events[name] = fn end,
@@ -37,6 +53,10 @@ local function call(items, opts)
   for k, v in pairs(opts or {}) do c[k] = v end
   return c
 end
+-- A call that has started but not finished: the drawer keeps the previous list.
+local function running(items)
+  return { done = false, arguments = { items = items } }
+end
 chats.A = { call({ { text = "old", status = "pending" } }), call({ { text = "new", status = "in_progress" } }), call({}, { is_error = true }) }
 chats.A[2].arguments.title = "Parser fixes"
 current = "A"; events["tool/finished"]()
@@ -64,4 +84,19 @@ assert(panel.spec.render()[2][1][1] == "Todo 0/1")
 chats.A[#chats.A + 1] = call({})
 events["tool/finished"](); assert(panel.hidden)
 
-print("todo: validation, per-chat isolation, title, spacing, completion hide and reopen passed")
+-- The list survives any number of later tool calls (no window limit).
+chats.A[#chats.A + 1] = call({ { text = "long-lived", status = "in_progress" } })
+events["tool/finished"](); assert(not panel.hidden)
+for _ = 1, 8 do chats.A[#chats.A + 1] = { done = true, name = "other", arguments = {} } end
+events["tool/finished"]()
+assert(not panel.hidden and panel.spec.render()[2][1][1] == "Todo 0/1", "list lost after later tool calls")
+-- A running call does not replace the previous list until it finishes.
+chats.A[#chats.A + 1] = running({ { text = "not yet", status = "pending" } })
+events["tool/finished"]()
+assert(panel.spec.render()[2][1][1] == "Todo 0/1", "running call shown")
+assert(panel.spec.render()[3][2][1] == "long-lived", "running call shown")
+chats.A[#chats.A].done = true
+events["tool/finished"]()
+assert(panel.spec.render()[3][2][1] == "not yet", "finished call not shown")
+
+print("todo: validation, per-chat isolation, title, spacing, completion hide, reopen, history window and running calls passed")
