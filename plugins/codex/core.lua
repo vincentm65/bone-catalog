@@ -36,14 +36,34 @@ local function codex_auth()
   return t.access_token, t.account_id
 end
 
+local function user_item(text, images)
+  local content = {}
+  if text ~= "" or not images or #images == 0 then
+    content[1] = { type = "input_text", text = text }
+  end
+  for _, img in ipairs(images or {}) do
+    if not img.data or img.data == "" then
+      error("codex: image bytes are unavailable", 0)
+    end
+    content[#content + 1] = {
+      type = "input_image",
+      image_url = "data:" .. (img.mime_type or "image/png") .. ";base64," .. img.data,
+    }
+  end
+  return { role = "user", content = content }
+end
+
 -- bone messages -> Responses `instructions` + `input` items.
 local function convert(messages)
   local system, input = {}, {}
-  for _, m in ipairs(messages) do
+  -- Tool images go in a user message after the whole run of tool outputs,
+  -- since every function_call_output must directly answer its call.
+  local tool_images = {}
+  for i, m in ipairs(messages) do
     if m.role == "system" then
       system[#system + 1] = m.content
     elseif m.role == "user" then
-      input[#input + 1] = { role = "user", content = { { type = "input_text", text = m.content or "" } } }
+      input[#input + 1] = user_item(m.content or "", m.images)
     elseif m.role == "assistant" then
       if m.content and m.content ~= "" then
         input[#input + 1] = { role = "assistant", content = { { type = "output_text", text = m.content } } }
@@ -57,6 +77,17 @@ local function convert(messages)
       end
     elseif m.role == "tool" then
       input[#input + 1] = { type = "function_call_output", call_id = m.call_id, output = m.content or "" }
+      if m.images and #m.images > 0 then
+        tool_images[#tool_images + 1] =
+          user_item("Images from tool call " .. tostring(m.call_id) .. ": " .. (m.content or ""), m.images)
+      end
+    end
+    local nxt = messages[i + 1]
+    if not (nxt and nxt.role == "tool") then
+      for _, item in ipairs(tool_images) do
+        input[#input + 1] = item
+      end
+      tool_images = {}
     end
   end
   return table.concat(system, "\n\n"), input
@@ -206,6 +237,8 @@ bone.hook("request_error", function(ev)
 
   local transient =
     err:find("An error occurred while processing your request", 1, true)
+    or err:find("overloaded", 1, true)
+    or err:find("try again later", 1, true)
     or err:find("codex: HTTP 429", 1, true)
     or err:match("codex: HTTP 5%d%d")
 

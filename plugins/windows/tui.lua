@@ -1,5 +1,6 @@
 -- Tiled chat windows: several sessions on screen at once, split, resized,
--- moved and focused with the keyboard or the mouse.
+-- moved and focused with the keyboard or the mouse. A window can show a
+-- terminal instead (bone.ui.terminal): a `panel:<id>` leaf in its place.
 --
 -- The layout's "chat" leaf becomes a tree of windows. The focused window is
 -- the real "chat" leaf (the prompt, scrolling and selection belong to it);
@@ -16,7 +17,9 @@ local DEFAULT = { "top", { cols = { "left", "chat", "right" }, sep = "│" }, "d
 local st = bone.plugin.state()
 bone.hl.set("WinBarActive", { link = "StatusLine", reverse = true })
 
--- wins[id] = { id, sid }. Tree nodes: { win = id, w } or { dir = "cols" |
+-- wins[id] = { id, sid } or, for a terminal, { id, term = panel id }. The
+-- focused window is always a chat; a terminal window has the keyboard when
+-- its panel does (see here()). Tree nodes: { win = id, w } or { dir = "cols" |
 -- "rows", w, kids }. `w` is a share of the parent split.
 local wins, root, focused = {}, nil, nil
 local seq, zoomed, switching, started = 0, false, false, false
@@ -43,6 +46,23 @@ local function win_of(sid)
   for id, w in pairs(wins) do
     if w.sid == sid then return id end
   end
+end
+
+local function term_win(pid)
+  for id, w in pairs(wins) do
+    if pid and w.term == pid then return id end
+  end
+end
+
+-- The window with the keyboard: a terminal's, else the focused chat's.
+local function here()
+  return term_win(bone.ui.panel.focused()) or focused
+end
+
+-- The layout leaf a window's content is drawn in.
+local function body_of(id)
+  local w = wins[id]
+  return w.term and "panel:" .. w.term or id == focused and "chat" or w.sid and "chat:" .. w.sid or "wm_empty:" .. id
 end
 
 -- The focused window shows whatever chat is on screen.
@@ -76,12 +96,18 @@ local function first_win(node)
   return node.win
 end
 
+-- Terminals are not saved: their programs end with bone.
 local function encode(node)
   if node.win then
+    if wins[node.win].term then return nil end
     return { sid = wins[node.win].sid, w = node.w, focus = node.win == focused or nil }
   end
   local kids = {}
-  for i, k in ipairs(node.kids) do kids[i] = encode(k) end
+  for _, k in ipairs(node.kids) do kids[#kids + 1] = encode(k) end
+  if #kids <= 1 then
+    if kids[1] then kids[1].w = node.w end
+    return kids[1]
+  end
   return { dir = node.dir, w = node.w, kids = kids }
 end
 
@@ -102,11 +128,9 @@ end
 
 local function build(node, size, path)
   if node.win then
-    local w, id = wins[node.win], node.win
-    local body = id == focused and "chat"
-      or w.sid and "chat:" .. w.sid
-      or { "wm_empty:" .. id, size = "fill" }
-    return { rows = { "wm_bar:" .. id, body }, size = size }
+    local id = node.win
+    local body = body_of(id)
+    return { rows = { "wm_bar:" .. id, body:find("^wm_empty:") and { body, size = "fill" } or body }, size = size }
   end
   local key = table.concat(path, ".")
   splits[key] = node
@@ -125,10 +149,11 @@ local function build(node, size, path)
 end
 
 -- A copy of `node` with the tree in place of its "chat" leaf.
+local shown -- the tree drawn: root, or a zoomed terminal window alone
 local function subst(node, path)
   local name = type(node) == "table" and node[1] or node
   if name == "chat" then
-    return build(root, type(node) == "table" and node.size or nil, path)
+    return build(shown, type(node) == "table" and node.size or nil, path)
   end
   if type(node) ~= "table" then return node end
   local copy = {}
@@ -154,11 +179,21 @@ local function apply()
   -- Someone else changed the layout: that is the one to put windows in.
   if bone.ui.layout ~= applied then base = bone.ui.layout end
   splits = {}
-  if count() <= 1 or zoomed then
+  local zoomed_term = zoomed and wins[zoomed] and wins[zoomed].term
+  if count() <= 1 or (zoomed and not zoomed_term) then
     applied = base
   else
+    shown = zoomed_term and leaf(zoomed) or root
     applied = {}
     for i, entry in ipairs(base or DEFAULT) do applied[i] = subst(entry, { i }) end
+  end
+  -- A terminal not in the layout would dock: hide it while zoomed away.
+  for id, w in pairs(wins) do
+    local hide = zoomed and zoomed ~= id or false
+    if w.term and (w.hidden or false) ~= hide then
+      w.hidden = hide
+      bone.ui.panel.update(w.term, { hidden = hide })
+    end
   end
   bone.ui.layout = applied
   save()
@@ -174,7 +209,7 @@ local function rects()
   for id, w in pairs(wins) do
     local bar = by["wm_bar:" .. id]
     if bar then
-      local body = by[id == focused and "chat" or w.sid and "chat:" .. w.sid or "wm_empty:" .. id]
+      local body = by[body_of(id)]
       out[id] = { x = bar.x, y = bar.y, width = bar.width, height = 1 + (body and body.height or 0) }
     end
   end
@@ -203,7 +238,7 @@ end
 -- The nearest window in direction h/j/k/l from the focused one.
 local function neighbor(dir)
   local r = rects()
-  local me = r[focused]
+  local me = r[here()]
   if not me then return end
   local best, score
   for id, o in pairs(r) do
@@ -215,7 +250,7 @@ local function neighbor(dir)
       gap = dir == "k" and me.y - (o.y + o.height) or o.y - (me.y + me.height)
       off = o.x < me.x + me.width and o.x + o.width > me.x and math.abs(o.x - me.x)
     end
-    if id ~= focused and gap >= 0 and off then
+    if id ~= here() and gap >= 0 and off then
       local s = gap * 10000 + off
       if not score or s < score then best, score = id, s end
     end
@@ -242,11 +277,13 @@ end
 -- ---- windows -------------------------------------------------------------
 
 local bar, pick -- the bar renderer and the session picker, below
+local ok, terminal = pcall(require, "bone.ui.terminal")
+if not ok then terminal = nil end
 
-local function new_win(sid)
+local function new_win(sid, term)
   seq = seq + 1
   local id = seq
-  wins[id] = { id = id, sid = sid }
+  wins[id] = { id = id, sid = sid, term = term }
   bone.ui.regions["wm_bar:" .. id] = { size = 1, render = function(ctx) return bar(id, ctx) end }
   bone.ui.regions["wm_empty:" .. id] = {
     render = function(ctx)
@@ -259,14 +296,21 @@ local function new_win(sid)
   return id
 end
 
+-- A forgotten terminal window's program stops (its panel closes).
 local function forget(id)
+  local term = wins[id].term
   wins[id] = nil
   bone.ui.regions["wm_bar:" .. id] = nil
   bone.ui.regions["wm_empty:" .. id] = nil
+  if term then bone.ui.panel.close(term) end
 end
 
 local function focus(id)
-  if not wins[id] or id == focused then return end
+  local w = wins[id]
+  if not w then return end
+  if w.term then return bone.ui.panel.focus(w.term) end
+  if term_win(bone.ui.panel.focused()) then bone.ui.panel.focus(nil) end
+  if id == focused then return end
   sync()
   last, focused = focused, id
   switching = true
@@ -276,14 +320,15 @@ local function focus(id)
   apply()
 end
 
--- Split window `at` (default: the focused one, and then the new window takes
--- focus) along `dir` with a new one showing `sid` (nil: a new chat).
-local function split(dir, sid, at)
+-- Split window `at` (default: the one with the keyboard, and then the new
+-- window takes focus) along `dir` with a new one showing `sid` (nil: a new
+-- chat), or terminal panel `term` (which takes the keyboard when it opens).
+local function split(dir, sid, at, term)
   sync()
   if sid and win_of(sid) then return at or focus(win_of(sid)) end
   zoomed = false
-  local node, parent, i = leaf(at or focused)
-  local new = { win = new_win(sid), w = 1 }
+  local node, parent, i = leaf(at or here())
+  local new = { win = new_win(sid, term), w = 1 }
   if parent and parent.dir == dir then
     node.w = node.w / 2
     new.w = node.w
@@ -293,14 +338,20 @@ local function split(dir, sid, at)
     node.w = 1
     if parent then parent.kids[i] = s else root = s end
   end
+  if term then return apply() end
   if not at then return focus(new.win) end
   bone.chat.open(sid)
   apply()
 end
 
 local function close(id)
-  id = id or focused
+  id = id or here()
   if count() <= 1 or not wins[id] then return end
+  -- The last chat window stays: the prompt sends to it.
+  local chats = 0
+  for _, w in pairs(wins) do chats = chats + (w.term and 0 or 1) end
+  if chats <= 1 and not wins[id].term then return end
+  if zoomed == id then zoomed = false end
   local _, parent, i = leaf(id)
   table.remove(parent.kids, i)
   local heir = parent.kids[math.min(i, #parent.kids)]
@@ -339,8 +390,8 @@ end
 
 -- Swap the focused window with another; focus stays with the moved chat.
 local function swap(other)
-  if not other or other == focused then return end
-  local a, b = leaf(focused), leaf(other)
+  if not other or other == here() then return end
+  local a, b = leaf(here()), leaf(other)
   a.win, b.win = b.win, a.win
   apply()
 end
@@ -353,7 +404,7 @@ local function equalize(node)
 end
 
 local function zoom()
-  zoomed = not zoomed
+  zoomed = not zoomed and here()
   apply()
 end
 
@@ -369,7 +420,7 @@ end
 
 -- Grow the focused window by `cells` along "cols" or "rows".
 local function grow(dir, cells)
-  local child = leaf(focused)
+  local child = leaf(here())
   while true do
     local _, parent, i = locate(root, function(n) return n == child end)
     if not parent then return end
@@ -386,10 +437,15 @@ end
 bar = function(id, ctx)
   local w = wins[id]
   if not w then return {} end
-  local mine = id == focused
-  local sid = mine and current_sid() or w.sid
+  local mine = id == here()
+  local sid = id == focused and current_sid() or w.sid
   local s = sid and bone.chat.session({ session = sid })
   local name = sid and (s and s.title or "[untitled]") or "new chat"
+  if w.term then
+    local job = terminal and terminal.job(w.term)
+    local st = job and job:status()
+    name = "terminal" .. (st and " · " .. st.cmd or "")
+  end
   local hl = mine and "WinBarActive" or "Dim"
   if drag and drag.kind == "move" and drag.target == id and drag.id ~= id then hl = "Selection" end
   local mark = s and s.running and ctx.spinner .. " " or unread[sid] and "• " or ""
@@ -546,6 +602,30 @@ bone.on("session/deleted", function(ev)
   if root and win_of(ev.session_id) then close(win_of(ev.session_id)) end
 end)
 
+-- A terminal window opens beside the one with the keyboard; its program
+-- ending (its panel closing) closes the window.
+local function open_term(opts)
+  local n = 1
+  while bone.ui.panel.get("term" .. n) or term_win("term" .. n) do n = n + 1 end
+  split("cols", nil, nil, "term" .. n)
+  return terminal.open({ id = "term" .. n }, opts)
+end
+
+bone.on("panel/closed", function(ev)
+  local id = root and term_win(ev.id)
+  if id then close(id) end
+end)
+
+-- /term and ctrl+] open a terminal window rather than a docked one. An
+-- explicit panel spec is left alone.
+local term_open = terminal and terminal.open
+if terminal then
+  terminal.open = function(spec, opts)
+    if spec ~= nil or not root then return term_open(spec, opts) end
+    return open_term(opts)
+  end
+end
+
 -- Optionally watch each sub-agent in a window under its owner's.
 bone.on("session/created", function(ev)
   local o = ev.owner
@@ -569,6 +649,10 @@ bone.on("ready", start)
 bone.defer(0, start) -- loaded after startup (/plugins load windows)
 
 bone.plugin.on_shutdown(function()
+  if terminal then
+    terminal.open = term_open
+    terminal.passthrough[PREFIX] = nil
+  end
   save()
   if root and bone.ui.layout == applied then bone.ui.layout = base end
   for id in pairs(wins) do forget(id) end
@@ -609,11 +693,12 @@ local function cycle()
   local ids = {}
   each_win(root, function(id) ids[#ids + 1] = id end)
   for i, id in ipairs(ids) do
-    if id == focused then return focus(ids[i % #ids + 1]) end
+    if id == here() then return focus(ids[i % #ids + 1]) end
   end
 end
 
 local keys = {
+  t = function() if terminal then open_term() end end,
   v = function() split("cols") end,
   s = function() split("rows") end,
   p = pick,
@@ -637,7 +722,7 @@ local keys = {
   end,
 }
 local DESC = {
-  v = "split right", s = "split below", p = "pick what this window shows", q = "close the window",
+  t = "open a terminal in a new window", v = "split right", s = "split below", p = "pick what this window shows", q = "close the window",
   o = "close every other window", w = "focus the next window", [";"] = "focus the previous window",
   h = "focus left", j = "focus down", k = "focus up", l = "focus right",
   left = "focus left", down = "focus down", up = "focus up", right = "focus right",
@@ -648,9 +733,13 @@ local DESC = {
   ["="] = "make every window the same size", z = "zoom the window, and back",
   r = "rotate the windows", b = "send messages to every window, or not",
 }
+-- Also while a panel has the keyboard; a terminal lets the prefix through.
 local function map(key)
-  bone.keymap.set(PREFIX .. " " .. key, function() if root then keys[key]() end end, { desc = DESC[key] })
+  local f = function() if root then keys[key]() end end
+  bone.keymap.set(PREFIX .. " " .. key, f, { desc = DESC[key] })
+  bone.keymap.set(PREFIX .. " " .. key, f, { context = "panel" })
 end
+if terminal then terminal.passthrough[PREFIX] = true end
 for key in pairs(keys) do map(key) end
 
 -- After a resize, < > + - keep resizing for a second without the prefix.
@@ -668,7 +757,7 @@ for _, key in ipairs({ "<", ">", "+", "-" }) do
 end
 
 local SUB = {
-  vsplit = function() split("cols") end, split = function() split("rows") end,
+  term = keys.t, vsplit = function() split("cols") end, split = function() split("rows") end,
   pick = pick, close = function() close() end, only = only,
   next = cycle, equal = function() equalize() end, zoom = zoom, rotate = rotate,
   broadcast = keys.b,
@@ -676,7 +765,7 @@ local SUB = {
 bone.cmd.create("win", function(c)
   local f = SUB[(c.args or ""):match("^%s*(%S*)")]
   if not f then
-    return bone.notify("/win vsplit|split|pick|close|only|next|equal|zoom|rotate|broadcast  (keys: " .. PREFIX .. " then v s p q o w ; h j k l H J K L < > + - = z r b)")
+    return bone.notify("/win term|vsplit|split|pick|close|only|next|equal|zoom|rotate|broadcast  (keys: " .. PREFIX .. " then t v s p q o w ; h j k l H J K L < > + - = z r b)")
   end
   if root then f() end
 end, { desc = "Tiled chat windows: split, close, focus, zoom" })

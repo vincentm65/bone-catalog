@@ -14,6 +14,7 @@ Press the prefix (`alt+w` by default; `/config` → Windows), then:
 
 | Key | Does |
 |---|---|
+| `t` | open a terminal in a new window, right of this one |
 | `v` / `s` | split right / below with a new chat |
 | `p` | pick the session the window shows |
 | `h` `j` `k` `l` (or arrows) | focus the window in that direction |
@@ -28,7 +29,7 @@ Press the prefix (`alt+w` by default; `/config` → Windows), then:
 | `q` | close the window (the session stays) |
 | `o` | close every other window |
 
-`/win vsplit|split|pick|close|only|next|equal|zoom|rotate|broadcast` does the same.
+`/win term|vsplit|split|pick|close|only|next|equal|zoom|rotate|broadcast` does the same.
 
 The focused window's title bar is highlighted. A spinner in a title means
 that session is running; a `•` means a turn finished there since you last
@@ -41,6 +42,15 @@ looked.
 - Drag a window by its title bar onto another to swap them; click the
   focused window's title to pick what it shows.
 - `✕` or a middle click on a title closes a window; a double click zooms.
+
+## Terminals
+
+`/term` (or `/term <command>`), `ctrl+]` and `t` open a terminal in a new
+window beside the one you are in. It is a window like the others: move to
+it, swap, resize, zoom or close it (`q`, `✕`, or `/term close`). The prefix works inside it; every other key
+goes to the program, and `ctrl+]` goes back to the prompt. When the program
+ends the window closes, and closing the window stops the program. Terminals
+are not saved with the windows. Needs a Bone with `bone.ui.terminal`.
 
 ## Notes
 

@@ -17,6 +17,8 @@ local CONTEXT = "ask_user"
 local MAX_OPTIONS = 8 -- option rows shown at once; the list scrolls
 local MAX_INPUT = 4 -- input rows shown at once
 local GUARD_MS = 250 -- keys this soon after a question appears are ignored
+-- The layout Rust draws when the TUI library sets none (bare does not).
+local DEFAULT_LAYOUT = { "top", "chat", "divider", "above_prompt", "prompt", "statusline" }
 
 local queue = {} -- ask/requested events; the first is on screen
 local cur -- the open question: { ev, q, opts, sel, checked, opened, style, saved }
@@ -395,7 +397,7 @@ function open_next()
   local style = prompt_style(bone.ui.prompt)
   setup_groups(style.bg)
   local saved = { layout = bone.ui.layout, draft = bone.prompt.get() }
-  saved.our_layout = with_region(bone.ui.layout)
+  saved.our_layout = with_region(bone.ui.layout or DEFAULT_LAYOUT)
   cur = {
     ev = ev,
     q = ev.question,
