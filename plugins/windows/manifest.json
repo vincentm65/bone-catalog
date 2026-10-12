@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "title": "Windows",
+  "description": "Tiled chat windows: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
+  "capabilities": ["ui", "command"],
+  "min_bone_version": "3.0.2",
+  "settings": [
+    {
+      "key": "prefix", "label": "Key prefix", "type": "string", "default": "alt+w",
+      "desc": "Pressed before each window key (v, s, h, j, k, l, …). Reload the plugin after changing it."
+    }
+  ]
+}
