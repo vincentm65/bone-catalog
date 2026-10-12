@@ -636,9 +636,22 @@ local keys = {
     bone.notify(broadcast and "windows: sending to every window" or "windows: sending to the focused window")
   end,
 }
-for key, f in pairs(keys) do
-  bone.keymap.set(PREFIX .. " " .. key, function() if root then f() end end)
+local DESC = {
+  v = "split right", s = "split below", p = "pick what this window shows", q = "close the window",
+  o = "close every other window", w = "focus the next window", [";"] = "focus the previous window",
+  h = "focus left", j = "focus down", k = "focus up", l = "focus right",
+  left = "focus left", down = "focus down", up = "focus up", right = "focus right",
+  H = "swap with the window left", J = "swap with the window below",
+  K = "swap with the window above", L = "swap with the window right",
+  ["<"] = "narrower (repeat without the prefix)", [">"] = "wider (repeat without the prefix)",
+  ["-"] = "shorter (repeat without the prefix)", ["+"] = "taller (repeat without the prefix)",
+  ["="] = "make every window the same size", z = "zoom the window, and back",
+  r = "rotate the windows", b = "send messages to every window, or not",
+}
+local function map(key)
+  bone.keymap.set(PREFIX .. " " .. key, function() if root then keys[key]() end end, { desc = DESC[key] })
 end
+for key in pairs(keys) do map(key) end
 
 -- After a resize, < > + - keep resizing for a second without the prefix.
 bone.keymap.context("wm_resize", { fallback = { "main" } })
@@ -652,7 +665,6 @@ for _, key in ipairs({ "<", ">", "+", "-" }) do
     bone.defer(1000, function() if resizing == at then bone.keymap.clear() end end)
   end
   bone.keymap.set(key, keys[key], { context = "wm_resize" })
-  bone.keymap.set(PREFIX .. " " .. key, function() if root then keys[key]() end end)
 end
 
 local SUB = {
