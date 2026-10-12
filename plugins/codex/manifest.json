@@ -1,5 +1,5 @@
 {
-  "version": "1.3.5",
+  "version": "1.4.0",
   "title": "Codex",
   "description": "Model provider for OpenAI's Responses API: your ChatGPT plan through the Codex CLI login, or an OpenAI API key",
   "capabilities": [

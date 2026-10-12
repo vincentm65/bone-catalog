@@ -45,11 +45,13 @@ Run `codex login` once first. The token is read on every request, and the
 Codex CLI refreshes it in place; if a turn fails with HTTP 401, run `codex`
 once to refresh it.
 
-Requests mirror the Codex CLI's routing headers (`session-id`, `thread-id`,
-`x-codex-turn-state`) and `prompt_cache_key`, keyed by the bone session, so
-a session's turns hit the prompt cache. Reasoning summaries stream as
-reasoning. Encrypted reasoning is not carried between calls, because bone's
-transcript has nowhere to keep it.
+The plugin only decides where requests go and how they sign in; bone's
+built-in Responses provider (`api = "responses"`) builds and sends them, so
+it needs a bone with Lua `prepare` providers. Requests carry the Codex CLI's
+routing headers (`session-id`, `thread-id`) and `prompt_cache_key`, keyed by
+the bone session, so a session's turns hit the prompt cache. Reasoning
+summaries stream as reasoning, and the model's encrypted reasoning goes back
+on later calls, so it keeps its thinking between tool calls.
 
 The ChatGPT Codex backend is not a documented API, and it accepts only the
 models your plan offers in Codex.

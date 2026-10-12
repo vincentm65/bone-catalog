@@ -57,7 +57,7 @@
   {
     "name": "codex",
     "kind": "plugin",
-    "version": "1.3.5",
+    "version": "1.4.0",
     "description": "Model provider for OpenAI's Responses API: your ChatGPT plan through the Codex CLI login, or an OpenAI API key",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -68,15 +68,15 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "2d8f2095a245f2a53a9abdcb55e1e7a24b1501150fd19a3419bb1c20f415b304"
+        "sha256": "3f23ec2ecbd6d1fa983be6a6d1852ef84ddee78ecf689f1a792a3d4439febdee"
       },
       {
         "path": "core.lua",
-        "sha256": "18151cc929e7c7e5f021960fd1b2cacd1ac7a155423891f6e68744917abd9da9"
+        "sha256": "181da37a6f0dced1a6ccd2fc31ccb0908b62aee4b9668dbd725c17a28b87b862"
       },
       {
         "path": "manifest.json",
-        "sha256": "f43739fef6495405601d096542c53147d1245b91984dbed2861602326db66293"
+        "sha256": "e82e78075ef2441b8f531dbbbef661724292bad0f66ab57e5856b6058eab3668"
       },
       {
         "path": "tui.lua",

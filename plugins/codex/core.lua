@@ -36,212 +36,55 @@ local function codex_auth()
   return t.access_token, t.account_id
 end
 
-local function user_item(text, images)
-  local content = {}
-  if text ~= "" or not images or #images == 0 then
-    content[1] = { type = "input_text", text = text }
-  end
-  for _, img in ipairs(images or {}) do
-    if not img.data or img.data == "" then
-      error("codex: image bytes are unavailable", 0)
-    end
-    content[#content + 1] = {
-      type = "input_image",
-      image_url = "data:" .. (img.mime_type or "image/png") .. ";base64," .. img.data,
-    }
-  end
-  return { role = "user", content = content }
-end
-
--- bone messages -> Responses `instructions` + `input` items.
-local function convert(messages)
-  local system, input = {}, {}
-  -- Tool images go in a user message after the whole run of tool outputs,
-  -- since every function_call_output must directly answer its call.
-  local tool_images = {}
-  for i, m in ipairs(messages) do
-    if m.role == "system" then
-      system[#system + 1] = m.content
-    elseif m.role == "user" then
-      input[#input + 1] = user_item(m.content or "", m.images)
-    elseif m.role == "assistant" then
-      if m.content and m.content ~= "" then
-        input[#input + 1] = { role = "assistant", content = { { type = "output_text", text = m.content } } }
-      end
-      for _, c in ipairs(m.tool_calls or {}) do
-        local args = c.arguments
-        if type(args) ~= "string" then
-          args = bone.json.encode(args or {})
-        end
-        input[#input + 1] = { type = "function_call", call_id = c.id, name = c.name, arguments = args }
-      end
-    elseif m.role == "tool" then
-      input[#input + 1] = { type = "function_call_output", call_id = m.call_id, output = m.content or "" }
-      if m.images and #m.images > 0 then
-        tool_images[#tool_images + 1] =
-          user_item("Images from tool call " .. tostring(m.call_id) .. ": " .. (m.content or ""), m.images)
-      end
-    end
-    local nxt = messages[i + 1]
-    if not (nxt and nxt.role == "tool") then
-      for _, item in ipairs(tool_images) do
-        input[#input + 1] = item
-      end
-      tool_images = {}
-    end
-  end
-  return table.concat(system, "\n\n"), input
-end
-
--- x-codex-turn-state: the backend hands one out on a turn's first response and
--- wants it back on that turn's later calls, keeping them on one cache shard.
-local turn_state = {}
-
-local function complete(req, emit)
+-- Only where requests go and how they sign in are Codex's own: bone's
+-- Responses provider builds and sends them, keeping the model's encrypted
+-- reasoning between calls and reporting a stream that breaks off.
+local function prepare(req)
   local o = req.options
   local fast = bone.settings.get("codex.fast")
   if fast == nil then fast = o.fast end
-  local instructions, input = convert(req.messages)
-  local last = req.messages[#req.messages]
   local sid = req.session_id
-  if sid and last and last.role == "user" then
-    turn_state[sid] = nil -- a new turn
+  local body = { prompt_cache_key = sid, service_tier = fast and "priority" or nil }
+  local base_url = o.base_url ~= "" and o.base_url or nil
+  if o.api_key and o.api_key ~= "" then
+    return { api = "responses", base_url = base_url or OPENAI_URL, body = body }
   end
-
-  local token, account = o.api_key, nil
-  local default_url = OPENAI_URL
-  if not token or token == "" then
-    token, account = codex_auth()
-    default_url = CODEX_URL
-    if not token then
-      error("codex: no login found; run `codex login`, or set api_key on this provider", 0)
-    end
+  local token, account = codex_auth()
+  if not token then
+    error("codex: no login found; run `codex login`, or set api_key on this provider", 0)
   end
-  local base = ((o.base_url and o.base_url ~= "") and o.base_url or default_url):gsub("/$", "")
-
-  local tools = {}
-  for _, t in ipairs(req.tools) do
-    tools[#tools + 1] = { type = "function", name = t.name, description = t.description, parameters = t.parameters, strict = false }
+  -- The Codex backend wants instructions even without a system prompt.
+  local system = false
+  for _, m in ipairs(req.messages) do
+    system = system or m.role == "system"
   end
-  table.sort(tools, function(a, b) return a.name < b.name end)
-
-  local body = {
-    model = o.model,
-    instructions = instructions ~= "" and instructions or "You are a helpful assistant.",
-    input = input,
-    stream = true,
-    store = false,
-    reasoning = { effort = o.reasoning_effort, summary = "auto" },
-    tools = #tools > 0 and tools or nil,
-    tool_choice = #tools > 0 and "auto" or nil,
-    parallel_tool_calls = #tools > 0 and true or nil,
-    prompt_cache_key = sid,
-    service_tier = fast and "priority" or nil,
+  if not system then
+    body.instructions = "You are a helpful assistant."
+  end
+  return {
+    api = "responses",
+    base_url = base_url or CODEX_URL,
+    headers = {
+      authorization = "Bearer " .. token,
+      originator = "codex_cli_rs",
+      ["chatgpt-account-id"] = account,
+      ["session-id"] = sid,
+      ["thread-id"] = sid,
+      ["x-client-request-id"] = sid,
+    },
+    body = body,
   }
-  local headers = {
-    ["authorization"] = "Bearer " .. token,
-    ["content-type"] = "application/json",
-    ["accept"] = "text/event-stream",
-  }
-  if default_url == CODEX_URL then
-    headers["originator"] = "codex_cli_rs"
-    headers["chatgpt-account-id"] = account
-    if sid then
-      headers["session-id"] = sid
-      headers["thread-id"] = sid
-      headers["x-client-request-id"] = sid
-      headers["x-codex-turn-state"] = turn_state[sid]
-    end
-  end
-
-  local s = bone.http_stream({ url = base .. "/responses", method = "POST", headers = headers, body = body })
-  if s == nil then
-    return nil -- cancelled
-  end
-  if s.status ~= 200 then
-    local text = s:text() or ""
-    if s.status == 401 and default_url == CODEX_URL then
-      error("codex: HTTP 401, the login has expired; run `codex` once to refresh it (" .. text .. ")", 0)
-    end
-    error("codex: HTTP " .. s.status .. ": " .. text, 0)
-  end
-  if sid and not turn_state[sid] and s.headers then
-    turn_state[sid] = s.headers["x-codex-turn-state"]
-  end
-
-  local result = { content = "", reasoning = "", tool_calls = {}, usage = { input_tokens = 0, output_tokens = 0 } }
-  local calls = {} -- output_index -> { id, name, arguments }
-  local function finish_call(index, item)
-    local c = calls[index] or {}
-    calls[index] = nil
-    item = item or {}
-    local id, name = item.call_id or c.id, item.name or c.name
-    local args = (item.arguments and item.arguments ~= "") and item.arguments or c.arguments
-    if id and name then
-      table.insert(result.tool_calls, { id = id, name = name, arguments = (args and args ~= "") and args or "{}" })
-    end
-  end
-
-  for data in s:events() do
-    local ev = decode(data) or {}
-    local kind = ev.type
-    if kind == "response.output_text.delta" then
-      result.content = result.content .. ev.delta
-      emit({ text = ev.delta })
-    elseif kind == "response.reasoning_summary_text.delta" then
-      result.reasoning = result.reasoning .. ev.delta
-      emit({ reasoning = ev.delta })
-    elseif kind == "response.reasoning_summary_part.added" and result.reasoning ~= "" then
-      result.reasoning = result.reasoning .. "\n\n"
-      emit({ reasoning = "\n\n" })
-    elseif kind == "response.output_item.added" and ev.item and ev.item.type == "function_call" then
-      calls[ev.output_index or 0] = { id = ev.item.call_id, name = ev.item.name, arguments = "" }
-    elseif kind == "response.function_call_arguments.delta" then
-      local c = calls[ev.output_index or 0]
-      if c then
-        c.arguments = c.arguments .. (ev.delta or "")
-      end
-    elseif kind == "response.output_item.done" and ev.item and ev.item.type == "function_call" then
-      finish_call(ev.output_index or 0, ev.item)
-    elseif kind == "response.completed" then
-      local u = ev.response and ev.response.usage
-      if u then
-        result.usage.input_tokens = u.input_tokens or 0
-        result.usage.output_tokens = u.output_tokens or 0
-        local cached = u.input_tokens_details and u.input_tokens_details.cached_tokens
-        if cached and cached > 0 then
-          result.usage.cached_tokens = cached
-        end
-      end
-    elseif kind == "response.failed" or kind == "error" then
-      local err = (ev.response and ev.response.error) or ev.error or ev
-      error("codex: " .. (err.message or data), 0)
-    elseif kind == "response.incomplete" then
-      local d = ev.response and ev.response.incomplete_details
-      error("codex: response incomplete (" .. ((d and d.reason) or "unknown reason") .. ")", 0)
-    end
-  end
-  for index in pairs(calls) do
-    finish_call(index)
-  end
-  return result
 end
 
-bone.provider.register("codex", { complete = complete })
+bone.provider.register("codex", { prepare = prepare })
 
--- Retry transient Codex failures after 1s, 2s, then 4s.
--- The core only invokes this hook before text or reasoning has streamed.
+-- Retry the backend's transient failures inside a stream after 1s, 2s, then
+-- 4s (HTTP 429 and 5xx are retried already). The core only invokes this hook
+-- before text or reasoning has streamed.
 bone.hook("request_error", function(ev)
   local err = ev.error or ""
-  if not err:find("codex:", 1, true) then return end
-
-  local transient =
-    err:find("An error occurred while processing your request", 1, true)
+  local transient = err:find("An error occurred while processing your request", 1, true)
     or err:find("overloaded", 1, true)
-    or err:find("try again later", 1, true)
-    or err:find("codex: HTTP 429", 1, true)
-    or err:match("codex: HTTP 5%d%d")
-
   if transient and ev.attempt <= 3 then
     return { retry = 1000 * 2 ^ (ev.attempt - 1) }
   end

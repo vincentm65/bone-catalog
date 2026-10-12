@@ -1,5 +1,5 @@
 -- Run from the catalog root: luajit tests/codex_test.lua
-local saved, command, complete, body, notice, fail
+local saved, command, prepare, notice, fail
 local commands, rpcs, page = {}, {}
 local retry_hook
 bone = {
@@ -17,31 +17,24 @@ bone = {
   ui = { pager = function(lines) page = lines end },
   notify = function(text, level) notice = { text, level } end,
   config = { providers = { codex = {} } },
-  provider = { register = function(name, spec) assert(name == "codex"); complete = spec.complete end },
+  provider = { register = function(name, spec) assert(name == "codex"); prepare = spec.prepare end },
   json = { decode = function() return {} end },
-  http_stream = function(req)
-    body = req.body
-    return { status = 200, events = function() return function() return nil end end }
-  end,
 }
 dofile("plugins/codex/core.lua")
 for attempt = 1, 3 do
-  for _, err in ipairs({
-    "codex provider: codex: An error occurred while processing your request.",
-    "codex: HTTP 429: rate limited",
-    "codex: HTTP 503: unavailable",
-  }) do
-    assert(retry_hook({ error = err, attempt = attempt }).retry == 1000 * 2 ^ (attempt - 1))
-  end
+  local err = 'provider error: {"message":"An error occurred while processing your request."}'
+  assert(retry_hook({ error = err, attempt = attempt }).retry == 1000 * 2 ^ (attempt - 1))
 end
-assert(retry_hook({ error = "codex: HTTP 503", attempt = 4 }) == nil)
-assert(retry_hook({ error = "codex: HTTP 401", attempt = 1 }) == nil)
-assert(retry_hook({ error = "other: HTTP 503", attempt = 1 }) == nil)
-assert(retry_hook({ error = "codex: response incomplete (max_output_tokens)", attempt = 1 }) == nil)
+assert(retry_hook({ error = "provider error: overloaded", attempt = 4 }) == nil)
+assert(retry_hook({ error = "HTTP 401 Unauthorized", attempt = 1 }) == nil)
+assert(retry_hook({ error = "response incomplete: max_output_tokens", attempt = 1 }) == nil)
+-- An API key: OpenAI's API, signed in by bone's own Responses provider.
+local r = prepare({ options = { api_key = "test", model = "test" }, messages = {}, session_id = "s" })
+assert(r.api == "responses" and r.base_url == "https://api.openai.com/v1" and r.headers == nil)
+assert(r.body.prompt_cache_key == "s")
 dofile("plugins/codex/tui.lua")
 local function tier(fast)
-  complete({ options = { fast = fast, api_key = "test", model = "test" }, messages = {}, tools = {} }, function() end)
-  return body.service_tier
+  return prepare({ options = { fast = fast, api_key = "test", model = "test" }, messages = {} }).body.service_tier
 end
 assert(tier(true) == "priority")
 assert(tier(false) == nil)
@@ -114,5 +107,13 @@ assert(rpcs["codex.usage"]().rate_limit == quota.rate_limit)
 bone.http = function() return { status = 401 } end
 local ok, err = pcall(rpcs["codex.usage"])
 assert(not ok and err:find("login expired", 1, true))
+-- A Codex login: the ChatGPT backend, with the login's token and account.
+saved = nil
+r = prepare({ options = { model = "test" }, messages = { { role = "user", content = "hi" } }, session_id = "s" })
+assert(r.base_url == "https://chatgpt.com/backend-api/codex")
+assert(r.headers.authorization == "Bearer test-token" and r.headers["chatgpt-account-id"] == "test-account")
+assert(r.headers["session-id"] == "s" and r.body.instructions)
+r = prepare({ options = { model = "test" }, messages = { { role = "system", content = "be brief" } } })
+assert(r.body.instructions == nil, "the system prompt is the instructions")
 io.open = open
 print("codex checks passed")
