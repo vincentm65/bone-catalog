@@ -14,14 +14,18 @@ local STEP = 4 -- cells per keyboard resize
 local DEFAULT = { "top", { cols = { "left", "chat", "right" }, sep = "│" }, "divider", "above_prompt", "prompt", "statusline" }
 
 local st = bone.plugin.state()
+bone.hl.set("WinBarActive", { link = "StatusLine", reverse = true })
 
 -- wins[id] = { id, sid }. Tree nodes: { win = id, w } or { dir = "cols" |
 -- "rows", w, kids }. `w` is a share of the parent split.
 local wins, root, focused = {}, nil, nil
 local seq, zoomed, switching, started = 0, false, false, false
+local last, broadcast, clicked, resizing -- the window focused before; send to all; the last title click
 -- The layout without windows, the one last assigned, and each split by its
 -- path in the assigned layout (for separators from bone.ui.geometry).
 local base, applied, splits = nil, nil, {}
+local HSEP = { size = 1, render = function() return { { { fill = "─", hl = "WinSeparator" } } } end }
+local unread = {} -- sessions whose turn ended while their window was in the background
 local drag -- { kind = "cols" | "rows" | "move", ... } while the mouse holds something
 
 local function current_sid()
@@ -104,12 +108,18 @@ local function build(node, size, path)
       or { "wm_empty:" .. id, size = "fill" }
     return { rows = { "wm_bar:" .. id, body }, size = size }
   end
-  splits[table.concat(path, ".")] = node
+  local key = table.concat(path, ".")
+  splits[key] = node
   local kids = {}
   for i, k in ipairs(node.kids) do
+    -- Stacked windows get a line between them, to drag.
+    if node.dir == "rows" and i > 1 then
+      kids[#kids + 1] = "wm_hsep:" .. key .. ":" .. i
+      bone.ui.regions[kids[#kids]] = HSEP
+    end
     local p = { unpack(path) }
-    p[#p + 1] = i
-    kids[i] = build(k, size_of(node, i), p)
+    p[#p + 1] = #kids + 1
+    kids[#kids + 1] = build(k, size_of(node, i), p)
   end
   return { [node.dir] = kids, sep = node.dir == "cols" and "│" or nil, size = size }
 end
@@ -138,6 +148,9 @@ end
 
 local function apply()
   if not root then return end
+  for name in pairs(bone.ui.regions) do
+    if name:find("^wm_hsep:") then bone.ui.regions[name] = nil end
+  end
   -- Someone else changed the layout: that is the one to put windows in.
   if bone.ui.layout ~= applied then base = bone.ui.layout end
   splits = {}
@@ -228,13 +241,13 @@ end
 
 -- ---- windows -------------------------------------------------------------
 
-local bar -- the bar renderer, below
+local bar, pick -- the bar renderer and the session picker, below
 
 local function new_win(sid)
   seq = seq + 1
   local id = seq
   wins[id] = { id = id, sid = sid }
-  bone.ui.regions["wm_bar:" .. id] = { size = 1, render = function(ctx) return bar(id, ctx.width) end }
+  bone.ui.regions["wm_bar:" .. id] = { size = 1, render = function(ctx) return bar(id, ctx) end }
   bone.ui.regions["wm_empty:" .. id] = {
     render = function(ctx)
       local out = {}
@@ -255,7 +268,7 @@ end
 local function focus(id)
   if not wins[id] or id == focused then return end
   sync()
-  focused = id
+  last, focused = focused, id
   switching = true
   local sid = wins[id].sid
   if sid then bone.api.open_session(sid) else bone.action("new_session") end
@@ -263,13 +276,13 @@ local function focus(id)
   apply()
 end
 
--- Split the focused window along `dir` with a new one showing `sid` (nil: a
--- new chat), and focus it.
-local function split(dir, sid)
+-- Split window `at` (default: the focused one, and then the new window takes
+-- focus) along `dir` with a new one showing `sid` (nil: a new chat).
+local function split(dir, sid, at)
   sync()
-  if sid and win_of(sid) then return focus(win_of(sid)) end
+  if sid and win_of(sid) then return at or focus(win_of(sid)) end
   zoomed = false
-  local node, parent, i = leaf(focused)
+  local node, parent, i = leaf(at or focused)
   local new = { win = new_win(sid), w = 1 }
   if parent and parent.dir == dir then
     node.w = node.w / 2
@@ -280,7 +293,9 @@ local function split(dir, sid)
     node.w = 1
     if parent then parent.kids[i] = s else root = s end
   end
-  focus(new.win)
+  if not at then return focus(new.win) end
+  bone.chat.open(sid)
+  apply()
 end
 
 local function close(id)
@@ -337,6 +352,21 @@ local function equalize(node)
   if node == root then apply() end
 end
 
+local function zoom()
+  zoomed = not zoomed
+  apply()
+end
+
+-- Every window moves one place along; focus stays with its chat.
+local function rotate()
+  local nodes = {}
+  locate(root, function(n) nodes[#nodes + 1] = n.win and n or nil end)
+  local first = nodes[1].win
+  for i = 1, #nodes - 1 do nodes[i].win = nodes[i + 1].win end
+  nodes[#nodes].win = first
+  apply()
+end
+
 -- Grow the focused window by `cells` along "cols" or "rows".
 local function grow(dir, cells)
   local child = leaf(focused)
@@ -351,34 +381,22 @@ local function grow(dir, cells)
   end
 end
 
--- The rows split whose boundary sits right above window `id`'s bar, and
--- the index of the subtree below it.
-local function top_edge(id)
-  local child = leaf(id)
-  while true do
-    local _, parent, i = locate(root, function(n) return n == child end)
-    if not parent then return end
-    if parent.dir == "rows" and i > 1 then return parent, i end
-    child = parent
-  end
-end
-
 -- ---- the bar on each window ----------------------------------------------
 
-bar = function(id, width)
+bar = function(id, ctx)
   local w = wins[id]
   if not w then return {} end
   local mine = id == focused
   local sid = mine and current_sid() or w.sid
   local s = sid and bone.chat.session({ session = sid })
   local name = sid and (s and s.title or "[untitled]") or "new chat"
-  local hl = mine and "Accent" or "Dim"
+  local hl = mine and "WinBarActive" or "Dim"
   if drag and drag.kind == "move" and drag.target == id and drag.id ~= id then hl = "Selection" end
-  local mark = s and s.running and "● " or ""
-  local title = bone.text.truncate(mark .. name, math.max(width - 10, 1))
+  local mark = s and s.running and ctx.spinner .. " " or unread[sid] and "• " or ""
+  local title = bone.text.truncate(mark .. name, math.max(ctx.width - 10, 1))
   return { {
-    { " ⠿ ", "Dim" }, { title, hl }, { " ", hl },
-    { fill = "─", hl = mine and "Accent" or "WinSeparator" }, { " ✕ ", "Dim" },
+    { " ⠿ ", hl }, { title, hl }, { " ", hl },
+    { fill = mine and " " or "─", hl = mine and hl or "WinSeparator" }, { " ✕ ", hl },
   } }
 end
 
@@ -399,8 +417,20 @@ local function on_mouse(ev)
     return true
   end
   if drag and ev.action == "up" then
-    if drag.kind == "move" and drag.target then swap(drag.target) end
+    local t = drag.kind == "move" and (drag.target or drag.id)
+    -- A click on the focused window's title changes its session.
+    if t and t ~= drag.id then
+      swap(t)
+    elseif t and drag.was then
+      local c = clicked
+      bone.defer(350, function() if clicked == c then pick() end end)
+    end
     drag = nil
+    return true
+  end
+  local id = tonumber((ev.region or ""):match("^wm_bar:(%d+)$"))
+  if id and ev.action == "down" and ev.button == "middle" then
+    close(id)
     return true
   end
   if ev.action ~= "down" or ev.button ~= "left" then return end
@@ -416,20 +446,26 @@ local function on_mouse(ev)
     end
   end
   local region = ev.region or ""
-  local id = tonumber(region:match("^wm_bar:(%d+)$"))
   if id then
     local r = rects()[id]
     if r and ev.col > r.width - 3 then
       close(id)
       return true
     end
-    focus(id)
-    local parent, i = top_edge(id)
-    if ev.col <= 3 or not parent then
-      drag = { kind = "move", id = id }
-    else
-      drag = { kind = "rows", split = parent, i = i, last = ev.y }
+    local now = bone.now()
+    if clicked and clicked.id == id and now - clicked.at < 350 then
+      clicked = nil
+      zoom()
+      return true
     end
+    clicked = { id = id, at = now }
+    drag = { kind = "move", id = id, was = id == focused }
+    focus(id)
+    return true
+  end
+  local key, i = region:match("^wm_hsep:(.*):(%d+)$")
+  if key and splits[key] then
+    drag = { kind = "rows", split = splits[key], i = tonumber(i), last = ev.y }
     return true
   end
   -- A click in another window focuses it.
@@ -501,6 +537,33 @@ bone.on("turn/started", function(ev)
   end
 end)
 
+bone.on("turn/finished", function(ev)
+  if ev.session_id ~= current_sid() then unread[ev.session_id] = true end
+end)
+bone.on("chat/shown", function(ev) unread[ev.session_id or ""] = nil end)
+
+bone.on("session/deleted", function(ev)
+  if root and win_of(ev.session_id) then close(win_of(ev.session_id)) end
+end)
+
+-- Optionally watch each sub-agent in a window under its owner's.
+bone.on("session/created", function(ev)
+  local o = ev.owner
+  if root and o and bone.settings.get("windows.subagents") then
+    split("rows", ev.session_id, win_of(o.session_id) or focused)
+  end
+end)
+
+-- Broadcast: a message sent in the focused window also goes to every other.
+bone.on("submit", function(ev)
+  if not broadcast or not root then return end
+  for id, w in pairs(wins) do
+    if id ~= focused and w.sid then
+      bone.request("queue/add", { session_id = w.sid, text = ev.text, mode = "next" }, function() end)
+    end
+  end
+end)
+
 bone.on("mouse", on_mouse)
 bone.on("ready", start)
 bone.defer(0, start) -- loaded after startup (/plugins load windows)
@@ -513,22 +576,22 @@ end)
 
 -- ---- keys and the command ------------------------------------------------
 
-local function pick(dir)
+-- Change what the focused window shows.
+function pick()
   bone.request("session/list", {}, function(list, err)
     if err then return bone.notify(tostring(err), "error") end
-    sync()
     local items = { { new = true } }
     for _, s in ipairs(list or {}) do
       if not s.owner then items[#items + 1] = s end
     end
     bone.ui.select(items, {
-      prompt = dir == "cols" and "Split right" or "Split below",
+      prompt = "Show in this window",
       format = function(s)
         if s.new then return "+ new chat" end
         return (s.title or "[untitled]") .. (win_of(s.session_id) and "  · open" or "")
       end,
       on_choice = function(s)
-        if s then split(dir, not s.new and s.session_id or nil) end
+        if s and s.new then bone.action("new_session") elseif s then bone.api.open_session(s.session_id) end
       end,
     })
   end)
@@ -551,9 +614,9 @@ local function cycle()
 end
 
 local keys = {
-  v = function() pick("cols") end,
-  s = function() pick("rows") end,
-  n = function() split("cols") end,
+  v = function() split("cols") end,
+  s = function() split("rows") end,
+  p = pick,
   q = function() close() end,
   o = only,
   w = cycle,
@@ -565,24 +628,43 @@ local keys = {
   ["+"] = function() grow("rows", 2) end,
   ["-"] = function() grow("rows", -2) end,
   ["="] = function() equalize() end,
-  z = function()
-    zoomed = not zoomed
-    apply()
+  z = zoom,
+  r = rotate,
+  [";"] = function() focus(last) end,
+  b = function()
+    broadcast = not broadcast
+    bone.notify(broadcast and "windows: sending to every window" or "windows: sending to the focused window")
   end,
 }
 for key, f in pairs(keys) do
   bone.keymap.set(PREFIX .. " " .. key, function() if root then f() end end)
 end
 
+-- After a resize, < > + - keep resizing for a second without the prefix.
+bone.keymap.context("wm_resize", { fallback = { "main" } })
+for _, key in ipairs({ "<", ">", "+", "-" }) do
+  local f = keys[key]
+  keys[key] = function()
+    f()
+    local at = bone.now()
+    resizing = at
+    bone.keymap.focus("wm_resize")
+    bone.defer(1000, function() if resizing == at then bone.keymap.clear() end end)
+  end
+  bone.keymap.set(key, keys[key], { context = "wm_resize" })
+  bone.keymap.set(PREFIX .. " " .. key, function() if root then keys[key]() end end)
+end
+
 local SUB = {
-  vsplit = function() pick("cols") end, split = function() pick("rows") end,
-  new = function() split("cols") end, close = function() close() end, only = only,
-  next = cycle, equal = function() equalize() end, zoom = keys.z,
+  vsplit = function() split("cols") end, split = function() split("rows") end,
+  pick = pick, close = function() close() end, only = only,
+  next = cycle, equal = function() equalize() end, zoom = zoom, rotate = rotate,
+  broadcast = keys.b,
 }
 bone.cmd.create("win", function(c)
   local f = SUB[(c.args or ""):match("^%s*(%S*)")]
   if not f then
-    return bone.notify("/win vsplit|split|new|close|only|next|equal|zoom  (keys: " .. PREFIX .. " then v s n q o w h j k l H J K L < > + - = z)")
+    return bone.notify("/win vsplit|split|pick|close|only|next|equal|zoom|rotate|broadcast  (keys: " .. PREFIX .. " then v s p q o w ; h j k l H J K L < > + - = z r b)")
   end
   if root then f() end
 end, { desc = "Tiled chat windows: split, close, focus, zoom" })

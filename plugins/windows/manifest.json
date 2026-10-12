@@ -1,13 +1,26 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "title": "Windows",
   "description": "Tiled chat windows: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
-  "capabilities": ["ui", "command"],
+  "capabilities": [
+    "ui",
+    "command"
+  ],
   "min_bone_version": "3.0.2",
   "settings": [
     {
-      "key": "prefix", "label": "Key prefix", "type": "string", "default": "alt+w",
+      "key": "prefix",
+      "label": "Key prefix",
+      "type": "string",
+      "default": "alt+w",
       "desc": "Pressed before each window key (v, s, h, j, k, l, …). Reload the plugin after changing it."
+    },
+    {
+      "key": "subagents",
+      "label": "Watch sub-agents",
+      "type": "boolean",
+      "default": false,
+      "desc": "Open each new sub-agent's session in a window under its owner's, to watch it work."
     }
   ]
 }
