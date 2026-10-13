@@ -1,12 +1,13 @@
 # windows
 
 Tiled chat windows, like vim or tmux splits: several sessions on screen at
-once, each streaming live. The focused window is the chat on screen (the
-prompt sends to it); the others are drawn by Rust from their own render
-cache, so a background window costs nothing until its session changes.
+once, each streaming live with its own prompt and statusline. The focused
+window is the chat on screen (you type in its prompt); the others show
+their drafts and are drawn by Rust from their own render cache, so a
+background window costs nothing until its session changes.
 
-Needs a Bone with `chat:<id>` layout leaves, `bone.chat.open` and
-`bone.ui.geometry` (3.0.2).
+Needs a Bone with `chat:<id>`, `prompt:<id>` and `statusline:<id>` layout
+leaves, `bone.chat.open` and `bone.ui.geometry`.
 
 ## Keys
 
@@ -56,10 +57,10 @@ are not saved with the windows. Needs a Bone with `bone.ui.terminal`.
 
 - Opening a session another way (`ctrl+o`, a sub-agent, `ctrl+n`) changes
   what the focused window shows, or focuses the window that already has it.
-- The tree replaces the `chat` leaf of whatever `bone.ui.layout` you have,
-  so the prompt, statusline, regions and panels stay where they were. Docked
-  panels sit beside the top-left window; put a panel in the layout
-  (`{ panel = "id" }`) to place it elsewhere.
+- The tree replaces the `chat` leaf of whatever `bone.ui.layout` you have.
+  Rows above the chat stay where they were; the rows under it (prompt,
+  statusline…) go into every window. Docked panels sit beside the focused
+  window; put a panel in the layout (`{ panel = "id" }`) to place it elsewhere.
 - A window whose session is deleted closes.
 - With *Watch sub-agents* on (`/config` → Windows), each new sub-agent opens
   in a window under its owner's.

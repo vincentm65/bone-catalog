@@ -2,11 +2,10 @@
 -- moved and focused with the keyboard or the mouse. A window can show a
 -- terminal instead (bone.ui.terminal): a `panel:<id>` leaf in its place.
 --
--- The layout's "chat" leaf becomes a tree of windows. The focused window is
--- the real "chat" leaf (the prompt, scrolling and selection belong to it);
--- every other window is a `chat:<session id>` leaf that Rust draws from its
--- own cache. Focusing a window shows its session, so the tree never moves
--- for a focus change, only leaf names do.
+-- The layout's "chat" leaf becomes a tree of windows, each with its own copy
+-- of the rows under the chat (prompt, statusline…). The focused window has
+-- the bare leaves (the chat on screen); others have `prompt:<session id>` and
+-- so on. Focusing a window shows its session, so only leaf names change.
 
 local PREFIX = bone.settings.get("windows.prefix")
 if type(PREFIX) ~= "string" or PREFIX == "" then PREFIX = "alt+w" end
@@ -26,7 +25,7 @@ local seq, zoomed, switching, started = 0, false, false, false
 local last, broadcast, clicked, resizing -- the window focused before; send to all; the last title click
 -- The layout without windows, the one last assigned, and each split by its
 -- path in the assigned layout (for separators from bone.ui.geometry).
-local base, applied, splits = nil, nil, {}
+local base, applied, splits, below = nil, nil, {}, {}
 local HSEP = { size = 1, render = function() return { { { fill = "─", hl = "WinSeparator" } } } end }
 local unread = {} -- sessions whose turn ended while their window was in the background
 local drag -- { kind = "cols" | "rows" | "move", ... } while the mouse holds something
@@ -59,10 +58,22 @@ local function here()
   return term_win(bone.ui.panel.focused()) or focused
 end
 
--- The layout leaf a window's content is drawn in.
-local function body_of(id)
-  local w = wins[id]
-  return w.term and "panel:" .. w.term or id == focused and "chat" or w.sid and "chat:" .. w.sid or "wm_empty:" .. id
+-- A window's rows: its title bar, then a terminal, or a chat with the rows
+-- from under the base layout's chat (another chat keeps only the built-ins,
+-- for its own session).
+local function rows_of(id)
+  local w, bar = wins[id], "wm_bar:" .. id
+  if w.term then return { bar, "panel:" .. w.term } end
+  if id ~= focused and not w.sid then return { bar, { "wm_empty:" .. id, size = "fill" } } end
+  local at = id == focused and "" or ":" .. w.sid
+  local out = { bar, "chat" .. at }
+  for _, e in ipairs(below) do
+    local name = type(e) == "table" and e[1] or e
+    if at == "" or name == "divider" or name == "prompt" or name == "statusline" then
+      out[#out + 1] = at == "" and e or name .. at
+    end
+  end
+  return out
 end
 
 -- The focused window shows whatever chat is on screen.
@@ -127,11 +138,7 @@ local function size_of(parent, i)
 end
 
 local function build(node, size, path)
-  if node.win then
-    local id = node.win
-    local body = body_of(id)
-    return { rows = { "wm_bar:" .. id, body:find("^wm_empty:") and { body, size = "fill" } or body }, size = size }
-  end
+  if node.win then return { rows = rows_of(node.win), size = size } end
   local key = table.concat(path, ".")
   splits[key] = node
   local kids = {}
@@ -171,6 +178,13 @@ local function subst(node, path)
   return copy
 end
 
+local function has_chat(n)
+  if type(n) ~= "table" then return n == "chat" end
+  for _, c in ipairs(n.rows or n.cols or n) do
+    if has_chat(c) then return true end
+  end
+end
+
 local function apply()
   if not root then return end
   for name in pairs(bone.ui.regions) do
@@ -184,8 +198,11 @@ local function apply()
     applied = base
   else
     shown = zoomed_term and leaf(zoomed) or root
+    local rows, at = base or DEFAULT, 0
+    repeat at = at + 1 until at >= #rows or has_chat(rows[at])
+    below = { unpack(rows, at + 1) }
     applied = {}
-    for i, entry in ipairs(base or DEFAULT) do applied[i] = subst(entry, { i }) end
+    for i = 1, at do applied[i] = subst(rows[i], { i }) end
   end
   -- A terminal not in the layout would dock: hide it while zoomed away.
   for id, w in pairs(wins) do
@@ -207,11 +224,12 @@ local function rects()
   for _, l in ipairs(bone.ui.geometry().leaves) do by[l.name] = l end
   local out = {}
   for id, w in pairs(wins) do
-    local bar = by["wm_bar:" .. id]
-    if bar then
-      local body = by[body_of(id)]
-      out[id] = { x = bar.x, y = bar.y, width = bar.width, height = 1 + (body and body.height or 0) }
+    local bar, bottom = by["wm_bar:" .. id], 0
+    for _, e in ipairs(bar and rows_of(id) or {}) do
+      local l = by[type(e) == "table" and e[1] or e]
+      if l then bottom = math.max(bottom, l.y + l.height) end
     end
+    if bar then out[id] = { x = bar.x, y = bar.y, width = bar.width, height = bottom - bar.y } end
   end
   return out
 end
@@ -525,7 +543,7 @@ local function on_mouse(ev)
     return true
   end
   -- A click in another window focuses it.
-  local sid = region:match("^chat:(.+)$")
+  local sid = region:match("^%a+:(.+)$")
   id = sid and win_of(sid) or tonumber(region:match("^wm_empty:(%d+)$"))
   if id and id ~= focused then
     focus(id)
