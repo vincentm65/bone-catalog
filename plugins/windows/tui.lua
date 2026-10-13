@@ -180,10 +180,10 @@ local function subst(node, path)
   return copy
 end
 
-local function has_chat(n)
-  if type(n) ~= "table" then return n == "chat" end
+local function has(n, pat)
+  if type(n) ~= "table" then return n:find(pat) ~= nil end
   for _, c in ipairs(n.rows or n.cols or n) do
-    if has_chat(c) then return true end
+    if has(c, pat) then return true end
   end
 end
 
@@ -192,8 +192,8 @@ local function apply()
   for name in pairs(bone.ui.regions) do
     if name:find("^wm_hsep:") then bone.ui.regions[name] = nil end
   end
-  -- Someone else changed the layout: that is the one to put windows in.
-  if bone.ui.layout ~= applied then base = bone.ui.layout end
+  -- Someone else changed the layout: put windows in it, unless it was built on ours (nesting them).
+  if bone.ui.layout ~= applied and not has(bone.ui.layout or {}, "^wm_bar:") then base = bone.ui.layout end
   splits = {}
   local zoomed_term = zoomed and wins[zoomed] and wins[zoomed].term
   if count() <= 1 or (zoomed and not zoomed_term) then
@@ -201,7 +201,7 @@ local function apply()
   else
     shown = zoomed_term and leaf(zoomed) or root
     local rows, at = base or DEFAULT, 0
-    repeat at = at + 1 until at >= #rows or has_chat(rows[at])
+    repeat at = at + 1 until at >= #rows or has(rows[at], "^chat$")
     below = { unpack(rows, at + 1) }
     applied = {}
     for i = 1, at do applied[i] = subst(rows[i], { i }) end
