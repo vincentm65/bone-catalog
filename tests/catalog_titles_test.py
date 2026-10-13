@@ -35,7 +35,7 @@ class CatalogTitlesTest(unittest.TestCase):
     def test_package_display_titles(self):
         packages = {p.name for p in (ROOT / "plugins").iterdir() if p.is_dir()}
         self.assertEqual(packages, set(TITLES))
-        catalog = {entry["name"]: entry for entry in json.loads((ROOT / "catalog.json").read_text())}
+        catalog = {entry["name"]: entry for entry in json.loads((ROOT / "catalog.json").read_text()) if entry["kind"] == "plugin"}
         self.assertEqual(set(catalog), packages)
         for name, title in TITLES.items():
             with self.subTest(package=name):
@@ -56,7 +56,7 @@ class CatalogTitlesTest(unittest.TestCase):
                 package = plugins / name
                 package.mkdir(parents=True)
                 (package / "manifest.json").write_text(json.dumps(manifest))
-            with patch.object(generator, "ROOT", root), patch.object(generator, "PLUGINS", plugins):
+            with patch.object(generator, "ROOT", root), patch.object(generator, "KINDS", {"plugin": plugins}):
                 with patch("sys.argv", ["gen-index.py"]):
                     generator.main()
                 with patch("sys.argv", ["gen-index.py", "--check"]):

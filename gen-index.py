@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-PLUGINS = ROOT / "plugins"
+KINDS = {"plugin": ROOT / "plugins", "tui": ROOT / "tuis"}
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -18,7 +18,8 @@ def main() -> None:
     parser.add_argument('--check', action='store_true', help='fail if catalog.json is stale')
     args = parser.parse_args()
     entries = []
-    for package in sorted(p for p in PLUGINS.iterdir() if p.is_dir()):
+    packages = [(kind, p) for kind, d in KINDS.items() if d.is_dir() for p in d.iterdir() if p.is_dir()]
+    for kind, package in sorted(packages, key=lambda kp: kp[1].name):
         manifest_path = package / "manifest.json"
         manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
         files = []
@@ -27,7 +28,7 @@ def main() -> None:
         entry = {
             "name": package.name,
             "title": manifest.get("title", package.name),
-            "kind": "plugin",
+            "kind": kind,
             "version": manifest.get("version", "1.0.0"),
             "description": manifest.get("description", ""),
             "min_bone_version": manifest.get("min_bone_version", "0.1.0"),

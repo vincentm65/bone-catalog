@@ -23,6 +23,19 @@ only contributes files under `colors/`.
 
 A package can declare settings in its `manifest.json` (`"settings": [ { "key", "label", "type", "default", "min", "max", "choices", "desc" } ]`); they get a tab in `/config` and are read with `bone.settings.get("<package>.<key>")`.
 
+## TUIs
+
+`tuis/<name>/` holds shared TUI libraries (see `/tui` in Bone). `/catalog`
+installs them into `~/.bone/libraries/<name>`; switch with `/tui use <name>`.
+To submit one:
+
+1. `/tui create <name>` in Bone and edit `~/.bone/libraries/<name>/`.
+2. Delete the files you did not change; missing ones fall back to Bone's.
+3. Add `manifest.json` (`title`, `version`, `description`, `min_bone_version`) and a `README.md`.
+4. Copy the folder to `tuis/<name>/`, run `python3 gen-index.py`, and open a PR.
+
+Users are offered an update only when `version` goes up.
+
 Generate the index with:
 
 ```sh

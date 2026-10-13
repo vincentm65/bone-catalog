@@ -31,6 +31,29 @@
     ]
   },
   {
+    "name": "aurora",
+    "title": "Aurora",
+    "kind": "tui",
+    "version": "1.0.0",
+    "description": "A deep blue canvas with lavender, mint and coral accents",
+    "min_bone_version": "3.0.3",
+    "capabilities": [],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "43ceab222a2cd210c0a522aec143a2e4f03b5d6c06939bf29a540a25e3d7cf38"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "059701057612cbd9dbd9a8cb5be0eea3391799e8c74ae9888165f9aa9264eb64"
+      },
+      {
+        "path": "tui/defaults.lua",
+        "sha256": "ccd42d78b462a1e89c58a21aeeee6319764651f3989544f7e44456229b91c88d"
+      }
+    ]
+  },
+  {
     "name": "claude-code",
     "title": "Claude Code",
     "kind": "plugin",
@@ -53,6 +76,37 @@
       {
         "path": "manifest.json",
         "sha256": "4c95966e7ea07ec6e94d04b465a98e0df5f0e503f9b0382f85984196295ae59e"
+      }
+    ]
+  },
+  {
+    "name": "code",
+    "title": "Code",
+    "kind": "tui",
+    "version": "1.0.0",
+    "description": "Dressed as Visual Studio Code: explorer, tabs, bottom panel and status bar",
+    "min_bone_version": "3.0.3",
+    "capabilities": [],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "d9c5162f680b5492118da9cb1a5f428f87d85d9660c70cdbed54defb1ba62a41"
+      },
+      {
+        "path": "lua/bone/ui/session_data.lua",
+        "sha256": "0acf05012cd8aab577df7728ffc7a356ea557f55d8dc05e9bb4e7f088fb2007b"
+      },
+      {
+        "path": "lua/bone/ui/sessions.lua",
+        "sha256": "b88854ecacef9474be1bc6e6d66a9a5a1b05da284d29fcf054b5698fc0907e63"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "80840ccf90f3adc35b3ecb2052a033e5abaea095b260a2eb693c10bfdb5dfd1d"
+      },
+      {
+        "path": "tui/defaults.lua",
+        "sha256": "324fb78b892a7eb4675ff437e0bf970966e29f0d12d8c95ddb29ce0daca7ab36"
       }
     ]
   },
@@ -234,6 +288,68 @@
       {
         "path": "tui.lua",
         "sha256": "fba745facce78a9a4de2217cbe26d7c7849601ef62fb7e806e9f16009e642e26"
+      }
+    ]
+  },
+  {
+    "name": "notebook",
+    "title": "Notebook",
+    "kind": "tui",
+    "version": "1.0.0",
+    "description": "A session as a computational notebook: numbered cells and an execution log",
+    "min_bone_version": "3.0.3",
+    "capabilities": [],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "bb3e99366b0b64b21754b1dc3ced5f5882803815af5277922cdb48cfe7e39176"
+      },
+      {
+        "path": "lua/bone/ui/session_data.lua",
+        "sha256": "0acf05012cd8aab577df7728ffc7a356ea557f55d8dc05e9bb4e7f088fb2007b"
+      },
+      {
+        "path": "lua/bone/ui/sessions.lua",
+        "sha256": "16ba40401fa32445f396e65e2bf2c22dddfb7ce01dafe558c778b4e79a64c9c4"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "622d9427c0e9f7ef9a399256dd885028c2585d732ea97d0a7d1700ec198a8db2"
+      },
+      {
+        "path": "tui/defaults.lua",
+        "sha256": "f66c9be360b2c2099758842578bac7a480aba9b375909f89ed9a582de5b0c2be"
+      }
+    ]
+  },
+  {
+    "name": "prism",
+    "title": "Prism",
+    "kind": "tui",
+    "version": "1.0.0",
+    "description": "Vivid and animated: a colour wheel paints text, borders and motion",
+    "min_bone_version": "3.0.3",
+    "capabilities": [],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "8bde3970f245d849a81ad5f15d7515dd69bdd7ab3952d4d0f0b73865998ef5d3"
+      },
+      {
+        "path": "lua/bone/ui/session_data.lua",
+        "sha256": "0acf05012cd8aab577df7728ffc7a356ea557f55d8dc05e9bb4e7f088fb2007b"
+      },
+      {
+        "path": "lua/bone/ui/sessions.lua",
+        "sha256": "b5500d0ddecaf01b7bfe7384da2af4d0a18d5914cd43442a8bdcb223aafe931e"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "d047eb204d7a5b85a97b90a26077ee98cf6fb0e1e970a1c8f67010cad4e0b4d9"
+      },
+      {
+        "path": "tui/defaults.lua",
+        "sha256": "6a38fd2a8d3c99ca7f187b50aa840afc4eb71eaf19c1df5b704d85c1392ae771"
       }
     ]
   },
@@ -558,6 +674,37 @@
       {
         "path": "tui.lua",
         "sha256": "8af7cb0ce8fe9ea07a329d419ffd53d9b69b18ad153c1254826686fa678ca901"
+      }
+    ]
+  },
+  {
+    "name": "zen",
+    "title": "Zen",
+    "kind": "tui",
+    "version": "1.0.0",
+    "description": "Minimal: one centred reading column and a single accent colour",
+    "min_bone_version": "3.0.3",
+    "capabilities": [],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "496345167e4eb71cd20df00630350011900db4198d977c7be8731c215fe3e4e6"
+      },
+      {
+        "path": "lua/bone/ui/session_data.lua",
+        "sha256": "0acf05012cd8aab577df7728ffc7a356ea557f55d8dc05e9bb4e7f088fb2007b"
+      },
+      {
+        "path": "lua/bone/ui/sessions.lua",
+        "sha256": "f6ed16558798efc4216dcb5abf3a39dc63dbafe5900f503bc4ef8ab42fb9d12e"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "495e224a6bea9d242900803af66f56f3ff530fb414d399951e4ac6944cf94521"
+      },
+      {
+        "path": "tui/defaults.lua",
+        "sha256": "0cab67d7b2622495d0272fd8ce4cfeec0e2664ae9446873ba1a555cc43a44abb"
       }
     ]
   }
