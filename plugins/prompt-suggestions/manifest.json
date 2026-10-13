@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "description": "Grey next-prompt predictions with configurable provider and model; Tab accepts, Escape dismisses",
+  "min_bone_version": "3.0.2",
+  "capabilities": ["ui", "model"],
+  "title": "Prompt suggestions",
+  "settings": [
+    {
+      "key": "enabled",
+      "label": "Enabled",
+      "type": "boolean",
+      "default": true,
+      "desc": "Suggest a short next prompt after each successful reply (one extra model call)."
+    },
+    {
+      "key": "provider",
+      "label": "Provider",
+      "type": "string",
+      "default": "",
+      "desc": "Configured provider name; blank uses the default provider."
+    },
+    {
+      "key": "model",
+      "label": "Model",
+      "type": "string",
+      "default": "",
+      "desc": "Model ID for suggestions; blank uses the selected provider's default model."
+    }
+  ]
+}

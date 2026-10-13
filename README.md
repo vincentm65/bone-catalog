@@ -42,6 +42,13 @@ python3 check.py
 python3 gen-index.py --check
 ```
 
+Check grey next-prompt predictions and their provider/model settings (mocked;
+no model requests):
+
+```sh
+luajit tests/prompt_suggestions_test.lua
+```
+
 Build Bone 3 in its own checkout with `cargo build -p bone`, then load every
 catalog core half through that headless binary:
 

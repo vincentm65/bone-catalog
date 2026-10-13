@@ -230,6 +230,31 @@
     ]
   },
   {
+    "name": "prompt-suggestions",
+    "kind": "plugin",
+    "version": "1.0.0",
+    "description": "Grey next-prompt predictions with configurable provider and model; Tab accepts, Escape dismisses",
+    "min_bone_version": "3.0.2",
+    "capabilities": [
+      "ui",
+      "model"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "56ed292eba5e534e757f75a7386a384e57fb949d53063decc25819158b06ec60"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "2148e5460b61adc1968ce04b573885c04a81264acbad87dbc74de74d0d0d5534"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "6ce9b6f5c88a8a0eaa9f0736f41a506bca0c71ae79904ac1c90dee02afaaf84c"
+      }
+    ]
+  },
+  {
     "name": "recap",
     "kind": "plugin",
     "version": "1.0.0",
