@@ -61,8 +61,7 @@ local function here()
 end
 
 -- A window's rows: its title bar, then a terminal, or a chat with the rows
--- from under the base layout's chat (another chat keeps only the built-ins,
--- for its own session).
+-- from under the base layout's chat (another keeps the built-ins and gap).
 local function rows_of(id)
   local w, bar = wins[id], "wm_bar:" .. id
   if w.term then return { bar, "panel:" .. w.term } end
@@ -72,6 +71,8 @@ local function rows_of(id)
     local name = type(e) == "table" and e[1] or e
     if at == "" or name == "divider" or name == "prompt" or name == "statusline" then
       out[#out + 1] = at == "" and e or name .. at
+    elseif name == "input_gap" then -- blank: its [↓ End] is the focused chat's
+      out[#out + 1] = { "wm_gap:" .. id, size = 1 }
     end
   end
   return out

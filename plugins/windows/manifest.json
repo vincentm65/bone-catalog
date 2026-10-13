@@ -1,5 +1,5 @@
 {
-  "version": "1.4.1",
+  "version": "1.4.2",
   "title": "Windows",
   "description": "Tiled chat windows: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
   "capabilities": [
