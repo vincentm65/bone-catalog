@@ -3,7 +3,7 @@
   "description": "Grey next-prompt predictions with configurable provider and model; Tab accepts, Escape dismisses",
   "min_bone_version": "3.0.2",
   "capabilities": ["ui", "model"],
-  "title": "Prompt suggestions",
+  "title": "Prompt Suggestions",
   "settings": [
     {
       "key": "enabled",

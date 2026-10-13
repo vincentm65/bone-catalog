@@ -6,7 +6,7 @@
     "network",
     "process"
   ],
-  "title": "Web search",
+  "title": "Web Search",
   "settings": [
     {
       "key": "num_results",

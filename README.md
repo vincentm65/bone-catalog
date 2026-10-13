@@ -10,7 +10,10 @@ then controls loading and unloading.
 
 The catalog deliberately keeps distribution separate from execution. `catalog.json`
 is generated from package manifests and records the files and hashes an
-installer should verify before replacing an installed package.
+installer should verify before replacing an installed package. Set `title` in
+`manifest.json` to a human-readable Title Case display name, preserving acronyms
+and product names (for example, `MCP` and `Claude Code`). Keep the directory name
+as the stable package ID; the generated index includes both `name` and `title`.
 
 The first ports preserve the old catalog's names and user-facing commands,
 while using Bone 3's APIs (`bone.tool.register`, `bone.cmd.create`,
@@ -40,6 +43,7 @@ Run the package syntax checks with:
 ```sh
 python3 check.py
 python3 gen-index.py --check
+python3 tests/catalog_titles_test.py
 ```
 
 Check grey next-prompt predictions and their provider/model settings (mocked;

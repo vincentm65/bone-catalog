@@ -1,4 +1,4 @@
-# subagent
+# Subagents
 
 Delegate tasks to sub-agents that run in sessions of their own.
 

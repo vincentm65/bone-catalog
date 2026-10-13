@@ -1,4 +1,4 @@
-# web_search
+# Web Search
 
 Search the web with DuckDuckGo. With `uv` on the PATH the tool runs a real
 search through the `ddgs` package (uv fetches it on first use); without it,

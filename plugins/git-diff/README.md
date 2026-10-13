@@ -1,4 +1,4 @@
-# Git diff
+# Git Diff
 
 A read-only Git diff viewer in a full-height, half-width right sidebar. Uses Bone's
 existing `DiffAdd` / `DiffDelete` background bands, wrapped text, and old/new

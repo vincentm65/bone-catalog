@@ -1,4 +1,4 @@
-# review
+# Review
 
 Immediately submit `/review [branch] [low|medium|high]`, without a panel or an
 expanded prompt to edit. The visible and saved user message keeps the literal

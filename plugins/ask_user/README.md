@@ -1,4 +1,4 @@
-# ask_user
+# Ask User
 
 Lets the model ask you one or more questions: pick one option, pick several,
 or type an answer.

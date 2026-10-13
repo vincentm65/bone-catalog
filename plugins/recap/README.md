@@ -1,4 +1,4 @@
-# recap
+# Recap
 
 Show a brief recap of the conversation
 

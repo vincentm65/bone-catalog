@@ -1,4 +1,4 @@
-# todo
+# Todo
 
 A checklist the model keeps for multi-step work, like Claude Code's
 `TodoWrite` or Codex's `update_plan`. The model calls `todo` with the whole

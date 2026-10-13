@@ -1,4 +1,4 @@
-# themes
+# Themes
 
 Pick or apply one of the ported Bone color themes
 

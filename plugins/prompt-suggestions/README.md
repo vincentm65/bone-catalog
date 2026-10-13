@@ -1,4 +1,4 @@
-# Prompt suggestions
+# Prompt Suggestions
 
 Grey next-prompt predictions in bone's input field. After a successful reply,
 this plugin makes one separate, tool-free model call. Predictions never enter

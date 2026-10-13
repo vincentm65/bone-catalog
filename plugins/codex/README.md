@@ -1,4 +1,4 @@
-# codex
+# Codex
 
 A model provider for OpenAI's Responses API. By default it uses your Codex
 CLI login (`~/.codex/auth.json`, or `$CODEX_HOME/auth.json`) and the ChatGPT

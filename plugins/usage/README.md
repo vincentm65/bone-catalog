@@ -1,4 +1,4 @@
-# usage
+# Usage
 
 A full-screen dashboard of what your sessions used and did, read from the
 session index with `store/query`.

@@ -1,4 +1,4 @@
-# Claude Code provider
+# Claude Code
 
 Use your installed Claude Code CLI's Claude.ai subscription login as Bone's model backend. No OAuth tokens are copied or read by the plugin. Bone retains its own transcript, tool execution and approvals; Claude's native tools, MCP servers, skills and configured hooks are disabled.
 

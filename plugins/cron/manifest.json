@@ -1,1 +1,1 @@
-{"version":"1.0.0","description":"Manage Bone 3 recurring crontab jobs","capabilities":["tool","shell","persistent-jobs"]}
+{"title":"Cron","version":"1.0.0","description":"Manage Bone 3 recurring crontab jobs","capabilities":["tool","shell","persistent-jobs"]}

@@ -1,4 +1,4 @@
-# mcp
+# MCP
 
 Loads MCP servers from JSON files and gives you `/mcp`, a popup to see and
 manage them.

@@ -1,4 +1,4 @@
-# cron
+# Cron
 
 Manage Bone 3 recurring crontab jobs
 

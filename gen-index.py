@@ -26,6 +26,7 @@ def main() -> None:
             files.append({"path": path.relative_to(package).as_posix(), "sha256": sha256(path)})
         entry = {
             "name": package.name,
+            "title": manifest.get("title", package.name),
             "kind": "plugin",
             "version": manifest.get("version", "1.0.0"),
             "description": manifest.get("description", ""),

@@ -1,4 +1,4 @@
-# skills
+# Skills
 
 Skills: instructions for particular kinds of work (cutting a release,
 writing a migration) that the model loads only when a task calls for them.

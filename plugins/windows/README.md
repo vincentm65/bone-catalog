@@ -1,4 +1,4 @@
-# windows
+# Windows
 
 Tiled chat windows, like vim or tmux splits: several sessions on screen at
 once, each streaming live with its own prompt and statusline. The focused

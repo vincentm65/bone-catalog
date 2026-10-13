@@ -1,4 +1,4 @@
-# history
+# History
 
 Resume a recent conversation
 

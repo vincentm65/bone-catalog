@@ -1,4 +1,4 @@
-# Markdown reader
+# Markdown
 
 A standalone, Lua-only Bone 3 plugin. `/md` opens a large popup over the chat with
 searchable Markdown filenames and a themed preview. Nothing is sent to a model,
