@@ -16,7 +16,8 @@ local DEFAULT = { "top", { cols = { "left", "chat", "right" }, sep = "│" }, "d
 local st = bone.plugin.state()
 bone.hl.set("WinBarActive", { link = "StatusLine", reverse = true })
 
--- wins[id] = { id, sid } or, for a terminal, { id, term = panel id }. The
+-- wins[id] = { id, chat, sid } (the chat's number, and its session once it
+-- has one) or, for a terminal, { id, term = panel id }. The
 -- focused window is always a chat; a terminal window has the keyboard when
 -- its panel does (see here()). Tree nodes: { win = id, w } or { dir = "cols" |
 -- "rows", w, kids }. `w` is a share of the parent split.
@@ -41,9 +42,10 @@ local function count()
   return n
 end
 
-local function win_of(sid)
+-- The window showing session `sid` (or with `key` = sid).
+local function win_of(sid, key)
   for id, w in pairs(wins) do
-    if w.sid == sid then return id end
+    if sid and w[key or "sid"] == sid then return id end
   end
 end
 
@@ -64,8 +66,7 @@ end
 local function rows_of(id)
   local w, bar = wins[id], "wm_bar:" .. id
   if w.term then return { bar, "panel:" .. w.term } end
-  if id ~= focused and not w.sid then return { bar, { "wm_empty:" .. id, size = "fill" } } end
-  local at = id == focused and "" or ":" .. w.sid
+  local at = id == focused and "" or ":" .. w.chat
   local out = { bar, "chat" .. at }
   for _, e in ipairs(below) do
     local name = type(e) == "table" and e[1] or e
@@ -78,8 +79,8 @@ end
 
 -- The focused window shows whatever chat is on screen.
 local function sync()
-  local w = focused and wins[focused]
-  if w then w.sid = current_sid() end
+  local w, s = focused and wins[focused], bone.chat.session()
+  if w then w.sid, w.chat = s.session_id, s.chat end
 end
 
 -- ---- tree ----------------------------------------------------------------
@@ -298,19 +299,13 @@ local bar, pick -- the bar renderer and the session picker, below
 local ok, terminal = pcall(require, "bone.ui.terminal")
 if not ok then terminal = nil end
 
-local function new_win(sid, term)
+-- A window for session `sid` (nil: a new chat) or terminal panel `term`;
+-- `chat` if its chat is already open.
+local function new_win(sid, term, chat)
   seq = seq + 1
   local id = seq
-  wins[id] = { id = id, sid = sid, term = term }
+  wins[id] = { id = id, sid = sid, term = term, chat = chat or not term and bone.chat.open(sid) or nil }
   bone.ui.regions["wm_bar:" .. id] = { size = 1, render = function(ctx) return bar(id, ctx) end }
-  bone.ui.regions["wm_empty:" .. id] = {
-    render = function(ctx)
-      local out = {}
-      for _ = 1, math.floor((ctx.height - 1) / 2) do out[#out + 1] = "" end
-      out[#out + 1] = { "%=", { "new chat · click or " .. PREFIX .. " w to focus", "Dim" }, "%=" }
-      return out
-    end,
-  }
   return id
 end
 
@@ -319,7 +314,6 @@ local function forget(id)
   local term = wins[id].term
   wins[id] = nil
   bone.ui.regions["wm_bar:" .. id] = nil
-  bone.ui.regions["wm_empty:" .. id] = nil
   if term then bone.ui.panel.close(term) end
 end
 
@@ -332,8 +326,7 @@ local function focus(id)
   sync()
   last, focused = focused, id
   switching = true
-  local sid = wins[id].sid
-  if sid then bone.api.open_session(sid) else bone.action("new_session") end
+  bone.api.open_session(tostring(w.chat))
   switching = false
   apply()
 end
@@ -358,7 +351,6 @@ local function split(dir, sid, at, term)
   end
   if term then return apply() end
   if not at then return focus(new.win) end
-  bone.chat.open(sid)
   apply()
 end
 
@@ -456,9 +448,9 @@ bar = function(id, ctx)
   local w = wins[id]
   if not w then return {} end
   local mine = id == here()
-  local sid = id == focused and current_sid() or w.sid
-  local s = sid and bone.chat.session({ session = sid })
-  local name = sid and (s and s.title or "[untitled]") or "new chat"
+  local s = w.chat and bone.chat.session({ session = tostring(w.chat) })
+  local sid = s and s.session_id
+  local name = sid and (s.title or "[untitled]") or "new chat"
   if w.term then
     local job = terminal and terminal.job(w.term)
     local st = job and job:status()
@@ -543,8 +535,7 @@ local function on_mouse(ev)
     return true
   end
   -- A click in another window focuses it.
-  local sid = region:match("^%a+:(.+)$")
-  id = sid and win_of(sid) or tonumber(region:match("^wm_empty:(%d+)$"))
+  id = win_of(tonumber(region:match("^%a+:(%d+)$")), "chat")
   if id and id ~= focused then
     focus(id)
     return true
@@ -560,9 +551,8 @@ local function restore(t)
       for _, k in ipairs(n.kids) do kids[#kids + 1] = walk(k) end
       return { dir = n.dir, w = n.w or 1, kids = kids }
     end
-    local id = new_win(n.sid)
+    local id = new_win(n.sid, nil, n.focus and bone.chat.session().chat)
     if n.focus then focused = id end
-    if n.sid and not n.focus then bone.chat.open(n.sid) end
     return { win = id, w = n.w or 1 }
   end
   root = walk(t)
@@ -574,6 +564,7 @@ local function restore(t)
     bone.api.open_session(want)
     switching = false
   end
+  sync()
 end
 
 local function start()
@@ -584,7 +575,7 @@ local function start()
   if type(st.tree) == "table" then
     restore(st.tree)
   else
-    root = { win = new_win(current_sid()), w = 1 }
+    root = { win = new_win(current_sid(), nil, bone.chat.session().chat), w = 1 }
     focused = root.win
   end
   apply()
@@ -594,11 +585,11 @@ end
 -- changes what the focused window shows, or focuses the window that has it.
 bone.on("chat/shown", function(ev)
   if switching or not root or not wins[focused] then return end
-  local other = ev.session_id and win_of(ev.session_id)
+  local other = win_of(ev.chat, "chat")
   if other and other ~= focused then
     focused = other
   else
-    wins[focused].sid = ev.session_id
+    wins[focused].sid, wins[focused].chat = ev.session_id, ev.chat
   end
   apply()
 end)
