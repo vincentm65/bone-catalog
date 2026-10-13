@@ -105,8 +105,8 @@ local function each_win(node, f)
 end
 
 local function first_win(node)
-  while not node.win do node = node.kids[1] end
-  return node.win
+  local n = locate(node, function(n) return n.win and not wins[n.win].term end)
+  return n and n.win
 end
 
 -- Terminals are not saved: their programs end with bone.
@@ -384,7 +384,7 @@ local function close(id)
   forget(id)
   if was then
     focused = nil
-    focus(first_win(heir))
+    focus(first_win(heir) or first_win(root))
   end
   apply()
 end
