@@ -10,7 +10,9 @@
 --
 -- Typed text is the answer for text questions, and a custom answer for
 -- choice questions that allow one. Questions arriving while one is open
--- wait their turn.
+-- wait their turn. A question belongs to its session's chat: it shows only
+-- while that chat is on screen, and is put away (typed answer and choice
+-- kept) while another chat is.
 
 local REGION = "ask_user"
 local CONTEXT = "ask_user"
@@ -20,8 +22,9 @@ local GUARD_MS = 250 -- keys this soon after a question appears are ignored
 -- The layout Rust draws when the TUI library sets none (bare does not).
 local DEFAULT_LAYOUT = { "top", "chat", "divider", "above_prompt", "prompt", "statusline" }
 
-local queue = {} -- ask/requested events; the first is on screen
+local queue = {} -- ask/requested events, oldest first
 local cur -- the open question: { ev, q, opts, sel, checked, opened, style, saved }
+local parked = {} -- ask_id -> { draft, sel, checked } of questions whose chat left the screen
 
 -- Helpers ---------------------------------------------------------------------
 
@@ -359,13 +362,32 @@ end
 
 local open_next
 
--- Undo what opening changed: only what is still ours, so a config that
--- changed the layout meanwhile keeps its change.
-local function restore(saved)
+-- Whether a question's chat is the one on screen.
+local function on_screen(ev)
+  local s = bone.chat.session()
+  return ev.session_id == nil or (s and s.session_id) == ev.session_id
+end
+
+-- Undo what opening changed to the layout: only if it is still ours, so a
+-- config that changed the layout meanwhile keeps its change.
+local function restore_layout(saved)
   if saved.our_layout and bone.ui.layout == saved.our_layout then
     bone.ui.layout = saved.layout
   end
+end
+
+local function restore(saved)
+  restore_layout(saved)
   bone.prompt.set(saved.draft or "")
+end
+
+local function remove(ask_id)
+  for i = #queue, 1, -1 do
+    if queue[i].ask_id == ask_id then
+      table.remove(queue, i)
+    end
+  end
+  parked[ask_id] = nil
 end
 
 local function close()
@@ -373,11 +395,22 @@ local function close()
     return
   end
   local saved = cur.saved
+  remove(cur.ev.ask_id)
   cur = nil
   restore(saved)
   bone.keymap.clear()
-  table.remove(queue, 1)
   open_next()
+end
+
+-- Another chat came on screen: put the question away. The prompt is now
+-- that chat's, and the TUI kept ours (typed answer and all) as our chat's
+-- draft, so the prompt is left alone.
+local function park()
+  local saved = cur.saved
+  parked[cur.ev.ask_id] = { draft = saved.draft, sel = cur.sel, checked = cur.checked }
+  cur = nil
+  restore_layout(saved)
+  bone.keymap.clear()
 end
 
 local function respond(answer)
@@ -389,21 +422,34 @@ local function respond(answer)
   close()
 end
 
+-- Open the oldest question for the chat on screen, or one put away earlier
+-- as it was (its typed answer is back in the prompt as the chat's draft).
 function open_next()
-  local ev = queue[1]
-  if cur or not ev then
+  if cur then
     return
   end
+  local ev
+  for _, e in ipairs(queue) do
+    if on_screen(e) then
+      ev = e
+      break
+    end
+  end
+  if not ev then
+    return
+  end
+  local p = parked[ev.ask_id]
+  parked[ev.ask_id] = nil
   local style = prompt_style(bone.ui.prompt)
   setup_groups(style.bg)
-  local saved = { layout = bone.ui.layout, draft = bone.prompt.get() }
+  local saved = { layout = bone.ui.layout, draft = p and p.draft or bone.prompt.get() }
   saved.our_layout = with_region(bone.ui.layout or DEFAULT_LAYOUT)
   cur = {
     ev = ev,
     q = ev.question,
     opts = options(ev.question),
-    sel = 1,
-    checked = {},
+    sel = p and p.sel or 1,
+    checked = p and p.checked or {},
     opened = bone.now(),
     style = style,
     saved = saved,
@@ -411,7 +457,9 @@ function open_next()
   if saved.our_layout then
     bone.ui.layout = saved.our_layout
   end
-  bone.prompt.set("")
+  if not p then
+    bone.prompt.set("")
+  end
   bone.keymap.focus(CONTEXT)
 end
 
@@ -536,11 +584,14 @@ bone.on("ask/resolved", function(ev)
   if cur and cur.ev.ask_id == ev.ask_id then
     return close()
   end
-  for i = #queue, 2, -1 do
-    if queue[i].ask_id == ev.ask_id then
-      table.remove(queue, i)
-    end
+  remove(ev.ask_id)
+end)
+
+bone.on("chat/shown", function()
+  if cur and not on_screen(cur.ev) then
+    park()
   end
+  open_next()
 end)
 
 -- A reload while a question is open: put everything back as it was and
