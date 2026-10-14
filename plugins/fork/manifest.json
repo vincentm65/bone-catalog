@@ -1,0 +1,1 @@
+{"title":"Fork","version":"1.0.0","description":"Fork the session into branches with a popup family browser: /fork [N|copy]","min_bone_version":"3.0.3","capabilities":["command","ui"]}

@@ -1,0 +1,6 @@
+{
+  "title": "Codex App",
+  "version": "1.0.0",
+  "description": "The standard UI dressed like the Codex desktop app in bone's colors: centered thread, message bubbles, a composer card",
+  "min_bone_version": "3.0.3"
+}

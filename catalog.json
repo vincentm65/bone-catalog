@@ -142,6 +142,33 @@
     ]
   },
   {
+    "name": "codex-app",
+    "title": "Codex App",
+    "kind": "tui",
+    "version": "1.0.0",
+    "description": "The standard UI dressed like the Codex desktop app in bone's colors: centered thread, message bubbles, a composer card",
+    "min_bone_version": "3.0.3",
+    "capabilities": [],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "6086d5036635f3266999e234b123c93374aa2f90c3afba1dc13cd0bb5a276aec"
+      },
+      {
+        "path": "lua/bone/ui/sessions.lua",
+        "sha256": "5967162622f96937169d84322e4ec4c22a55a524f704e3d6d5398ac3f20e4c7d"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "d9fb0f2987c58039a1dde93ecf29a4aa6635cb9c2730d47bc1332df44dbf3ac0"
+      },
+      {
+        "path": "tui/defaults.lua",
+        "sha256": "6b65c392477ff8718aabed3307693929e6c104b9c76c6de8712e6bc453621ccd"
+      }
+    ]
+  },
+  {
     "name": "cron",
     "title": "Cron",
     "kind": "plugin",
@@ -165,6 +192,36 @@
       {
         "path": "manifest.json",
         "sha256": "7d8af3a194d463cdb52c1087ccb7e892a57edac5e667ee429eaa835dcd06b684"
+      }
+    ]
+  },
+  {
+    "name": "fork",
+    "title": "Fork",
+    "kind": "plugin",
+    "version": "1.0.0",
+    "description": "Fork the session into branches with a popup family browser: /fork [N|copy]",
+    "min_bone_version": "3.0.3",
+    "capabilities": [
+      "command",
+      "ui"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "3536639a4f9e32c831d36959633ba43a5a405a8f30eb6afa9cb8f188fe3368b9"
+      },
+      {
+        "path": "core.lua",
+        "sha256": "d6283cd0048ac9b8455acc1223eb92862bbfa2c516e79d53846af9a57aa29dd7"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "dbc58efe466f8eee4edd17cbe38658c16885fa1f8af6f126a7a9789f3690da76"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "f565e13a9a9cf07272bebd656cc16c017f69f44330b09c7b1c7485c9615df328"
       }
     ]
   },
@@ -435,6 +492,33 @@
       {
         "path": "tui.lua",
         "sha256": "7f50e568be1d2817990f8346ffd43c9de7220dbf56a156599579f020738f0371"
+      }
+    ]
+  },
+  {
+    "name": "shell",
+    "title": "Shell",
+    "kind": "plugin",
+    "version": "1.0.0",
+    "description": "Run !commands locally in chat without sending them to the model",
+    "min_bone_version": "0.1.0",
+    "capabilities": [
+      "command",
+      "ui",
+      "system"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "b9a8a2b64219abdbdc8ee4b3ce6d8cc386a516f6b85c3f314c5f25cda73ad591"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "0b525beaa3affc42ded2cd735afa053e7dc87e988c5d722fc6283c7fd29262a7"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "42d6e1aa997b8772168e9baf93950206d199c76aaa9ed0dff5f433eb26a4d265"
       }
     ]
   },
