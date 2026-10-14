@@ -15,6 +15,7 @@ TITLES = {
     "codex": "Codex",
     "cron": "Cron",
     "fork": "Fork",
+    "goal": "Goal",
     "git-diff": "Git Diff",
     "history": "History",
     "mcp": "MCP",

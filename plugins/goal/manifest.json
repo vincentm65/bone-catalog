@@ -1,0 +1,7 @@
+{
+  "title": "Goal",
+  "version": "1.0.0",
+  "description": "Keep a chat working on an objective, turn after turn, until it is done: /goal <objective>",
+  "min_bone_version": "3.0.3",
+  "capabilities": ["command", "ui"]
+}

@@ -261,6 +261,36 @@
     ]
   },
   {
+    "name": "goal",
+    "title": "Goal",
+    "kind": "plugin",
+    "version": "1.0.0",
+    "description": "Keep a chat working on an objective, turn after turn, until it is done: /goal <objective>",
+    "min_bone_version": "3.0.3",
+    "capabilities": [
+      "command",
+      "ui"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "711e68949289499ac0c08902f9145ac55367b113abf692f2db135eb8e81633fc"
+      },
+      {
+        "path": "core.lua",
+        "sha256": "cc0df8d6ca4fa3c6939af8b3299da253f4fc32743b0701098f05fe3fe3b05fcf"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "3dffd73526107a26fe711fd7a914e5fc3fa69040fbcc84abacc939ed7b344521"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "8b6704185a1365a788c98d4c4e2847fd7cb226fddccd3645951a7fa3326d3a82"
+      }
+    ]
+  },
+  {
     "name": "history",
     "title": "History",
     "kind": "plugin",
