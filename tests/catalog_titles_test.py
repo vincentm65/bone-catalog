@@ -13,6 +13,7 @@ TITLES = {
     "ask_user": "Ask User",
     "claude-code": "Claude Code",
     "codex": "Codex",
+    "context": "Context",
     "cron": "Cron",
     "fork": "Fork",
     "goal": "Goal",

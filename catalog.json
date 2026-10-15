@@ -169,6 +169,42 @@
     ]
   },
   {
+    "name": "context",
+    "title": "Context",
+    "kind": "plugin",
+    "version": "1.1.0",
+    "description": "See what fills the context window: categories, tools and the largest messages, calibrated to the provider's counts",
+    "min_bone_version": "3.0.3",
+    "capabilities": [
+      "command",
+      "ui",
+      "hook",
+      "rpc"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "7c2914d9ee3a0aa8dd4e09766f959fcf0582d61684c76eb400788f0508455663"
+      },
+      {
+        "path": "core.lua",
+        "sha256": "aeca4fec9d2e5fcb2761d5f77d9e53df6a6114f12a125244e7e64e36f7bb32d5"
+      },
+      {
+        "path": "lua/context/breakdown.lua",
+        "sha256": "aae24dc065c17eb5ae90fa10b88b02de0b239ec6e91570b16d43792cd0c39bf2"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "829d45a8e607b82a5b11e1b57971ee30e5cd720153cb56437d66747d0fdf38f3"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "4458d6fc3ebbc4cd3c4219395572dc41d8b7aba5d48d669092bb1da2aa5afaaa"
+      }
+    ]
+  },
+  {
     "name": "cron",
     "title": "Cron",
     "kind": "plugin",

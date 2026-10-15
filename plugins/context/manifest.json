@@ -1,0 +1,13 @@
+{
+  "title": "Context",
+  "version": "1.1.0",
+  "description": "See what fills the context window: categories, tools and the largest messages, calibrated to the provider's counts",
+  "min_bone_version": "3.0.3",
+  "capabilities": ["command", "ui", "hook", "rpc"],
+  "settings": [
+    {
+      "key": "window_tokens", "label": "Context window (tokens)", "type": "integer", "default": 0, "min": 0,
+      "desc": "The model's context capacity, for the meter; 0 means unknown (model limits are never guessed)"
+    }
+  ]
+}
