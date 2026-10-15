@@ -1,1 +1,16 @@
-{"title":"Recap","version":"1.0.0","description":"Show a brief recap of the conversation","capabilities":["command","model"]}
+{
+  "title": "Recap",
+  "version": "1.0.1",
+  "description": "Show a brief recap of the conversation",
+  "capabilities": ["command", "model"],
+  "settings": [
+    {
+      "key": "auto", "label": "Automatic recap", "type": "boolean", "default": false,
+      "desc": "Show a recap after idle turns"
+    },
+    {
+      "key": "idle_ms", "label": "Idle delay (milliseconds)", "type": "integer", "default": 900000, "min": 0,
+      "desc": "How long to wait after a completed turn before showing a recap"
+    }
+  ]
+}

@@ -495,7 +495,7 @@
     "name": "recap",
     "title": "Recap",
     "kind": "plugin",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Show a brief recap of the conversation",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -505,15 +505,15 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "19b73a733aa7be5244301c6f3f61a397b4f3dc52d04d5bdcbbe849c3a0d6ab65"
+        "sha256": "fbf961dcec1f2748e8e61b9c68947d2f71fb91a6de722cc39cd05a8e841b0fd8"
       },
       {
         "path": "manifest.json",
-        "sha256": "857f8d19e79cc52a0fbdcf7a8b5f4aed26ccc016b7bc6195e51f52565798a91e"
+        "sha256": "6104f1e23a99beb557d2c1bc35bda057bda28ecf6731127df8723e8a049ddf6e"
       },
       {
         "path": "tui.lua",
-        "sha256": "e57549ba5f78760ab3bdff15cc3608f790bc3fef744624c0c315387cc8166ff6"
+        "sha256": "05ca79af0764330c800cee7091cb4284f75e2bb8f8d1a3f143e4584518c10b75"
       }
     ]
   },
