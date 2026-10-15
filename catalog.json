@@ -26,7 +26,7 @@
       },
       {
         "path": "tui.lua",
-        "sha256": "0bbc912c1fbbc605223f1bbd07bbf9e80bf6a707c3873eb2b6ae4e51b4f642ac"
+        "sha256": "a748fe04d36150464cfd1e8f99d14f681690e43f98570a269433bfb096a726be"
       }
     ]
   },
@@ -145,7 +145,7 @@
     "name": "codex-app",
     "title": "Codex App",
     "kind": "tui",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "The standard UI dressed like the Codex desktop app in bone's colors: centered thread, message bubbles, a composer card",
     "min_bone_version": "3.0.3",
     "capabilities": [],
@@ -160,11 +160,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "d9fb0f2987c58039a1dde93ecf29a4aa6635cb9c2730d47bc1332df44dbf3ac0"
+        "sha256": "e371970f4d895e115e4daef9c9e38f943537502da52404671a9b116679126a5c"
       },
       {
         "path": "tui/defaults.lua",
-        "sha256": "6b65c392477ff8718aabed3307693929e6c104b9c76c6de8712e6bc453621ccd"
+        "sha256": "c5fe0b0f327aeeee05ed89e6b4c0787cfa0844fffa03068ca7e813ff625a2925"
       }
     ]
   },
@@ -317,6 +317,31 @@
     ]
   },
   {
+    "name": "idle_compact",
+    "title": "Idle Compact",
+    "kind": "plugin",
+    "version": "1.0.0",
+    "description": "Compact the chat you were last using after it sits idle with a large context",
+    "min_bone_version": "3.0.3",
+    "capabilities": [
+      "ui"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "5dfa130438f493b40f63f38da24df1e299ba0ac8db84e0009e7478e56510023a"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "fc03e447f03e83b18860317dc57ef1a820998f437604439826a10a300b291157"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "df3c65d218252167ee77b9cb7b276b2bfaea5f6f515c60913a9788ee690a2594"
+      }
+    ]
+  },
+  {
     "name": "mcp",
     "title": "MCP",
     "kind": "plugin",
@@ -351,9 +376,9 @@
     "name": "md",
     "title": "Markdown",
     "kind": "plugin",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Search project Markdown files and read themed previews in a large popup",
-    "min_bone_version": "0.1.0",
+    "min_bone_version": "3.0.3",
     "capabilities": [
       "command",
       "ui",
@@ -366,11 +391,11 @@
       },
       {
         "path": "lua/md_browser.lua",
-        "sha256": "6fcd2cea471a912610b5abb2deb5fad7140d8b19168b141c765e67238e01d86f"
+        "sha256": "6d31c7c661a2e105590b55144b542c165bb592eaa766e21aa0d9f395d39b17f4"
       },
       {
         "path": "manifest.json",
-        "sha256": "25dac4c7966267f4dd1608d3564ffbb0d5f81bef87a29260722cd6744d1d21d6"
+        "sha256": "1869ff7df12cec21e307a684224f5cad3c6508ed278ed60db17a0bbcd04b064f"
       },
       {
         "path": "tui.lua",
@@ -609,6 +634,37 @@
       {
         "path": "tui.lua",
         "sha256": "cf871e80a74c1c1160a083be4cff4ba2ede8265ce2f85bdf475a9010a6c8aff1"
+      }
+    ]
+  },
+  {
+    "name": "term",
+    "title": "Terminal",
+    "kind": "plugin",
+    "version": "1.0.0",
+    "description": "Interactive shells and command output in terminal panels, with keyboard focus and scrollback",
+    "min_bone_version": "3.0.3",
+    "capabilities": [
+      "command",
+      "ui",
+      "system"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "f6a7f5b2e025eab87e9fa0f868870d70146c967a3cdaf3ce7d85aeab88f0dfdb"
+      },
+      {
+        "path": "lua/bone/ui/terminal.lua",
+        "sha256": "ebbc4e11fa30272ade4100e6a4df50f8b3692ebe78a8746da47beebfd2945898"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "0ce6e8c1aa17f2e3618b5cc9bae91252d12b59cf300b0f7a197d8f3232f13f53"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "5ea5b3f83ab74de10246c5eeafb91e970caa8bfd6f95250fad6ad6b01ee0f8f3"
       }
     ]
   },

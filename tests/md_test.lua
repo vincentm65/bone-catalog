@@ -37,9 +37,9 @@ local function wrap(spans, n)
   return out
 end
 -- Loading the API only to obtain its actual box helper; no calls reach Rust.
-bone = { _api = function() end, on = function() end }
+bone = { _api = function() end, on = function() end, text = {} }
 dofile(BONE_SOURCE .. "runtime/tui/api.lua")
-local real_box = bone.ui.box
+local real_box, real_edit = bone.ui.box, bone.text.edit
 print = original_print
 
 local function eq(actual, expected, why)
@@ -69,7 +69,7 @@ local function fixture(opts)
     for _, fn in ipairs(callbacks) do fn(ev) end
   end
   bone = {
-    text = { width = width, truncate = truncate, wrap = wrap },
+    text = { width = width, truncate = truncate, wrap = wrap, edit = real_edit },
     chat = { session = function()
       if opts.chat_session == false then return nil end
       return opts.chat_session or { cwd = "/project with spaces" }

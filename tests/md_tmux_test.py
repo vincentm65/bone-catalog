@@ -52,7 +52,9 @@ with tempfile.TemporaryDirectory(prefix="bone-md-tmux-") as raw:
         'bone.config.providers.test = { base_url = "http://127.0.0.1:1/v1", model = "local" }\n'
         'bone.config.provider = "test"\n'
     )
-    (config / "settings.json").write_text(json.dumps({"setup": {"skipped": True}}))
+    (config / "settings.json").write_text(json.dumps({
+        "setup": {"skipped": True}, "update": {"check": False},
+    }))
     (project / "README.md").write_text("# Reader smoke heading\n\nBeautiful **Markdown** preview.\n")
     (project / "docs").mkdir()
     (project / "docs/space name.MD").write_text("# Nested document\n\nNested preview verified.\n")

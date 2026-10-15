@@ -107,7 +107,11 @@ hl("ComposerSendIdle", c.card, c.send_idle, { bold = true })
 bone.ui.spinner = { frames = { "◜", "◠", "◝", "◞", "◡", "◟" }, interval = 100 }
 
 local sidebar = require("bone.ui.sessions")
-local terminal = require("bone.ui.terminal")
+local function toggle_terminal()
+  local ok, terminal = pcall(require, "bone.ui.terminal")
+  if ok then return terminal.toggle() end
+  bone.notify("install and load the term plugin for terminal panels", "error")
+end
 
 -- ---- helpers ---------------------------------------------------------------
 
@@ -300,7 +304,7 @@ bone.ui.regions.topbar = {
       right[#right + 1] = { "   ", "CodexTop" }
     end
     if git.branch then right[#right + 1] = { "⑂ " .. git.branch .. "   ", "CodexTop" } end
-    right[#right + 1] = { "⊟", "CodexTop", function() terminal.toggle() end }
+    right[#right + 1] = { "⊟", "CodexTop", toggle_terminal }
     right[#right + 1] = { "  ", "CodexTop" }
     local rw = width_of(right)
     local left = {
@@ -408,26 +412,46 @@ bone.ui.regions.chat_empty = {
 -- wide; the margins follow the room the side panels leave.
 local COL = 96
 local margin = 1
+local applied_layout
 
+bone.ui.layout = {
+  "topbar",
+  "top",
+  { cols = { { "pad_l", size = margin },
+             { rows = { "chat", "input_gap", "above_prompt", "prompt", { "composer_meta", size = 1 },
+                        "attachments", "tray" } },
+             { "pad_r", size = margin } } },
+  "statusline",
+}
+
+-- Resize the margins in whatever layout is current, in place: plugins swap
+-- regions in and out of it (ask_user puts its question where the prompt
+-- was) and expect their table to stay.
 local function apply()
-  bone.ui.layout = {
-    "topbar",
-    "top",
-    { cols = { { "pad_l", size = margin },
-               { rows = { "chat", "input_gap", "above_prompt", "prompt", { "composer_meta", size = 1 },
-                          "attachments", "tray" } },
-               { "pad_r", size = margin } } },
-    "statusline",
-  }
+  local function walk(list)
+    for _, e in ipairs(list or {}) do
+      if type(e) == "table" then
+        if e[1] == "pad_l" or e[1] == "pad_r" then e.size = margin end
+        walk(e.rows)
+        walk(e.cols)
+      end
+    end
+  end
+  walk(bone.ui.layout)
+  applied_layout = bone.ui.layout
 end
+
+-- The middle column's width: the prompt, or whatever stands in for it.
+local MIDDLE = { pad_l = true, pad_r = true, prompt = true, ask_user = true }
 
 local function pad()
   local room = 0
   for _, l in ipairs(bone.ui.geometry().leaves or {}) do
-    if l.name == "pad_l" or l.name == "pad_r" or l.name == "prompt" then room = room + l.width end
+    if MIDDLE[l.name] then room = room + l.width end
   end
   local want = room > 0 and math.max(1, math.floor((room - COL) / 2)) or margin
-  if want ~= margin then
+  -- ask_user can restore an older layout with stale sizes after a resize.
+  if want ~= margin or bone.ui.layout ~= applied_layout then
     margin = want
     bone.defer(0, function() apply(); bone.ui.refresh_in(0) end)
   end
@@ -435,7 +459,6 @@ local function pad()
 end
 bone.ui.regions.pad_l = { render = pad }
 bone.ui.regions.pad_r = { render = function() return {} end }
-apply()
 
 -- ---- keys, clicks, events ----------------------------------------------------------
 

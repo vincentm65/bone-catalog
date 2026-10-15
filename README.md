@@ -81,6 +81,19 @@ BONE_BIN=/path/to/bone3 python3 tests/todo_runtime_test.py
 BONE_BIN=/path/to/bone3 python3 tests/todo_tmux_test.py
 ```
 
+Check the standalone Markdown browser and terminal panels (tmux tests make no
+model calls):
+
+```sh
+luajit tests/md_test.lua
+luajit tests/term_test.lua
+luajit tests/idle_compact_test.lua
+luajit tests/codex_app_test.lua
+BONE_BIN=/path/to/bone3 python3 tests/md_tmux_test.py
+BONE_BIN=/path/to/bone3 python3 tests/term_tmux_test.py
+BONE_BIN=/path/to/bone3 python3 tests/codex_app_tmux_test.py
+```
+
 The previous catalog, including its index, packages and tests, is archived under
 [`legacy/`](legacy/). The root index and installer target Bone 3. See
 [PORT_STATUS.md](PORT_STATUS.md) for remaining differences from the old plugins.

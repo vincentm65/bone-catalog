@@ -1,6 +1,5 @@
--- Local Markdown popup, implemented only with existing Bone Lua APIs.
+-- Project Markdown browser; uses Bone popup, Markdown and job APIs.
 local M = {}
-local CHAR = "^[%z\1-\127\194-\244][\128-\191]*$"
 
 local markdown_close
 function M.open(path)
@@ -205,12 +204,9 @@ function M.open(path)
         st.top = math.max(0, math.min(st.top, st.total - st.rows))
       end
     elseif st.pane == "files" then
-      if k == "backspace" then st.query = st.query:gsub(CHAR:sub(2, -2) .. "$", "")
-      elseif k == "ctrl+u" then st.query = ""
-      elseif k == "space" then st.query = st.query .. " "
-      elseif k:match(CHAR) then st.query = st.query .. k
-      else return false end
-      st.sel = 1
+      local query = bone.text.edit(st.query, k)
+      if not query then return false end
+      st.query, st.sel = query, 1
       filter()
     else return false end
     return true

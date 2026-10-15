@@ -1,7 +1,7 @@
 {
   "title": "Markdown",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Search project Markdown files and read themed previews in a large popup",
-  "min_bone_version": "0.1.0",
+  "min_bone_version": "3.0.3",
   "capabilities": ["command", "ui", "system"]
 }
