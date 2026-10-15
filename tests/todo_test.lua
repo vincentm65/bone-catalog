@@ -5,6 +5,7 @@ local highlights = {}
 bone = {
   hl = { set = function(name, spec) highlights[name] = spec end },
   tool = { register = function(spec) tools[spec.name] = spec end },
+  hook = function() end,
   chat = {
     items = function(opts)
       local out = {}
@@ -39,10 +40,10 @@ for _, f in ipairs({ "todo/core", "todo/tui" }) do dofile("plugins/" .. f .. ".l
 
 -- todo: validates, stores nothing.
 local todo = tools.todo.run
-assert(todo({ items = { { text = "a", status = "completed" }, { text = "b", status = "in_progress" } } }) == "[x] a\n[>] b")
+assert(todo({ items = { { text = "a", status = "completed" }, { text = "b", status = "in_progress" } } }) == "[x] a\n[>] b\n1 open; mark each completed as you finish it.")
 assert(not todo({ items = { { text = "a", status = "done" } } }))
 assert(todo({ items = {} }) == "list cleared")
-assert(todo({ title = "Parser fixes", items = { { text = "fix", status = "pending" } } }) == "[ ] fix")
+assert(todo({ title = "Parser fixes", items = { { text = "fix", status = "pending" } } }) == "[ ] fix\n1 open; mark each completed as you finish it.")
 assert(not todo({ title = " ", items = {} }))
 assert(not todo({ title = 42, items = {} }))
 
@@ -57,6 +58,21 @@ end
 local function running(items)
   return { done = false, arguments = { items = items } }
 end
+-- Opening a chat syncs both before and after its history arrives, without
+-- needing a tool event or /todo. Switching back restores a hidden drawer.
+current = "loading"; events["chat/shown"]()
+assert(not panel, "empty loading chat must not open a drawer")
+chats.loading = { call({ { text = "loaded", status = "pending" } }) }
+events["chat/shown"]()
+assert(panel and not panel.hidden, "loaded history must open the drawer")
+current = "empty"; events["chat/shown"]()
+assert(panel.hidden, "switching to an empty chat must hide the drawer")
+current = "loading"; events["chat/shown"]()
+assert(not panel.hidden, "switching back must restore the drawer")
+chats.loading[1].arguments.items[1].status = "completed"
+events["chat/shown"]()
+assert(panel.hidden, "a completed list must stay hidden on chat/shown")
+
 chats.A = { call({ { text = "old", status = "pending" } }), call({ { text = "new", status = "in_progress" } }), call({}, { is_error = true }) }
 chats.A[2].arguments.title = "Parser fixes"
 current = "A"; events["tool/finished"]()

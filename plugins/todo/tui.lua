@@ -1,6 +1,6 @@
 -- Shows the on-screen chat's latest finished todo call in a drawer under it,
--- and hides when that chat has no unfinished list. /todo syncs it after
--- switching chats.
+-- and hides when that chat has no unfinished list. Syncs automatically when
+-- switching chats; /todo also syncs it manually.
 local MARK = { pending = "· ", in_progress = "▸ ", completed = "✓ " }
 local HL = { pending = "Normal", in_progress = "TodoActive", completed = "TodoDone" }
 local ICON_HL = { pending = "Dim", in_progress = "Accent", completed = "TodoCheck" }
@@ -76,7 +76,7 @@ local function sync()
   end
 end
 
-for _, event in ipairs({ "ready", "submit", "tool/finished", "turn/finished" }) do
+for _, event in ipairs({ "ready", "chat/shown", "submit", "tool/finished", "turn/finished" }) do
   bone.on(event, function() bone.defer(0, sync) end)
 end
 bone.cmd.create("todo", sync, { desc = "show this chat's unfinished todo list" })
