@@ -126,7 +126,7 @@ local function queries(r, session_id, filters)
              count(DISTINCT date(at, 'unixepoch', 'localtime')),
              (SELECT count(*) FROM tool_calls WHERE session_id = ?1),
              (SELECT sum(coalesce(is_error, 0)) FROM tool_calls WHERE session_id = ?1)
-      FROM usage WHERE session_id = ?1]] or nil,
+      FROM usage WHERE session_id = ?1 OR session_id IN (SELECT id FROM sessions WHERE root = ?1)]] or nil,
     totals = [[
       SELECT count(*), sum(input_tokens), sum(output_tokens), sum(cached_tokens),
              count(DISTINCT nullif(session_id, '')),
@@ -153,16 +153,16 @@ local function queries(r, session_id, filters)
     sessions = [[
       SELECT coalesce(s.renamed, s.title, '(untitled)'), s.cwd, u.tokens, u.calls, s.id
       FROM (
-        SELECT session_id, sum(input_tokens + output_tokens) AS tokens, count(*) AS calls
-        FROM usage WHERE at >= ?1 AND at < ?2 GROUP BY session_id
-      ) u JOIN sessions s ON s.id = u.session_id
+        SELECT coalesce(a.root, a.id) AS chat, sum(input_tokens + output_tokens) AS tokens, count(*) AS calls
+        FROM usage JOIN sessions a ON a.id = usage.session_id WHERE at >= ?1 AND at < ?2 GROUP BY chat
+      ) u JOIN sessions s ON s.id = u.chat
       ORDER BY u.tokens DESC LIMIT 6]],
     tools = [[
       SELECT name, count(*), sum(coalesce(is_error, 0)), avg(output_chars)
       FROM tool_calls WHERE at >= ?1 AND at < ?2 GROUP BY name ORDER BY count(*) DESC]],
   }
   local f = filters or {}
-  local scope = (f.session and " AND session_id = ?3" or "")
+  local scope = (f.session and " AND (session_id = ?3 OR session_id IN (SELECT id FROM sessions WHERE root = ?3))" or "")
   local model = f.model and " AND coalesce(nullif(provider, ''), '?') = ?4 AND model = ?5" or ""
   for name, sql in pairs(qs) do
     if name ~= "conversation" then

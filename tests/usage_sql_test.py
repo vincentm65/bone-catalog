@@ -14,11 +14,11 @@ GROUP BY u.session_id ORDER BY sum(u.input_tokens + u.output_tokens) DESC LIMIT 
 """
 db = sqlite3.connect(":memory:")
 db.executescript("""
-CREATE TABLE sessions (id TEXT PRIMARY KEY, renamed TEXT, title TEXT, cwd TEXT);
+CREATE TABLE sessions (id TEXT PRIMARY KEY, renamed TEXT, title TEXT, cwd TEXT, root TEXT);
 CREATE TABLE usage (session_id TEXT, at INTEGER, input_tokens INTEGER, output_tokens INTEGER);
 """)
 for i in range(10):
-    db.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)",
+    db.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, NULL)",
                (str(i), "renamed" if i == 2 else None, None if i == 3 else "title", "/tmp"))
     for at in (99, 100, 101, 199, 200):
         db.execute("INSERT INTO usage VALUES (?, ?, ?, ?)", (str(i), at, i * 100, 1))

@@ -772,7 +772,7 @@
     "name": "usage",
     "title": "Usage",
     "kind": "plugin",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "description": "Full-screen usage dashboard: tokens, models, tools, activity",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -786,11 +786,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "c3e157b3fedbddf44473a22ebdd10934010be62342f9391a0ff0494b25dfe7ac"
+        "sha256": "b0b325fcc8ddd7b45ba787f3d262e6dcaca1d2234d027918d23ef52d84717900"
       },
       {
         "path": "tui.lua",
-        "sha256": "97b126ff3cdf9cb523dd0e17ec8c8b75838b72b84baa05cef607612bd949e2c5"
+        "sha256": "7f93d1b58202e79fa88a45e1b52d0d2a47b2e68ff2ef365d0c85eb4a42725795"
       }
     ]
   },
