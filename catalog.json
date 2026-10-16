@@ -327,6 +327,32 @@
     ]
   },
   {
+    "name": "grok",
+    "title": "Grok",
+    "kind": "plugin",
+    "version": "1.0.2",
+    "description": "Model provider for xAI's Grok: your SuperGrok / X plan through the Grok Build CLI login, or an xAI API key",
+    "min_bone_version": "3.0.2",
+    "capabilities": [
+      "provider",
+      "network"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "87666f6baa34d67be2803d44adf8ddb5733f1d81b4ae4c795bbc8348cd6e2ee4"
+      },
+      {
+        "path": "core.lua",
+        "sha256": "492b0d407e509d555c43dbeacf0ec6ab06d79e0444fd018d3126d1d20933bd90"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "4ee6a7d23481221a271530f4f9e19bd0a5eaf1a0da901a1ef11f69017184fd7c"
+      }
+    ]
+  },
+  {
     "name": "history",
     "title": "History",
     "kind": "plugin",
