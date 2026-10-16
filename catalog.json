@@ -861,7 +861,7 @@
     "name": "windows",
     "title": "Windows",
     "kind": "plugin",
-    "version": "1.4.4",
+    "version": "1.4.5",
     "description": "Tiled chat windows: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
     "min_bone_version": "3.0.2",
     "capabilities": [
@@ -871,15 +871,15 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "e41ce46ee5c48bfce55a19557e3b9946472b1bcc3d0a150cb022c6dbdce80832"
+        "sha256": "50f323b56cfbb196f46381e677344a1f45341616bfbb1fb2b74c2d44c4c898fb"
       },
       {
         "path": "manifest.json",
-        "sha256": "d5c520c5ff187fca6ef988255fe0e9930efe0b0e96ffcd99bd00ac0a0a62f3bf"
+        "sha256": "fb42f44312feba93dabfc9d7a1b12f481fbc7be0019ee1cf1904ed077ac2b788"
       },
       {
         "path": "tui.lua",
-        "sha256": "8af7cb0ce8fe9ea07a329d419ffd53d9b69b18ad153c1254826686fa678ca901"
+        "sha256": "d6aff8c69f48809b01bf1e7b52079ef90a15b2159f918caf3a2e7416323b8e25"
       }
     ]
   },

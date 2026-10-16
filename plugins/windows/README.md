@@ -64,5 +64,17 @@ are not saved with the windows. Needs a Bone with `bone.ui.terminal`.
 - A window whose session is deleted closes.
 - With *Watch sub-agents* on (`/config` → Windows), each new sub-agent opens
   in a window under its owner's.
-- The windows and their sizes are saved, and come back at the next start.
+- The windows, their sizes and zoom state are saved, and come back at the next
+  start. A Lua configuration reload keeps the current layout and reuses the
+  existing chat buffers, including blank chats and their unsent drafts. A failed
+  reload leaves the old layout alone.
+- Buffer numbers are reused only within a Lua reload, never across restarts.
+  As before, terminal windows are not restored: Lua reload stops their jobs.
 - A session shows in one window at a time.
+
+## Tests
+
+```sh
+luajit tests/windows_test.lua
+BONE_BIN=/path/to/bone python3 tests/windows_tmux_test.py  # requires tmux; isolated config, no model calls
+```

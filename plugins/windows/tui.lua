@@ -112,8 +112,11 @@ end
 -- Terminals are not saved: their programs end with bone.
 local function encode(node)
   if node.win then
-    if wins[node.win].term then return nil end
-    return { sid = wins[node.win].sid, w = node.w, focus = node.win == focused or nil }
+    local win = wins[node.win]
+    if win.term then return nil end
+    local chat = bone.chat.session({ session = tostring(win.chat) })
+    return { sid = chat and chat.session_id or win.sid, chat = win.chat, w = node.w,
+      focus = node.win == focused or nil, zoom = node.win == zoomed or nil }
   end
   local kids = {}
   for _, k in ipairs(node.kids) do kids[#kids + 1] = encode(k) end
@@ -545,22 +548,27 @@ end
 
 -- ---- startup and following the chat on screen ----------------------------
 
-local function restore(t)
+local function restore(t, reloading)
   local function walk(n)
     if n.kids then
       local kids = {}
       for _, k in ipairs(n.kids) do kids[#kids + 1] = walk(k) end
       return { dir = n.dir, w = n.w or 1, kids = kids }
     end
-    local id = new_win(n.sid, nil, n.focus and bone.chat.session().chat)
+    -- Buffer numbers survive a Lua reload, including chats with no session
+    -- yet. They are process-local, so never trust them on a fresh start.
+    local existing = reloading and n.chat ~= nil and bone.chat.session({ session = tostring(n.chat) })
+    local chat = existing and existing.chat or (n.focus and bone.chat.session().chat)
+    local id = new_win(n.sid, nil, chat)
     if n.focus then focused = id end
+    if n.zoom then zoomed = id end
     return { win = id, w = n.w or 1 }
   end
   root = walk(t)
   focused = focused or first_win(root)
   -- Show the focused window's session unless a chat was already chosen.
   local want, s = wins[focused].sid, bone.chat.session()
-  if want and s and s.new and s.items == 0 then
+  if not reloading and want and s and s.new and s.items == 0 then
     switching = true
     bone.api.open_session(want)
     switching = false
@@ -568,18 +576,22 @@ local function restore(t)
   sync()
 end
 
-local function start()
+local function start(ev)
   if started then return end
   started = true
-  base = bone.ui.layout
-  applied = base
-  if type(st.tree) == "table" then
-    restore(st.tree)
-  else
-    root = { win = new_win(current_sid(), nil, bone.chat.session().chat), w = 1 }
-    focused = root.win
-  end
-  apply()
+  -- A reload validates ready handlers before accepting the new Lua state.
+  -- Defer activation so a rejected candidate cannot create/switch chats.
+  bone.defer(0, function()
+    base = bone.ui.layout
+    applied = base
+    if type(st.tree) == "table" then
+      restore(st.tree, ev and ev.reload)
+    else
+      root = { win = new_win(current_sid(), nil, bone.chat.session().chat), w = 1 }
+      focused = root.win
+    end
+    apply()
+  end)
 end
 
 -- Another way of changing the chat (ctrl+o, a click on a sub-agent, ctrl+n)
