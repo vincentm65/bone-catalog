@@ -31,6 +31,14 @@ the request prefix and prompt cache are untouched, and nothing is added
 while the list is fresh or finished. The count lives in memory per session;
 after a restart reminders resume with the next `todo` call.
 
+If you interrupt a turn while items are open, your next message reaches the
+model with one extra line, e.g.
+`[todo: 3 open, in progress "wire up hook". You were interrupted: update the list if the plan changed, or clear it.]`.
+It is added only to what the model is sent, never stored, so it does not
+appear on screen. Once added it stays on that message in every later
+request, so the prompt cache holds; after a restart it drops off and the
+cache rebuilds once from that message.
+
 Drawer rendering and visibility do not change model messages or invalidate
 the chat render cache. Adding `title` changes the tool schema once on upgrade,
 so a provider may need to warm its prompt cache again; subsequent UI-only

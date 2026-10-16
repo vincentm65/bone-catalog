@@ -9,6 +9,19 @@ local STALE_AFTER = 8
 -- Lost on restart, which only means no reminder until the next todo call.
 local live = {}
 
+-- After an interrupt with items open, the next user message carries a
+-- reminder, but only in what the model is sent: it is never stored, so it
+-- is not on screen. Once added it stays on that message in every request,
+-- unchanged, so the request prefix and prompt cache hold. Memory only: after
+-- a restart it drops off and the cache rebuilds once from that message.
+local interrupted = {} -- session -> true until its next turn starts
+local notes = {} -- session -> { { text, nth, line } }, nth: which user message with that text
+
+local function reminder(s, ask)
+  return ("[todo: %d open%s. %s]"):format(
+    s.open, s.active and (', in progress "' .. s.active .. '"') or "", ask)
+end
+
 bone.tool.register({
   name = "todo",
   description = "Track multi-step work as a checklist the user can see. Send the whole list every time,"
@@ -75,7 +88,58 @@ bone.hook("tool_result", function(ev)
   s.since = s.since + 1
   if s.since < STALE_AFTER or ev.is_error or type(ev.output) ~= "string" then return end
   s.since = 0
-  local note = ("[todo: %d open%s. Mark finished items completed.]"):format(
-    s.open, s.active and (', in progress "' .. s.active .. '"') or "")
-  return { output = ev.output .. "\n\n" .. note }
+  return { output = ev.output .. "\n\n" .. reminder(s, "Mark finished items completed.") }
+end)
+
+bone.hook("turn_end", function(ev)
+  if live[ev.session_id] and ev.outcome and ev.outcome.status == "cancelled" then
+    interrupted[ev.session_id] = true
+  end
+end)
+
+-- Last, so the text is final when it is matched in context.
+bone.hook("turn_start", function(ev)
+  local sid = ev.session_id
+  if not interrupted[sid] then return end
+  interrupted[sid] = nil
+  local s = live[sid]
+  if not s or type(ev.text) ~= "string" then return end
+  local list = notes[sid] or {}
+  list[#list + 1] = { text = ev.text,
+    line = reminder(s, "You were interrupted: update the list if the plan changed, or clear it.") }
+  notes[sid] = list
+end, { priority = -100 })
+
+bone.hook("context", function(ev)
+  local list = notes[ev.session_id]
+  if not list or type(ev.messages) ~= "table" then return end
+  local count, last = {}, nil
+  for _, m in ipairs(ev.messages) do
+    if m.role == "user" and type(m.content) == "string" then
+      count[m.content] = (count[m.content] or 0) + 1
+      last = m.content
+    end
+  end
+  -- A new note belongs to the newest user message; if that is not it (the
+  -- turn failed before saving it), drop it.
+  for i = #list, 1, -1 do
+    local n = list[i]
+    if not n.nth then
+      if n.text == last then n.nth = count[last] else table.remove(list, i) end
+    end
+  end
+  if #list == 0 then notes[ev.session_id] = nil return end
+  local seen, changed = {}, false
+  for _, m in ipairs(ev.messages) do
+    if m.role == "user" and type(m.content) == "string" then
+      local text = m.content
+      seen[text] = (seen[text] or 0) + 1
+      for _, n in ipairs(list) do
+        if n.text == text and n.nth == seen[text] then
+          m.content, changed = m.content .. "\n\n" .. n.line, true
+        end
+      end
+    end
+  end
+  if changed then return { messages = ev.messages } end
 end)
