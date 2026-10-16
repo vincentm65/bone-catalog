@@ -289,11 +289,50 @@ local function body(full)
     for _, row in ipairs(para("Images count 85 + 170 tokens per 512px tile; provider billing may differ.", "Dim", w)) do add(row) end
   end
 
+  -- Every offered tool's schema cost, even when it has never been called.
+  -- Keep this separate from the capped activity ranking below: large results
+  -- should not hide tools that take up space on every request.
+  local schemas, schema_bytes = {}, 0
+  for _, t in ipairs(d.tools) do
+    if t.definitions > 0 then
+      schemas[#schemas + 1] = t
+      schema_bytes = schema_bytes + t.definitions
+    end
+  end
+  table.sort(schemas, function(a, b)
+    return a.definitions == b.definitions and a.name < b.name or a.definitions > b.definitions
+  end)
+  add("")
+  add(title("Tool schemas", w, #schemas > 0 and (#schemas .. " tools · ≈ " .. num(tokens(schema_bytes)) .. " tokens") or nil))
+  if #schemas == 0 then
+    local note = data.request and "No tool schemas were offered in the last observed request."
+      or "Tool schemas are unknown until this conversation makes a model request."
+    for _, row in ipairs(para(note, "Dim", w)) do add(row) end
+  else
+    add(line("  Estimated tokens · share of all tool schemas", "Dim"))
+    local name_w = 8
+    for _, t in ipairs(schemas) do name_w = math.max(name_w, width(t.name) + 2) end
+    name_w = math.min(name_w, 42, math.max(w - 20, 8))
+    local schema_bar = math.min(20, w - name_w - 18)
+    for _, t in ipairs(schemas) do
+      local long = width(t.name) > name_w
+      if long then
+        for _, row in ipairs(para(t.name, "ToolName", w)) do add(row) end
+      end
+      l, put = builder()
+      put("  " .. pad(long and "" or t.name, name_w), "ToolName")
+      put(lpad(num(tokens(t.definitions)), 8), "MdBold")
+      put(lpad(pct(t.definitions / schema_bytes), 6), "Dim")
+      if schema_bar >= 4 then put("  " .. bar(t.definitions / schema_bytes, schema_bar), KIND.definitions.hl) end
+      add(l)
+    end
+  end
+
   -- Per-tool costs: total, its parts, and a bar of the tool's share colored
   -- by the part that dominates it.
   if #d.tools > 0 then
     add("")
-    add(title("Tools", w))
+    add(title("Tool costs", w, "top " .. math.min(15, #d.tools)))
     local shown_tools = math.min(15, #d.tools)
     local name_w = 8
     for i = 1, shown_tools do name_w = math.max(name_w, width(d.tools[i].name) + 2) end

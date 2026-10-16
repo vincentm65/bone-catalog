@@ -76,6 +76,25 @@ bone.config.system_prompt = function() error("must not evaluate dynamic prompts"
 assert(row(get({}, { session_id = "three" }).current, "system").bytes == 0)
 assert(not pcall(get, {}, {}), "missing session should fail clearly")
 
+-- More than the activity table's 15-tool cap, including unused schemas and
+-- a long MCP-style name. Keep the accounting separate from call/result costs.
+local offered = {}
+for i = 1, 20 do
+  offered[#offered + 1] = { name = string.format("unused_%02d", i), description = string.rep("x", i * 40), parameters = {} }
+end
+local long_tool = "mcp_server_with_a_long_name__tool_with_a_long_name"
+offered[#offered + 1] = { name = long_tool, description = string.rep("x", 1200), parameters = {} }
+hooks.request({ session_id = "many", messages = {}, tools = offered })
+local many = get({}, { session_id = "many" })
+assert(#many.request.tools == #offered and #many.current.tools == #offered + 1)
+local schema_total = 0
+for _, t in ipairs(many.request.tools) do
+  assert(t.calls == 0 and t.results == 0 and t.bytes == t.definitions)
+  schema_total = schema_total + t.definitions
+end
+assert(row(many.request, "definitions").bytes == schema_total)
+hooks.request({ session_id = "empty", messages = {}, tools = {} })
+
 -- Exercise TUI callbacks, refresh races, render/scroll/resize, and teardown.
 local command, shutdown, callbacks, events, windows, next_window = nil, nil, {}, {}, {}, 0
 local session_id = "one"
@@ -86,8 +105,20 @@ bone.notify = function(message) error(message) end
 bone.rpc.call = function(_, args, cb) callbacks[#callbacks + 1] = { cb = cb, id = args.session_id } end
 bone.cmd = { create = function(name, fn) assert(name == "context"); command = fn end }
 bone.on = function(name, fn) events[name] = fn end
-bone.text = { wrap = function(spans) return { spans } end, width = function(s) return #s end,
-  truncate = function(s, w) return s:sub(1, w) end }
+bone.text = { wrap = function(spans, width)
+    local lines, line, used = {}, {}, 0
+    for _, span in ipairs(spans) do
+      local text = span[1]
+      while #text > 0 do
+        local take = math.min(#text, width - used)
+        line[#line + 1] = { text:sub(1, take), span[2] }
+        text, used = text:sub(take + 1), used + take
+        if used == width then lines[#lines + 1], line, used = line, {}, 0 end
+      end
+    end
+    if #line > 0 then lines[#lines + 1] = line end
+    return lines
+  end, width = function(s) return #s end, truncate = function(s, w) return s:sub(1, w) end }
 bone.hl = { set = function() end, get = function() return {} end }
 bone.ui = {
   popup = function(spec) next_window = next_window + 1; windows[next_window] = spec; return next_window end,
@@ -109,6 +140,12 @@ command({ args = "" })
 assert(rendered():find("Loading context", 1, true))
 callbacks[#callbacks].cb(captured)
 assert(rendered():find("estimated current context", 1, true))
+local function schemas(text)
+  local start = assert(text:find(" Tool schemas ", 1, true))
+  return text:sub(start, (text:find(" Tool costs ", start, true) or text:find(" Largest messages ", start, true)
+    or assert(text:find(" Notes ", start, true))) - 1)
+end
+assert(schemas(rendered(100, 200)):find("read", 1, true))
 windows[next_window].on_key("tab")
 assert(rendered():find("last request", 1, true))
 windows[next_window].on_key("end")
@@ -124,6 +161,28 @@ callbacks[#callbacks].cb(get({}, { session_id = "two" }))
 assert(rendered():find("No request observed", 1, true))
 windows[next_window].on_key("q")
 assert(not windows[next_window])
+command({ args = "" })
+callbacks[#callbacks].cb(many)
+local schema_text = schemas(rendered(100, 200))
+for _, t in ipairs(offered) do assert(schema_text:find(t.name, 1, true), "missing offered tool " .. t.name) end
+assert(schema_text:find("21 tools", 1, true) and schema_text:find("share of all tool schemas", 1, true))
+assert(schema_text:find(long_tool, 1, true) < schema_text:find("unused_20", 1, true))
+assert(schema_text:find("unused_20", 1, true) < schema_text:find("unused_01", 1, true), "sort schemas by weight")
+assert(schema_text:find(tostring(B.tokens(#long_tool + 1200 + 2)), 1, true), "show estimated schema tokens")
+assert(not schema_text:find("read", 1, true), "history-only tools must not appear as offered schemas")
+local narrow = schemas(rendered(35, 200))
+assert(not narrow:find(long_tool, 1, true), "long tool names must wrap on narrow screens")
+assert(narrow:gsub("%s", ""):find(long_tool, 1, true), "do not truncate long tool names")
+windows[next_window].on_key("tab")
+assert(schemas(rendered(100, 200)):find("unused_01", 1, true), "list schemas in request view too")
+windows[next_window].on_key("q")
+command({ args = "" })
+callbacks[#callbacks].cb(get({}, { session_id = "two" }))
+assert(schemas(rendered(100, 200)):find("unknown until", 1, true))
+windows[next_window].on_key("r")
+callbacks[#callbacks].cb(get({}, { session_id = "empty" }))
+assert(schemas(rendered(100, 200)):find("No tool schemas were offered", 1, true))
+windows[next_window].on_key("q")
 command({ args = "request" })
 shutdown()
 callbacks[#callbacks].cb(captured)

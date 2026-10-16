@@ -26,8 +26,13 @@ The dashboard shows:
   stored and summarized, and the provider's own input and cache count for the
   last call.
 - **The breakdown** by category, with item counts and shares.
-- **Tool costs**, split into schema, call arguments and results, with a bar of
-  each tool's share colored by the part that dominates it.
+- **Tool schemas**: every tool offered in the last observed request, including
+  unused tools, sorted by estimated token weight. Each shows its schema token
+  count and share of all schemas; long names wrap rather than being truncated.
+  There is no tool-count limit on this list.
+- **Tool costs**: the top 15 combined costs, split into schema, call arguments
+  and results, with a bar of each tool's share colored by the part that
+  dominates it.
 - **The largest messages**, with their share of the total and a one-line
   glimpse (current view only). A message that only calls tools shows what it
   acted on, such as `→ write_file lua/x.lua`.

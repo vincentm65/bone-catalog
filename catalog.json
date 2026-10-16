@@ -172,7 +172,7 @@
     "name": "context",
     "title": "Context",
     "kind": "plugin",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "See what fills the context window: categories, tools and the largest messages, calibrated to the provider's counts",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -184,7 +184,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "7c2914d9ee3a0aa8dd4e09766f959fcf0582d61684c76eb400788f0508455663"
+        "sha256": "26cf72339e94f18ea1157233dc70d1b8ff8f4318797a28e91ca0a01ae05b1e8b"
       },
       {
         "path": "core.lua",
@@ -196,11 +196,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "829d45a8e607b82a5b11e1b57971ee30e5cd720153cb56437d66747d0fdf38f3"
+        "sha256": "7f995abbf1e7ac60ba00d2d49abca486d3cc02e1e7c5d2d7eaec537f9326286e"
       },
       {
         "path": "tui.lua",
-        "sha256": "4458d6fc3ebbc4cd3c4219395572dc41d8b7aba5d48d669092bb1da2aa5afaaa"
+        "sha256": "e7489ee4852c7e4408ef0bc1f282aca3bcbd9935f24c92fb5ef6d0f11a072e1a"
       }
     ]
   },
