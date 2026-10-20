@@ -41,6 +41,23 @@ local function char_count(text)
   return count
 end
 
+-- A suggestion is a convenience, so a provider that is busy or unreachable
+-- must not report anything. Actionable mistakes (a provider name that does
+-- not exist, a model the provider rejects) still do.
+local TRANSIENT = { "server_is_overloaded", "overloaded", "rate_limit", "rate limited",
+  "service_unavailable", "server_error", "bad_gateway", "service unavailable",
+  "try again later", "timed out", "timeout", "request failed" }
+local function transient(err)
+  local text = err or ""
+  if text:find("HTTP %d%d%d") then
+    local status = tonumber(text:match("HTTP (%d%d%d)"))
+    if status >= 500 then return true end
+  end
+  for _, needle in ipairs(TRANSIENT) do
+    if text:lower():find(needle, 1, true) then return true end
+  end
+end
+
 local function suffix(ctx)
   local session = current()
   if not enabled() or not suggestion or session.running or session.starting
@@ -137,7 +154,9 @@ local function suggest(ev)
     if not valid() then return end
     loading = false
     if err then
-      bone.notify("Prompt suggestions: " .. tostring(err), "error")
+      if not transient(err) then
+        bone.notify("Prompt suggestions: " .. tostring(err), "error")
+      end
       return
     end
     -- Only the last eight conversational text messages, never tool output,
@@ -172,7 +191,9 @@ local function suggest(ev)
       if not valid() then return end
       request, loading = nil, false
       if model_err then
-        bone.notify("Prompt suggestions: " .. tostring(model_err), "error")
+        if not transient(model_err) then
+          bone.notify("Prompt suggestions: " .. tostring(model_err), "error")
+        end
         return
       end
       if not result or type(result.content) ~= "string" then return end

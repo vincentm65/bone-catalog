@@ -221,12 +221,41 @@ for _, change in ipairs({ "session", "running", "starting", "disabled" }) do
   end
 end
 
-test("transcript and model errors notify and leave no suggestion", function()
+test("configuration errors notify and leave no suggestion", function()
   local m = mock(); m:finish(); m:deliver_messages(nil, "transcript failed")
   eq(#m.calls, 0); eq(m.notices[1][1], "Prompt suggestions: transcript failed"); eq(m.notices[1][2], "error"); m:absent()
   m:finish(); m:deliver_messages(); m:deliver(nil, "model failed")
   eq(m.notices[2][1], "Prompt suggestions: model failed"); eq(m.notices[2][2], "error"); m:absent()
 end)
+for _, case in ipairs({
+  { "provider overloaded", 'provider error: {"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null,"type":"service_unavailable_error"},"sequence_number":3,"type":"error"}' },
+  { "HTTP 503", "HTTP 503: Service Unavailable" },
+  { "HTTP 500", "HTTP 500: Internal Server Error" },
+  { "rate limited", "provider error: {\"error\":{\"code\":\"rate_limit_exceeded\"}}" },
+  { "transport", "request failed: operation timed out" },
+  { "bad gateway", "HTTP 502: {\"error\":{\"type\":\"bad_gateway\"}}" },
+}) do
+  test("transient provider failure stays quiet: " .. case[1], function()
+    local m = mock(); m:finish(); m:deliver_messages(); m:deliver(nil, case[2])
+    eq(#m.notices, 0, "no notice"); m:absent()
+    m:finish(); m:deliver_messages(); m:deliver({ content = "Run the tests" })
+    eq(m:ghost(ctx("Run")), " the tests", "later turns still predict")
+  end)
+end
+test("transcript failures are quiet when transient and reported otherwise", function()
+  local m = mock(); m:finish()
+  m:deliver_messages(nil, "HTTP 503: Service Unavailable"); eq(#m.calls, 0); eq(#m.notices, 0)
+  m:finish(); m:deliver_messages(nil, "session index unavailable")
+  eq(#m.calls, 0); eq(#m.notices, 1)
+  eq(m.notices[1][1], "Prompt suggestions: session index unavailable")
+  m:absent()
+end)
+for _, case in ipairs({ "HTTP 401: Unauthorized", "HTTP 404: Not Found", "no provider \"x\" in bone.config.providers" }) do
+  test("real mistakes are still reported: " .. case, function()
+    local m = mock(); m:finish(); m:deliver_messages(); m:deliver(nil, case)
+    eq(#m.notices, 1); eq(m.notices[1][2], "error"); m:absent()
+  end)
+end
 for _, case in ipairs({
   { "empty", "" }, { "whitespace", " \t\n " }, { "slash", "/help" }, { "quoted slash", '"/help"' },
   { "multiline", "Run\ntests" }, { "control", "Run\ttests" }, { "NUL", "Run\0tests" },

@@ -531,7 +531,7 @@
     "name": "prompt-suggestions",
     "title": "Prompt Suggestions",
     "kind": "plugin",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Grey next-prompt predictions with configurable provider and model; Tab accepts, Escape dismisses",
     "min_bone_version": "3.0.2",
     "capabilities": [
@@ -541,15 +541,15 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "53900848aa4009bf449fe0b8aecf3d81942cbddcd6cf22dfa6a9fd3131f5ddd9"
+        "sha256": "e76ecc1f661cd8a7ef7b2bf14dce6673e6a71fead965d2fc8f737375c4ba4c34"
       },
       {
         "path": "manifest.json",
-        "sha256": "831ae09dec972de4c3eb8708e7780e84062421096d158eca74092a6975a6bf77"
+        "sha256": "161d0d766c08cea34c0a8254c55932fe0e9a0862aa76b75561646402c1a73175"
       },
       {
         "path": "tui.lua",
-        "sha256": "6ce9b6f5c88a8a0eaa9f0736f41a506bca0c71ae79904ac1c90dee02afaaf84c"
+        "sha256": "e3e94dd5e808d0bc6fa3237e73168abd4f6d7396fb963be2df53862cd588bfcf"
       }
     ]
   },
