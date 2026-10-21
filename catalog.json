@@ -531,7 +531,7 @@
     "name": "prompt-suggestions",
     "title": "Prompt Suggestions",
     "kind": "plugin",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "Grey next-prompt predictions with configurable provider and model; Tab accepts, Escape dismisses",
     "min_bone_version": "3.0.2",
     "capabilities": [
@@ -541,11 +541,11 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "e76ecc1f661cd8a7ef7b2bf14dce6673e6a71fead965d2fc8f737375c4ba4c34"
+        "sha256": "62534b5e5b8803577672cecd00406a0ea380b2de75450d8f69195461432d315d"
       },
       {
         "path": "manifest.json",
-        "sha256": "161d0d766c08cea34c0a8254c55932fe0e9a0862aa76b75561646402c1a73175"
+        "sha256": "65b07f546a92d94130212bb6afdffbca27c48f5a9dbdef6b170983f6a52147a2"
       },
       {
         "path": "tui.lua",
@@ -887,7 +887,7 @@
     "name": "windows",
     "title": "Windows",
     "kind": "plugin",
-    "version": "1.4.5",
+    "version": "1.4.6",
     "description": "Tiled chat windows: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
     "min_bone_version": "3.0.2",
     "capabilities": [
@@ -897,15 +897,15 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "50f323b56cfbb196f46381e677344a1f45341616bfbb1fb2b74c2d44c4c898fb"
+        "sha256": "27130ce9f0578eff841dd6e1c1ef92c8d1e60dc0b07a6cbc7faa8b6b78a79f76"
       },
       {
         "path": "manifest.json",
-        "sha256": "fb42f44312feba93dabfc9d7a1b12f481fbc7be0019ee1cf1904ed077ac2b788"
+        "sha256": "914d88f3a3c13d92fdef86abefdc2b95034d8bce224dbed3e47bd6b7ca1c6e81"
       },
       {
         "path": "tui.lua",
-        "sha256": "d6aff8c69f48809b01bf1e7b52079ef90a15b2159f918caf3a2e7416323b8e25"
+        "sha256": "b150d6fb91285354cfcb1d3e9ab070f1465086485555c55296f383dc3a014c10"
       }
     ]
   },

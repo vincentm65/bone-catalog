@@ -48,8 +48,9 @@ clipped by the existing prompt renderer. No prediction is made for failed or
 cancelled turns or background chats. An unclear next step may produce nothing.
 A provider that is busy, rate limited, or unreachable simply produces no
 prediction for that turn, with no message; a mistake you can act on (an unknown
-provider name, a rejected model) is reported with the provider's own text.
-Disable predictions if you do not want the extra calls.
+provider name, a rejected model) is reported once, with the provider's own text
+shortened to a single line. Disable predictions if you do not want the extra
+calls.
 
 ## Installation and tests
 

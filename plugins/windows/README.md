@@ -40,8 +40,12 @@ looked.
 
 - Click a window to focus it; the wheel scrolls the window under it.
 - Drag a `│` or `─` line between windows to resize them.
-- Drag a window by its title bar onto another to swap them; click the
-  focused window's title to pick what it shows.
+- Drag a window by its title bar onto another. The center swaps them; an
+  edge (the outer fifth of the shorter side, the nearer one in a corner)
+  splits that window and moves this one there. A blue outline shows which,
+  and a side too small to split swaps instead. Nothing happens over the
+  window you are dragging. Click the focused window's title to pick what
+  it shows.
 - `✕` or a middle click on a title closes a window; a double click zooms.
 
 ## Terminals

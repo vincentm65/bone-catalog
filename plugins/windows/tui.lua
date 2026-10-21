@@ -15,6 +15,7 @@ local DEFAULT = { "top", { cols = { "left", "chat", "right" }, sep = "│" }, "d
 
 local st = bone.plugin.state()
 bone.hl.set("WinBarActive", { link = "StatusLine", reverse = true })
+bone.hl.set("WinDrop", { fg = "#3d7eff", bg = "#3d7eff" })
 
 -- wins[id] = { id, chat, sid } (the chat's number, and its session once it
 -- has one) or, for a terminal, { id, term = panel id }. The
@@ -30,6 +31,7 @@ local base, applied, splits, below = nil, nil, {}, {}
 local HSEP = { size = 1, render = function() return { { { fill = "─", hl = "WinSeparator" } } } end }
 local unread = {} -- sessions whose turn ended while their window was in the background
 local drag -- { kind = "cols" | "rows" | "move", ... } while the mouse holds something
+local drop_ids, drop_key = {}, nil -- the outline shown while a window is dragged
 
 local function current_sid()
   local s = bone.chat.session()
@@ -402,11 +404,75 @@ local function only()
   apply()
 end
 
--- Swap the focused window with another; focus stays with the moved chat.
+-- Swap two windows; the focused id stays, so focus follows that chat.
+local function exchange(a, b)
+  if not a or not b or a == b then return end
+  local na, nb = leaf(a), leaf(b)
+  if not na or not nb then return end
+  na.win, nb.win = nb.win, na.win
+  apply()
+end
+
 local function swap(other)
-  if not other or other == here() then return end
-  local a, b = leaf(here()), leaf(other)
-  a.win, b.win = b.win, a.win
+  exchange(here(), other)
+end
+
+-- Lift a window out of the tree without forgetting it. Collapses like close().
+local function take(id)
+  local node, parent, i = leaf(id)
+  if not node or not parent then return end
+  table.remove(parent.kids, i)
+  if #parent.kids == 1 then
+    local only = parent.kids[1]
+    only.w = parent.w
+    local _, gp, gi = locate(root, function(n) return n == parent end)
+    if gp then gp.kids[gi] = only else root = only end
+    if gp and only.dir == gp.dir then
+      table.remove(gp.kids, gi)
+      for k = #only.kids, 1, -1 do
+        only.kids[k].w = only.kids[k].w * only.w / #only.kids
+        table.insert(gp.kids, gi, only.kids[k])
+      end
+    end
+  end
+  return node
+end
+
+-- Put `node` on `side` of `target` ("left"|"right"|"up"|"down"), taking half
+-- of the target. Left and up insert before it; right and down, after.
+local function graft(node, target, side)
+  local dir = (side == "left" or side == "right") and "cols" or "rows"
+  local before = side == "left" or side == "up"
+  local at, parent, i = leaf(target)
+  if not at then return end
+  if parent and parent.dir == dir then
+    at.w = at.w / 2
+    node.w = at.w
+    table.insert(parent.kids, before and i or i + 1, node)
+  else
+    node.w = 1
+    local s = { dir = dir, w = at.w, kids = before and { node, at } or { at, node } }
+    at.w = 1
+    if parent then parent.kids[i] = s else root = s end
+  end
+end
+
+-- Move `id` onto `target`: no side swaps them, a side splits `target` in half.
+local function move_to(id, target, side)
+  if not side then return exchange(id, target) end
+  if id == target or not wins[id] or not wins[target] then return end
+  local node = take(id)
+  if not node then return end
+  if not leaf(target) then
+    if root then
+      node.w = 1
+      root = { dir = "cols", w = 1, kids = { root, node } }
+    else
+      root = node
+    end
+    return apply()
+  end
+  graft(node, target, side)
   apply()
 end
 
@@ -461,7 +527,6 @@ bar = function(id, ctx)
     name = "terminal" .. (st and " · " .. st.cmd or "")
   end
   local hl = mine and "WinBarActive" or "Dim"
-  if drag and drag.kind == "move" and drag.target == id and drag.id ~= id then hl = "Selection" end
   local mark = s and s.running and ctx.spinner .. " " or unread[sid] and "• " or ""
   local title = bone.text.truncate(mark .. name, math.max(ctx.width - 10, 1))
   return { {
@@ -470,13 +535,78 @@ bar = function(id, ctx)
   } }
 end
 
+-- ---- drop preview ---------------------------------------------------------
+
+-- Where a drag over window `id` would land. The band is a fifth of the
+-- shorter side (Zed's drop_target_size). The nearest edge in that band
+-- splits, unless that half is under MIN cells, and the rest swaps. The
+-- caller passes nothing for the dragged window itself. `rect` is the
+-- outline: the whole window, or the half the dragged window will take.
+local function drop_zone(id, x, y)
+  local r = rects()[id]
+  if not r or r.width < 1 or r.height < 1 then return end
+  local band = math.min(r.width, r.height) * 0.2
+  local rx, ry = x - r.x, y - r.y
+  local side
+  if rx < band or rx >= r.width - band or ry < band or ry >= r.height - band then
+    local best, dist
+    for _, s in ipairs({ { "up", ry }, { "right", r.width - rx }, { "down", r.height - ry }, { "left", rx } }) do
+      if not dist or s[2] < dist then best, dist = s[1], s[2] end
+    end
+    local along = (best == "left" or best == "right") and r.width or r.height
+    if math.floor(along / 2) >= MIN then side = best end
+  end
+  local rect = { x = r.x, y = r.y, width = r.width, height = r.height }
+  if side == "left" or side == "right" then
+    rect.width = math.floor(r.width / 2)
+    if side == "right" then rect.x = r.x + r.width - rect.width end
+  elseif side == "up" or side == "down" then
+    rect.height = math.floor(r.height / 2)
+    if side == "down" then rect.y = r.y + r.height - rect.height end
+  end
+  return { id = id, side = side, rect = rect }
+end
+
+local function drop_hide()
+  drop_key = nil
+  for _, id in ipairs(drop_ids) do bone.ui.close(id) end
+  drop_ids = {}
+end
+
+-- A 1-cell outline. A filled window would clear the transcript under it.
+local function drop_show(z)
+  local key = z and (z.id .. ":" .. (z.side or "swap"))
+  if key == drop_key then return end
+  drop_hide()
+  drop_key = key
+  if not z then return end
+  local r = z.rect
+  local function strip(x, y, w, h)
+    if w < 1 or h < 1 then return end
+    local lines = {}
+    for i = 1, h do lines[i] = { { fill = " ", hl = "WinDrop" } } end
+    drop_ids[#drop_ids + 1] = bone.ui.win({
+      anchor = "screen", row = y, col = x, width = w, height = h, z = 30, lines = lines,
+    })
+  end
+  strip(r.x, r.y, r.width, 1)
+  if r.height > 1 then strip(r.x, r.y + r.height - 1, r.width, 1) end
+  if r.height > 2 then
+    strip(r.x, r.y + 1, 1, r.height - 2)
+    if r.width > 1 then strip(r.x + r.width - 1, r.y + 1, 1, r.height - 2) end
+  end
+end
+
 -- ---- mouse ---------------------------------------------------------------
 
 local function on_mouse(ev)
   if count() <= 1 or zoomed then return end
   if drag and ev.action == "drag" then
     if drag.kind == "move" then
-      drag.target = win_at(ev.x, ev.y)
+      local id = win_at(ev.x, ev.y)
+      drag.target = id
+      drag.zone = id and id ~= drag.id and drop_zone(id, ev.x, ev.y) or nil
+      drop_show(drag.zone)
     else
       local at = drag.kind == "cols" and ev.x or ev.y
       if at ~= drag.last then
@@ -487,15 +617,26 @@ local function on_mouse(ev)
     return true
   end
   if drag and ev.action == "up" then
-    local t = drag.kind == "move" and (drag.target or drag.id)
-    -- A click on the focused window's title changes its session.
-    if t and t ~= drag.id then
-      swap(t)
-    elseif t and drag.was then
-      local c = clicked
-      bone.defer(350, function() if clicked == c then pick() end end)
+    local kind, id, was = drag.kind, drag.id, drag.was
+    -- Release is the landing spot. A drag event usually already outlined it.
+    local zone = drag.zone
+    if kind == "move" and ev.x then
+      local over = win_at(ev.x, ev.y)
+      zone = over and over ~= id and drop_zone(over, ev.x, ev.y) or nil
     end
     drag = nil
+    drop_hide()
+    if kind == "move" then
+      if zone and zone.side then
+        move_to(id, zone.id, zone.side)
+      elseif zone then
+        exchange(id, zone.id)
+      elseif was then
+        -- A click on the focused window's title changes its session.
+        local c = clicked
+        bone.defer(350, function() if clicked == c then pick() end end)
+      end
+    end
     return true
   end
   local id = tonumber((ev.region or ""):match("^wm_bar:(%d+)$"))
