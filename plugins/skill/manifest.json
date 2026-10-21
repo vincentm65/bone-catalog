@@ -1,1 +1,1 @@
-{"title": "Skills", "version": "1.0.0", "description": "Inject and load skills from configured directories", "capabilities": ["skill", "hook", "tool"]}
+{"title": "Skills", "version": "1.0.1", "description": "Inject and load skills from configured directories", "capabilities": ["skill", "hook", "tool"]}

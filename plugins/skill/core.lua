@@ -135,7 +135,12 @@ local function ensure_skill_hooks()
       run = function(args, ctx)
         local sk = bone._skills[args.name or ""]
         if not sk or not skill_enabled(sk, ctx) then
-          return nil, "no skill named " .. tostring(args.name)
+          local names = {}
+          for _, candidate in ipairs(enabled_skills(ctx)) do
+            names[#names + 1] = candidate.name
+          end
+          local available = #names > 0 and (". Available skills: " .. table.concat(names, ", ")) or ""
+          return nil, "no skill named " .. tostring(args.name) .. available
         end
         return skill_text(sk)
       end,

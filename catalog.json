@@ -643,7 +643,7 @@
     "name": "skill",
     "title": "Skills",
     "kind": "plugin",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Inject and load skills from configured directories",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -658,11 +658,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "755ad2b8a43962291c02214494cb860f594bf0ab93c52d92a421d8a6b9920ec8"
+        "sha256": "22d976e2def1abfa90aa75d15cfab782ee7e68fc6c7d65d8fc5dc40070e13463"
       },
       {
         "path": "manifest.json",
-        "sha256": "696ee29d203b777cddb2cf8ae5ce1f919773494ce2a54be07eea1b42ab4bcbff"
+        "sha256": "f210493bba1595e0a235a9c6854357908edd32cdea6c29f8bec455e712942e18"
       },
       {
         "path": "tui.lua",
