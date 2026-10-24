@@ -110,11 +110,44 @@ bone.hook("turn_start", function(ev)
   notes[sid] = list
 end, { priority = -100 })
 
+-- Copy a dense list into a fresh array. A hook's event is turned back into
+-- JSON by length, and on Windows a list that lives in the hash part has
+-- length 0, so it comes back as {"1": ...} where a message needs a sequence.
+local function sequence(t)
+  if type(t) ~= "table" then return t end
+  local n = 0
+  for k in pairs(t) do
+    if type(k) ~= "number" or k < 1 or k % 1 ~= 0 then return t end
+    if k > n then n = k end
+  end
+  local out = {}
+  for i = 1, n do
+    if t[i] == nil then return t end
+    out[i] = t[i]
+  end
+  return out
+end
+
+local function repack(m)
+  if type(m) ~= "table" then return m end
+  if m.tool_calls ~= nil then m.tool_calls = sequence(m.tool_calls) end
+  if m.images ~= nil then m.images = sequence(m.images) end
+  local rs = m.reasoning_state
+  if type(rs) == "table" and rs.items ~= nil then rs.items = sequence(rs.items) end
+  return m
+end
+
 bone.hook("context", function(ev)
+  if type(ev.messages) ~= "table" then return end
+  -- Always, not only when a reminder is added: registering this hook sends
+  -- the messages back on every model call, including after the first tool.
+  local messages = sequence(ev.messages)
+  for i, m in ipairs(messages) do messages[i] = repack(m) end
+  ev.messages = messages
   local list = notes[ev.session_id]
-  if not list or type(ev.messages) ~= "table" then return end
+  if not list then return end
   local count, last = {}, nil
-  for _, m in ipairs(ev.messages) do
+  for _, m in ipairs(messages) do
     if m.role == "user" and type(m.content) == "string" then
       count[m.content] = (count[m.content] or 0) + 1
       last = m.content
@@ -130,7 +163,7 @@ bone.hook("context", function(ev)
   end
   if #list == 0 then notes[ev.session_id] = nil return end
   local seen, changed = {}, false
-  for _, m in ipairs(ev.messages) do
+  for _, m in ipairs(messages) do
     if m.role == "user" and type(m.content) == "string" then
       local text = m.content
       seen[text] = (seen[text] or 0) + 1

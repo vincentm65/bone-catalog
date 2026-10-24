@@ -804,7 +804,7 @@
     "name": "todo",
     "title": "Todo",
     "kind": "plugin",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "description": "A checklist the model keeps for multi-step work, shown in a drawer under the chat it belongs to",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -818,11 +818,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "17bf684ec53acf6d78bf5c0ab6cca627eeabf249f891a1f248ee3af7558482f7"
+        "sha256": "b9856b09d63f3f6e8fcf81bedecd5a710ace185a5294be91bceec0c554085185"
       },
       {
         "path": "manifest.json",
-        "sha256": "91d57e4cf332b7d994fc928b066a4b8ed06e8fca2e2dad3fda8c7a06d51b852e"
+        "sha256": "1cd57acfa5e813001b968aaf6566a5c4a5e9993dac691114232ddb1212aec908"
       },
       {
         "path": "tui.lua",
