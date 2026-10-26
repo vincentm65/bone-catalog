@@ -63,7 +63,7 @@ local function fixture()
     f.submit(); f.tick(45 * 60)
     assert(#f.requests == 1 and f.requests[1].method == "store/query")
   end
-  dofile("plugins/idle_compact/tui.lua")
+  dofile("plugins/idle_compact/ui.lua")
   return f
 end
 

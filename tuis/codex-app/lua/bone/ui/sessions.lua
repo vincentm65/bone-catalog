@@ -127,7 +127,7 @@ local function filter_running()
   for _, s in ipairs(bone.chat.sessions()) do
     if s.session_id then titles[s.session_id] = titles[s.session_id] or s.title end
   end
-  state.filter_dirty = false
+  state.filter_minute, state.filter_dirty = math.floor(os.time() / 60), false
   state.items = jobs()
   begin_rows()
   state.running, state.titles = #state.items > 0, titles
@@ -258,6 +258,7 @@ end
 local function choose(index)
   local s = state.items[index]
   if not s then return end
+  state.selected = index
   bone.ui.panel.focus(nil)
   bone.api.open_session(s.session_id)
 end

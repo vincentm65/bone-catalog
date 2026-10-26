@@ -61,7 +61,7 @@ bone.config.subagents.reviewer = {
 ```
 
 - core half: yes
-- TUI half: yes (`/subagents` editor; owned sessions shown by Bone itself)
+- UI: yes, in the terminal and the desktop app (`/subagents` editor; click an agent or a field, or New / Rename / Delete / Inherit; owned sessions shown by Bone itself)
 - needs a Bone 3 core with `bone.session.create` / `bone.session.run`
 - Per-agent/default model overrides and reliable cancellation cleanup require
   a core with request-hook `model` support and cancellation-safe `turn_end` hooks.

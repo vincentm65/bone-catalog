@@ -3,8 +3,8 @@
     "name": "ask_user",
     "title": "Ask User",
     "kind": "plugin",
-    "version": "1.1.1",
-    "description": "Ask the user questions in the prompt, like the first bone",
+    "version": "1.2.1",
+    "description": "Ask the user questions in the terminal prompt or a desktop window, like the first bone",
     "min_bone_version": "0.1.0",
     "capabilities": [
       "tool",
@@ -14,19 +14,27 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "4bd7f22f0bedbbba4938bf2b76204a224f12df1cca2562551e97b7b77c51672e"
+        "sha256": "f707c7de1d51360754f1a0b5eef8691f1f8e53ac1a4469235c6cf4e17a7a8816"
       },
       {
         "path": "core.lua",
-        "sha256": "0863b0249b2b4e46b175875a135f0018e61f2e603143b8d73df3e482f02c3ec7"
+        "sha256": "c5e228bd4245749824931339e39f60adc5c7e51e8714008e94bc5aefe0e73b3a"
+      },
+      {
+        "path": "gui.lua",
+        "sha256": "4968441d02e03d431008c505361dfe8ad688dae30c8338cd17b54da3c45ad26d"
       },
       {
         "path": "manifest.json",
-        "sha256": "c0ec298b0344db3e1ef0fb6c7e83f04407acde0aa4a1951130453d7590c590a5"
+        "sha256": "784f87a5952e3f6d5028740d25d656bc827ae9f1fabc0aa042477e0501132f78"
       },
       {
         "path": "tui.lua",
-        "sha256": "a748fe04d36150464cfd1e8f99d14f681690e43f98570a269433bfb096a726be"
+        "sha256": "2e5e7ccba0eb09f5eab42a4c4a20f0d677e6df09185d2690c6c9ea23bc11340a"
+      },
+      {
+        "path": "ui.lua",
+        "sha256": "049ee1d4286500c4e18faa8bf0fccd7200b874eae22a58dfb03b9133735db3cc"
       }
     ]
   },
@@ -114,7 +122,7 @@
     "name": "codex",
     "title": "Codex",
     "kind": "plugin",
-    "version": "1.4.1",
+    "version": "1.4.2",
     "description": "Model provider for OpenAI's Responses API: your ChatGPT plan through the Codex CLI login, or an OpenAI API key",
     "min_bone_version": "3.0.2",
     "capabilities": [
@@ -125,7 +133,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "bfcb01a249ed36ca6cf8b5c108e7a92ce0f35624dc64fcc7fdf90485f4a4d05c"
+        "sha256": "242471561f979da5d77396a1690040915cac603c167e8f8e324e4bff483f4560"
       },
       {
         "path": "core.lua",
@@ -133,10 +141,10 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "8b3259ecbe84684372ba5d108854b47eb658b3f0a04e18c51cf9d8304aaa74fd"
+        "sha256": "222495f43fff0d6a7281bc0bbe38f3c02cff80c3743d18bf97d7b5664a88b689"
       },
       {
-        "path": "tui.lua",
+        "path": "ui.lua",
         "sha256": "d1b5d0e1bad533efd1b829a57145b75f2aa3d89f2da24b1b4eabc5146ea74437"
       }
     ]
@@ -145,7 +153,7 @@
     "name": "codex-app",
     "title": "Codex App",
     "kind": "tui",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "The standard UI dressed like the Codex desktop app in bone's colors: centered thread, message bubbles, a composer card",
     "min_bone_version": "3.0.3",
     "capabilities": [],
@@ -156,11 +164,11 @@
       },
       {
         "path": "lua/bone/ui/sessions.lua",
-        "sha256": "5967162622f96937169d84322e4ec4c22a55a524f704e3d6d5398ac3f20e4c7d"
+        "sha256": "0be81ef306832dbf5f876ad3a2590745d9fdbc488b7d514154cb55421322a9f3"
       },
       {
         "path": "manifest.json",
-        "sha256": "e371970f4d895e115e4daef9c9e38f943537502da52404671a9b116679126a5c"
+        "sha256": "09c80d518a7f2f8bf7bd5ae03b2324e78c59f48cc45bf1e7ddfe0ba37722b85a"
       },
       {
         "path": "tui/defaults.lua",
@@ -172,7 +180,7 @@
     "name": "context",
     "title": "Context",
     "kind": "plugin",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "description": "See what fills the context window: categories, tools and the largest messages, calibrated to the provider's counts",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -184,7 +192,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "26cf72339e94f18ea1157233dc70d1b8ff8f4318797a28e91ca0a01ae05b1e8b"
+        "sha256": "9d3fc7119c7712575853e82774ac76322333fb732467ca475a36d537971ad83b"
       },
       {
         "path": "core.lua",
@@ -195,12 +203,16 @@
         "sha256": "aae24dc065c17eb5ae90fa10b88b02de0b239ec6e91570b16d43792cd0c39bf2"
       },
       {
-        "path": "manifest.json",
-        "sha256": "7f995abbf1e7ac60ba00d2d49abca486d3cc02e1e7c5d2d7eaec537f9326286e"
+        "path": "lua/context/nodes.lua",
+        "sha256": "9c81e4f56491afdbf5f97c252eafce2ba5337472492ada1612137e479f9c39ab"
       },
       {
-        "path": "tui.lua",
-        "sha256": "e7489ee4852c7e4408ef0bc1f282aca3bcbd9935f24c92fb5ef6d0f11a072e1a"
+        "path": "manifest.json",
+        "sha256": "a07347e458446bf1a65b2e8b947e2ebcb3d4ddcf56290f83fdb883fe8083e098"
+      },
+      {
+        "path": "ui.lua",
+        "sha256": "7cd1437e886d2d4f3cc73be22b1e026ad58f81811d5c9b299165bf817bdadb7a"
       }
     ]
   },
@@ -235,7 +247,7 @@
     "name": "fork",
     "title": "Fork",
     "kind": "plugin",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Fork the session into branches with a popup family browser: /fork [N|copy]",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -245,7 +257,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "3536639a4f9e32c831d36959633ba43a5a405a8f30eb6afa9cb8f188fe3368b9"
+        "sha256": "20512410eecd5f58b2626fa20bbbf4ee0b7d9f3e0a47d1c10f943e28798bb7cc"
       },
       {
         "path": "core.lua",
@@ -253,11 +265,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "dbc58efe466f8eee4edd17cbe38658c16885fa1f8af6f126a7a9789f3690da76"
+        "sha256": "c4309be513e6d7515e646eee53f7060e4b09c27c41c166886c57dca87c085052"
       },
       {
-        "path": "tui.lua",
-        "sha256": "f565e13a9a9cf07272bebd656cc16c017f69f44330b09c7b1c7485c9615df328"
+        "path": "ui.lua",
+        "sha256": "14d7d1b4ccda7805826125828728c4c21d8c7fc8cb7d7aef027932a138d0028b"
       }
     ]
   },
@@ -265,8 +277,8 @@
     "name": "git-diff",
     "title": "Git Diff",
     "kind": "plugin",
-    "version": "1.1.3",
-    "description": "Read-only Git diffs in a half-width right sidebar with a clickable file tree using Bone's diff styles",
+    "version": "1.1.4",
+    "description": "Read-only Git diffs in a wide right sidebar, in the terminal and the desktop app, with a clickable file tree",
     "min_bone_version": "0.1.0",
     "capabilities": [
       "command",
@@ -276,7 +288,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "165066bb59d42192d2ab9b3fed7e1d124d1f56f136f648e226c4f3dfe53dd3dd"
+        "sha256": "ad58115000e22c8ee30ad7f4a4cf32c4330febb9c50342436890933b23cb33b4"
       },
       {
         "path": "lua/git_diff.lua",
@@ -288,11 +300,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "fc1553f79b4cb8160b3afecface3f57002d3da1c31f3293fadcc047893f809fe"
+        "sha256": "83776bb453a2e1d7bd2a2a935630375b62e5e9fa690265c63e063d539cf3f091"
       },
       {
-        "path": "tui.lua",
-        "sha256": "92dec8184b5a81148c752308840d758f6ce3f82c93cb1eaa8bb3131689bba563"
+        "path": "ui.lua",
+        "sha256": "55b0c118fda934be2e1635f0cc4a6b3ae730601956e5e8df46766b5ba38d1de6"
       }
     ]
   },
@@ -300,8 +312,8 @@
     "name": "goal",
     "title": "Goal",
     "kind": "plugin",
-    "version": "1.0.0",
-    "description": "Keep a chat working on an objective, turn after turn, until it is done: /goal <objective>",
+    "version": "1.0.1",
+    "description": "Keep a chat working on an objective, turn after turn, until it is done: /goal <objective>. A status band shows it in the terminal and the desktop app.",
     "min_bone_version": "3.0.3",
     "capabilities": [
       "command",
@@ -310,7 +322,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "711e68949289499ac0c08902f9145ac55367b113abf692f2db135eb8e81633fc"
+        "sha256": "1938a8063365fe0d6725abb1deaccc879307772065ad409d0c50a966047b843a"
       },
       {
         "path": "core.lua",
@@ -318,11 +330,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "3dffd73526107a26fe711fd7a914e5fc3fa69040fbcc84abacc939ed7b344521"
+        "sha256": "bebdc4bad5f312a771278212cb09f96048bb54b91336fd6f3719a632e018ff48"
       },
       {
-        "path": "tui.lua",
-        "sha256": "8b6704185a1365a788c98d4c4e2847fd7cb226fddccd3645951a7fa3326d3a82"
+        "path": "ui.lua",
+        "sha256": "a78c6fddade01f9579737bcb36f39c6fde371167cb3141bd98c785bb99b88d8f"
       }
     ]
   },
@@ -356,7 +368,7 @@
     "name": "history",
     "title": "History",
     "kind": "plugin",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Resume a recent conversation",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -366,14 +378,14 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "998455784645d5b0fdbee85e7fdce2168ba8550bb1ad913076c3bd05e25b1458"
+        "sha256": "091219b81ed8e323b747414b88ef2da97337bf11baf6e82507db0d9e59b907bc"
       },
       {
         "path": "manifest.json",
-        "sha256": "1f0cd69d1a7d27889cf0df9fff4aefb5ff6fc120ae6d3eff8486a2f7b80a69f1"
+        "sha256": "bd0583bcff2dabd39c4b88de04a477b91b8de29658626c1b3cfa2a2e652c14dc"
       },
       {
-        "path": "tui.lua",
+        "path": "ui.lua",
         "sha256": "e24d76f385c6bd4e7d3ecbef9eff774f08d99a3699a39b5852f4902eab268665"
       }
     ]
@@ -382,7 +394,7 @@
     "name": "idle_compact",
     "title": "Idle Compact",
     "kind": "plugin",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Compact the chat you were last using after it sits idle with a large context",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -391,14 +403,14 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "5dfa130438f493b40f63f38da24df1e299ba0ac8db84e0009e7478e56510023a"
+        "sha256": "807b5e5ed69171f8515b4322cef0baf7744df5dce340634f6fe6d0085ecfa6b7"
       },
       {
         "path": "manifest.json",
-        "sha256": "fc03e447f03e83b18860317dc57ef1a820998f437604439826a10a300b291157"
+        "sha256": "3f5b7a1b87c63f091ca88596aaabca106a0546c9a1b624158a88071928953184"
       },
       {
-        "path": "tui.lua",
+        "path": "ui.lua",
         "sha256": "df3c65d218252167ee77b9cb7b276b2bfaea5f6f515c60913a9788ee690a2594"
       }
     ]
@@ -407,7 +419,7 @@
     "name": "mcp",
     "title": "MCP",
     "kind": "plugin",
-    "version": "1.1.0",
+    "version": "1.2.1",
     "description": "Manage MCP servers: add, sign in (OAuth), reconnect and browse tools",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -418,7 +430,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "1bdfdaf119e93138c734a80eff92a8aefff7b645bb069823ebfc80c18e4cbf3c"
+        "sha256": "a89050149afb08273880b7e08e2f0c52af9a400cfb48b50b34ab93b925ef8bf4"
       },
       {
         "path": "core.lua",
@@ -426,11 +438,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "d8b65ac90b31c4c7061dadad7b1607ea8b71312f1c199f12e9c89055928892ca"
+        "sha256": "58473cbf309450d42f62c461d0c0bf32ebfe2b86556f63029699d76bd42c01b0"
       },
       {
-        "path": "tui.lua",
-        "sha256": "a4459316f1afc1155ba4ba9e1aa1e9acb47051f02ef347dc6cda14ce42e6ec02"
+        "path": "ui.lua",
+        "sha256": "12dac1332d6ff73a9d6b07ac582335fcc69d871c5be2d27773b1cae5a8fa4f12"
       }
     ]
   },
@@ -438,7 +450,7 @@
     "name": "md",
     "title": "Markdown",
     "kind": "plugin",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "Search project Markdown files and read themed previews in a large popup",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -449,18 +461,18 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "827165f8e56d0fae0355eed69a382dc612d58c93121439581b6fa8b3160941da"
+        "sha256": "f02eaaec2f101d41953321a0f0c4e91a8a3dbf00556da25f912ee3991077cdfc"
       },
       {
         "path": "lua/md_browser.lua",
-        "sha256": "6d31c7c661a2e105590b55144b542c165bb592eaa766e21aa0d9f395d39b17f4"
+        "sha256": "ae787a062c508ba71ca7e50a46266097819f5c50f03ff3cffac8356e713299c3"
       },
       {
         "path": "manifest.json",
-        "sha256": "1869ff7df12cec21e307a684224f5cad3c6508ed278ed60db17a0bbcd04b064f"
+        "sha256": "2395746f0bc74f2b5df4d45bf93d0b4478146b82c15515210c7caf215143cc35"
       },
       {
-        "path": "tui.lua",
+        "path": "ui.lua",
         "sha256": "fba745facce78a9a4de2217cbe26d7c7849601ef62fb7e806e9f16009e642e26"
       }
     ]
@@ -531,8 +543,8 @@
     "name": "prompt-suggestions",
     "title": "Prompt Suggestions",
     "kind": "plugin",
-    "version": "1.1.1",
-    "description": "Grey next-prompt predictions with configurable provider and model; Tab accepts, Escape dismisses",
+    "version": "1.1.2",
+    "description": "Next-prompt predictions in the terminal and desktop composer; Tab or Accept accepts, Escape or Dismiss dismisses",
     "min_bone_version": "3.0.2",
     "capabilities": [
       "ui",
@@ -541,15 +553,27 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "62534b5e5b8803577672cecd00406a0ea380b2de75450d8f69195461432d315d"
+        "sha256": "a89e55d84935a4efb1a342fcb62b54cdfedb1497db1a277b8e6a1029b63fc704"
+      },
+      {
+        "path": "gui.lua",
+        "sha256": "b286c7c5434a1e215cf111d128964a67de135b4f2aba86df0844af14ba0c342c"
+      },
+      {
+        "path": "lua/prompt_suggestions.lua",
+        "sha256": "46cefae06597965c81cab12ad2a067d48c15bd11a4b4f4615f33086bc019d11c"
       },
       {
         "path": "manifest.json",
-        "sha256": "65b07f546a92d94130212bb6afdffbca27c48f5a9dbdef6b170983f6a52147a2"
+        "sha256": "b715e7963b2c1e1958711af650bc42f8e25f27317c52954433cae99c1d3e6bf7"
       },
       {
         "path": "tui.lua",
-        "sha256": "e3e94dd5e808d0bc6fa3237e73168abd4f6d7396fb963be2df53862cd588bfcf"
+        "sha256": "96e55448d2ee6f9434379e40b25a8f7917b3145e19643e02519ff792ef358c49"
+      },
+      {
+        "path": "ui.lua",
+        "sha256": "1d492597a68052ea8e3d8bd0dd994f3a4254cd059bff40227f607c7b8e44665f"
       }
     ]
   },
@@ -557,7 +581,7 @@
     "name": "recap",
     "title": "Recap",
     "kind": "plugin",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "Show a brief recap of the conversation",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -567,15 +591,15 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "fbf961dcec1f2748e8e61b9c68947d2f71fb91a6de722cc39cd05a8e841b0fd8"
+        "sha256": "521a5aeb60ad077c81f913d1358d696f223a46973a5c98cd5c957450ff97ac3a"
       },
       {
         "path": "manifest.json",
-        "sha256": "6104f1e23a99beb557d2c1bc35bda057bda28ecf6731127df8723e8a049ddf6e"
+        "sha256": "50356c39a3b0f664ff05a1d555a888e8f733a024c715f9d1925b9036ae29b760"
       },
       {
-        "path": "tui.lua",
-        "sha256": "05ca79af0764330c800cee7091cb4284f75e2bb8f8d1a3f143e4584518c10b75"
+        "path": "ui.lua",
+        "sha256": "f8bbeeef3af1d37435ea5124b61c43008cd872bd7e0fb2fcb543c03f06b24d56"
       }
     ]
   },
@@ -583,7 +607,7 @@
     "name": "review",
     "title": "Review",
     "kind": "plugin",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "description": "Submit verification-first Git reviews of unstaged/untracked or branch changes with bounded turn-only context and selectable effort",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -596,7 +620,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "24a0fd1759c506be757f5201c68c99dec8341ba0bde5800b5b931dcd9b6a7f71"
+        "sha256": "cf32a74aa812001db4ce06e40d2d7688332c4c3b9d3ac3324e45cb5c283bbab1"
       },
       {
         "path": "core.lua",
@@ -604,10 +628,10 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "96c06c6ff467fad999f04a4d10a1882ab694c8c076c9f313cf18220f64e27a9a"
+        "sha256": "b7d48edd09db68e81ca18cb0a9042e2924431ad1ed2a73025a3294d9f55ffa13"
       },
       {
-        "path": "tui.lua",
+        "path": "ui.lua",
         "sha256": "7f50e568be1d2817990f8346ffd43c9de7220dbf56a156599579f020738f0371"
       }
     ]
@@ -616,7 +640,7 @@
     "name": "shell",
     "title": "Shell",
     "kind": "plugin",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Run !commands locally in chat without sending them to the model",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -627,14 +651,14 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "b9a8a2b64219abdbdc8ee4b3ce6d8cc386a516f6b85c3f314c5f25cda73ad591"
+        "sha256": "e71d5f17cb1f9a2b7440e8d1760ee9be6b47388e2119f9eb689cf2b23648d5ed"
       },
       {
         "path": "manifest.json",
-        "sha256": "0b525beaa3affc42ded2cd735afa053e7dc87e988c5d722fc6283c7fd29262a7"
+        "sha256": "e544b5e8cc6b61dc5c82accd5a5886252edd89765484719ba78d1e65185246f3"
       },
       {
-        "path": "tui.lua",
+        "path": "ui.lua",
         "sha256": "42d6e1aa997b8772168e9baf93950206d199c76aaa9ed0dff5f433eb26a4d265"
       }
     ]
@@ -643,7 +667,7 @@
     "name": "skill",
     "title": "Skills",
     "kind": "plugin",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "Inject and load skills from configured directories",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -654,7 +678,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "094b4eb91b2a83b3e6d2ee65e424ab39ad2144588b6b4e687413f23b08417976"
+        "sha256": "8523bee967b234ea87467a27e9182a590a6dbdb26e46787c85c2caf32c088394"
       },
       {
         "path": "core.lua",
@@ -662,10 +686,10 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "f210493bba1595e0a235a9c6854357908edd32cdea6c29f8bec455e712942e18"
+        "sha256": "f190064be7d6bb29fd48d9e26eda3533150086f88a58d3dc0c682b4a898b0235"
       },
       {
-        "path": "tui.lua",
+        "path": "ui.lua",
         "sha256": "bf66e66e41eb93c78de381ac7b13e5fcc6552ea48707866b14ee2531046f3c4d"
       }
     ]
@@ -674,7 +698,7 @@
     "name": "subagent",
     "title": "Subagents",
     "kind": "plugin",
-    "version": "2.3.0",
+    "version": "2.3.1",
     "description": "Delegate tasks to sub-agents that run in sessions of their own",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -683,7 +707,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "64b048ccb424eda66f95ca90d91515d764c53928522b808e467b5a1cd33a7463"
+        "sha256": "d81ff63d28228316406a0a8caaa9bfa311796cbc93adc43c0f1a017ad706e09b"
       },
       {
         "path": "core.lua",
@@ -691,11 +715,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "ed767e957945dba7fec8b31ca14a38bebe29a735ca55a4ecd54eae7338b874ca"
+        "sha256": "7aa45f9ade242ebcec701b780b8cac9a681c167bd928ec369303a0ceb14b2754"
       },
       {
-        "path": "tui.lua",
-        "sha256": "cf871e80a74c1c1160a083be4cff4ba2ede8265ce2f85bdf475a9010a6c8aff1"
+        "path": "ui.lua",
+        "sha256": "53fa51c777c9e53aac37227268aaec5f29c81ac4aef6640fd500e54aa9659040"
       }
     ]
   },
@@ -703,7 +727,7 @@
     "name": "term",
     "title": "Terminal",
     "kind": "plugin",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Interactive shells and command output in terminal panels, with keyboard focus and scrollback",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -714,7 +738,11 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "f6a7f5b2e025eab87e9fa0f868870d70146c967a3cdaf3ce7d85aeab88f0dfdb"
+        "sha256": "b33677527a579f280d96de3048be0b757e1118b00fedf7326b7e62d03898822a"
+      },
+      {
+        "path": "gui.lua",
+        "sha256": "9b6d4f17e5da6272226e0f44eb0c0e4c310b4a8c68777d3dda496c27d8419ea3"
       },
       {
         "path": "lua/bone/ui/terminal.lua",
@@ -722,7 +750,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "0ce6e8c1aa17f2e3618b5cc9bae91252d12b59cf300b0f7a197d8f3232f13f53"
+        "sha256": "e88cdfb6419f1e38ec84fbfd4aa88e2e3a93346c29ba02e001d79eeccc83bf91"
       },
       {
         "path": "tui.lua",
@@ -734,7 +762,7 @@
     "name": "themes",
     "title": "Themes",
     "kind": "plugin",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Pick or apply one of the ported Bone color themes",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -744,7 +772,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "68c38725a6320b66b1f68da30509ae63071d437d739ca7a178ec40804789f58d"
+        "sha256": "630dc677e84305e219ee307b7899faafa635ebfde1778f4748af6218827bfb7d"
       },
       {
         "path": "colors/ayu.lua",
@@ -792,10 +820,10 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "ee8cf72345e3a9a8bd938b546b16fe1b91912c38d97923fd3194f8118679315b"
+        "sha256": "ef5d9f8adfa174e803216bfe8012c838f5dd05eb95ab74d4f986f8e03e585588"
       },
       {
-        "path": "tui.lua",
+        "path": "ui.lua",
         "sha256": "2dab9af5a54a05bd5293285608a8bdd09c99d957fbb9fd92babe48c80c6b97bd"
       }
     ]
@@ -804,8 +832,8 @@
     "name": "todo",
     "title": "Todo",
     "kind": "plugin",
-    "version": "1.2.1",
-    "description": "A checklist the model keeps for multi-step work, shown in a drawer under the chat it belongs to",
+    "version": "1.2.2",
+    "description": "A checklist the model keeps for multi-step work, shown under that chat in the terminal and the desktop app",
     "min_bone_version": "0.1.0",
     "capabilities": [
       "tool",
@@ -814,7 +842,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "9210d0d28293c1e3127904845ee8413483222ce94dbcba3fc10a9ed10948fdb2"
+        "sha256": "ea27958d089aac45122ad8fbae7f70676e4d4fbc9e5ef79455b7513dda3fde21"
       },
       {
         "path": "core.lua",
@@ -822,11 +850,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "1cd57acfa5e813001b968aaf6566a5c4a5e9993dac691114232ddb1212aec908"
+        "sha256": "fdff60429206c0398315293d479db5207f713ba419173af8fb43b4eec55c1f23"
       },
       {
-        "path": "tui.lua",
-        "sha256": "52f6494254fef20de307d1026985f104a6335dc3a08c537f60b02ba894513c81"
+        "path": "ui.lua",
+        "sha256": "03fec16debb314dbf67d96114e9376f39a5a8b4207d6c2c6b7a76a697678b5cf"
       }
     ]
   },
@@ -834,7 +862,7 @@
     "name": "usage",
     "title": "Usage",
     "kind": "plugin",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "description": "Full-screen usage dashboard: tokens, models, tools, activity",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -844,15 +872,19 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "9fb56189630bdec43786ba60cce21f0484121c1b57596afb0e09dfb9566d1fe0"
+        "sha256": "acb4869fe6349bbe2bdcca198aa3de73de310b1ef0aa0e52dbe0144641f99878"
+      },
+      {
+        "path": "lua/usage/nodes.lua",
+        "sha256": "d6d5c35225253da6e5425c0a3351f47e613a8ed5247a47599d0df1f872249f0d"
       },
       {
         "path": "manifest.json",
-        "sha256": "b0b325fcc8ddd7b45ba787f3d262e6dcaca1d2234d027918d23ef52d84717900"
+        "sha256": "910399e48165706ab276d634f6c3af066f99ccd8ee5ea3173b612962bb29e642"
       },
       {
-        "path": "tui.lua",
-        "sha256": "7f93d1b58202e79fa88a45e1b52d0d2a47b2e68ff2ef365d0c85eb4a42725795"
+        "path": "ui.lua",
+        "sha256": "85caf02fbe3ba0a2d18ee09f40a9c547b67367ee15bbc5653cb70ab67b4058ff"
       }
     ]
   },
@@ -887,9 +919,9 @@
     "name": "windows",
     "title": "Windows",
     "kind": "plugin",
-    "version": "1.4.6",
-    "description": "Tiled chat windows: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
-    "min_bone_version": "3.0.2",
+    "version": "1.5.0",
+    "description": "Tiled chat windows, in the terminal and the desktop app: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
+    "min_bone_version": "3.0.3",
     "capabilities": [
       "ui",
       "command"
@@ -897,15 +929,27 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "27130ce9f0578eff841dd6e1c1ef92c8d1e60dc0b07a6cbc7faa8b6b78a79f76"
+        "sha256": "28336d8074cdaab413aa0ca73c07b1cb42684c1f0c2fad159f0984ac5aad3695"
+      },
+      {
+        "path": "gui.lua",
+        "sha256": "1562e70ee03432fd15ec66c50eae3214d8908f705e8ec108d2a6d05de48eb8be"
+      },
+      {
+        "path": "lua/windows/drop.lua",
+        "sha256": "75de4e318b597b2c1628a5c1889c1096f60ca720584fafd452853631c55f8f23"
+      },
+      {
+        "path": "lua/windows/tree.lua",
+        "sha256": "8dbc3bc28d5c7af3f692943912b87d24aab00ccf7a9173bb6ee918de8f0dea52"
       },
       {
         "path": "manifest.json",
-        "sha256": "914d88f3a3c13d92fdef86abefdc2b95034d8bce224dbed3e47bd6b7ca1c6e81"
+        "sha256": "861c2c4ae5deef3c57be131e4295e119b3c3951e83ed6dbccb00e7c29b066ddf"
       },
       {
         "path": "tui.lua",
-        "sha256": "b150d6fb91285354cfcb1d3e9ab070f1465086485555c55296f383dc3a014c10"
+        "sha256": "1d5f358553e8f3f1207b6f4f8ece78f195fc6b46b6b58f39b82317968e630e12"
       }
     ]
   },

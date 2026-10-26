@@ -26,6 +26,6 @@ nothing changes. `bone.config.skills = { prompt = false }` or `{ tool = false }`
 turns either part off. Also `bone.skill.load_dir(dir)`, `unregister(name)` and
 `list()`.
 
-In the TUI: `/skills` lists them and `/skill name task` writes "Use the name
-skill: task" into the prompt (with completion of names). The TUI half gets the
+In the TUI and the GUI: `/skills` lists them and `/skill name task` writes "Use the name
+skill: task" into the prompt (with completion of names). Either frontend gets the
 list through `bone.rpc.call("skills.list")`.

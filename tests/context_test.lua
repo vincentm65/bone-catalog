@@ -126,7 +126,7 @@ bone.ui = {
   is_open = function(id) return windows[id] ~= nil end,
   update = function() end,
 }
-dofile(root .. "/tui.lua")
+dofile(root .. "/ui.lua")
 local function rendered(w, h)
   local spec = assert(windows[next_window])
   local lines = spec.lines({ width = w or 100, height = h or 30 })

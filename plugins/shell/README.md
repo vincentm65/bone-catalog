@@ -11,7 +11,7 @@ Run a shell command directly from the prompt, without asking the model:
 The leading `!` must be the first character. Everything after it is passed
 unchanged to Bone's local shell job API (`bash -c` on Unix, PowerShell on
 Windows). Commands run asynchronously in the current session's working
-directory; a new chat without a session uses the TUI's working directory.
+directory; a new chat without a session uses the frontend's working directory.
 Output and exit status appear in that chat, even if you switch chats while
 the command runs. Stdout and stderr are combined as their chunks arrive;
 only the first 64 KiB is displayed. Terminal control sequences are stripped.

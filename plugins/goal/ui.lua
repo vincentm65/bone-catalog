@@ -1,6 +1,7 @@
 -- /goal: start a goal, see it in a band under the chat, stop it. The core
 -- half runs the loop; this half asks it (goal.* RPCs) only about sessions
--- with a goal, and overrides nothing shared.
+-- with a goal, and overrides nothing shared. The band is drawn in the
+-- terminal (render) and the desktop app (node).
 local alive, panel = true, nil
 local goals = {} -- session_id -> the goal as last fetched
 
@@ -23,10 +24,22 @@ local function elapsed(g)
   return ("%dh%02dm"):format(math.floor(s / 3600), math.floor(s % 3600 / 60))
 end
 
+-- The terminal redraws on bone.ui.refresh_in; the desktop app has no
+-- character clock, so the same 30s arm asks it to build the band again.
+-- Earliest deadline wins, matching refresh_in, so calling this every draw
+-- does not push the tick back.
+local function arm_clock()
+  if bone.has_capability and bone.has_capability("gui.nodes") then
+    if bone.gui and bone.gui.invalidate then bone.gui.invalidate(30000) end
+  elseif bone.ui and bone.ui.refresh_in then
+    bone.ui.refresh_in(30000)
+  end
+end
+
 local function band(ctx)
   local g = goals[current()]
   if not g or g.status ~= "running" then return nil end
-  bone.ui.refresh_in(30000)
+  arm_clock()
   local stats = { { "  turn " .. (g.turns + 1) .. "  " .. elapsed(g), "Dim" } }
   if g.check_ok == false then stats[2] = { "  check ✗", "ErrorMsg" } end
   local used = 2
@@ -36,6 +49,23 @@ local function band(ctx)
   return { bone.text.clip(line, ctx.width) }
 end
 
+local function goal_node()
+  local g = goals[current()]
+  if not g or g.status ~= "running" then return nil end
+  arm_clock()
+  local text = (g.text:gsub("%s+", " "))
+  local row = {
+    direction = "row", align = "center", gap = 0, width = "100%",
+    { text = "◎ ", hl = "Accent", wrap = false },
+    { text = text, hl = "Normal", grow = 1, wrap = false, text_overflow = "ellipsis" },
+    { text = "  turn " .. (g.turns + 1) .. "  " .. elapsed(g), hl = "Dim", wrap = false },
+  }
+  if g.check_ok == false then
+    row[#row + 1] = { text = "  check ✗", hl = "ErrorMsg", wrap = false }
+  end
+  return row
+end
+
 local function sync()
   local g = alive and goals[current()]
   if not (g and g.status == "running") then
@@ -43,7 +73,11 @@ local function sync()
   elseif panel and panel:is_open() then
     panel:show()
   else
-    panel = bone.ui.panel.open({ id = "goal", dock = "bottom", title = false, focusable = false, render = band })
+    local spec = { id = "goal", dock = "bottom", title = false, focusable = false, render = band, node = goal_node }
+    -- One row. The terminal still measures the single clipped line when this
+    -- is left unset; the desktop dock treats "auto" as a tall strip.
+    if bone.has_capability and bone.has_capability("gui.nodes") then spec.size = 1 end
+    panel = bone.ui.panel.open(spec)
   end
 end
 

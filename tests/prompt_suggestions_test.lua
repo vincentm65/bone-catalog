@@ -1,7 +1,7 @@
 -- Standalone regression suite; no core, UI, network, or live model required.
 -- Run from the catalog checkout: luajit tests/prompt_suggestions_test.lua
 local source = debug.getinfo(1, "S").source:sub(2)
-local plugin = source:match("^(.*[/\\])") .. "../plugins/prompt-suggestions/tui.lua"
+local plugin_dir = source:match("^(.*[/\\])") .. "../plugins/prompt-suggestions/"
 local function char_count(text)
   return #(text:gsub("[\128-\191]", ""))
 end
@@ -19,9 +19,10 @@ local function ctx(text, fields)
 end
 local conversation = { { role = "user", content = "Fix this test" }, { role = "assistant", content = "Fixed it." } }
 
-local function mock()
+local function mock(frontend, opts)
+  frontend, opts = frontend or "tui", opts or {}
   local m = { settings = {}, session = { session_id = "a" }, events = {}, messages = {}, calls = {}, notices = {}, sets = {}, submits = 0,
-    complete_calls = 0, dismiss_calls = 0, input = ctx(""), marks = { highlights = { { row = 0, from = 0, to = 1, hl = "Custom" } }, custom = "kept" } }
+    complete_calls = 0, dismiss_calls = 0, shutdowns = {}, input = ctx(""), marks = { highlights = { { row = 0, from = 0, to = 1, hl = "Custom" } }, custom = "kept" } }
   m.original = {
     placeholder = function() return { { "Original placeholder", "Custom" } } end,
     highlight = function() return m.marks end,
@@ -60,9 +61,55 @@ local function mock()
       m.events[event] = m.events[event] or {}; table.insert(m.events[event], cb)
     end,
     notify = function(message, level) m.notices[#m.notices + 1] = { message, level } end,
-    plugin = { on_shutdown = function(cb) m.shutdown = cb end },
+    plugin = { on_shutdown = function(cb) m.shutdowns[#m.shutdowns + 1] = cb end },
   }
+  function m.shutdown()
+    for _, cb in ipairs(m.shutdowns) do cb() end
+  end
+  if frontend == "gui" then
+    m.invalidations, m.slot_adds, m.context = 0, 0, "main"
+    m.slots = {}
+    b.has_capability = function(cap) return cap == "gui.nodes" and opts.nodes ~= false end
+    b.keymap = { current = function() return m.context end }
+    b.ui.panel = { focused = function() return m.panel_focus end }
+    b.gui = {
+      invalidate = function() m.invalidations = m.invalidations + 1 end,
+      focused = function() return m.node_focus end,
+      slots = {
+        add = function(name, spec)
+          m.slot_adds = m.slot_adds + 1
+          local list = m.slots[name] or {}
+          m.slots[name] = list
+          for i, slot in ipairs(list) do
+            if slot.id == spec.id then table.remove(list, i) break end
+          end
+          list[#list + 1] = spec
+          return spec.id
+        end,
+        remove = function(name, id)
+          for i, slot in ipairs(m.slots[name] or {}) do
+            if slot.id == id then table.remove(m.slots[name], i) return true end
+          end
+          return false
+        end,
+        nodes = function(name, slot_ctx)
+          local out = {}
+          for _, slot in ipairs(m.slots[name] or {}) do
+            local node = slot.node
+            if type(node) == "function" then node = node(slot_ctx or {}) end
+            if type(node) == "table" then out[#out + 1] = node end
+          end
+          return out
+        end,
+      },
+    }
+  end
   m.b = b
+  function m:row(extra)
+    local slots = self.b.gui and self.b.gui.slots
+    if not slots then return nil end
+    return (slots.nodes("composer.above", extra or {}))[1]
+  end
   function m:emit(event, ev) for _, cb in ipairs(self.events[event] or {}) do cb(ev or {}) end end
   function m:finish(ev)
     self:emit("turn/finished", ev or { session_id = "a", outcome = { status = "completed" } })
@@ -81,9 +128,25 @@ local function mock()
     eq(self:placeholder(ctx(""))[1][1], "Original placeholder", "no stale placeholder")
   end
   local env = setmetatable({ bone = b }, { __index = _G })
-  local chunk = assert(loadfile(plugin, "t", env))
-  if setfenv then setfenv(chunk, env) end -- LuaJIT / Lua 5.1
-  chunk()
+  local loaded = {}
+  function env.require(name)
+    if loaded[name] ~= nil then return loaded[name] end
+    local path = plugin_dir .. "lua/" .. name:gsub("%.", "/") .. ".lua"
+    local chunk, err = loadfile(path, "t", env)
+    if not chunk then error(err or ("no module " .. name), 2) end
+    if setfenv then setfenv(chunk, env) end
+    local result = chunk()
+    loaded[name] = result == nil and true or result
+    return loaded[name]
+  end
+  local function run(file)
+    local chunk, err = loadfile(plugin_dir .. file, "t", env)
+    if not chunk then error(err or file, 2) end
+    if setfenv then setfenv(chunk, env) end
+    chunk()
+  end
+  run("ui.lua")
+  run(frontend .. ".lua")
   return m
 end
 
@@ -351,6 +414,121 @@ test("unload preserves subsequent external replacements", function()
   m.b.ui.actions.complete = external; m.b.ui.actions.dismiss = external; m.shutdown()
   eq(m.b.ui.prompt.placeholder, external); eq(m.b.ui.prompt_highlight, external)
   eq(m.b.ui.actions.complete, external); eq(m.b.ui.actions.dismiss, external)
+end)
+
+local function node_texts(node, out)
+  out = out or {}
+  if type(node) ~= "table" then return out end
+  if type(node.text) == "string" then out[#out + 1] = node.text end
+  if type(node.spans) == "table" then
+    for _, span in ipairs(node.spans) do
+      if type(span) == "table" and type(span.text) == "string" then out[#out + 1] = span.text end
+    end
+  end
+  for _, child in ipairs(node) do node_texts(child, out) end
+  return out
+end
+local function find_control(node, label)
+  if type(node) ~= "table" then return nil end
+  if node.label == label and node.on_click then return node end
+  for _, child in ipairs(node) do
+    local found = find_control(child, label)
+    if found then return found end
+  end
+end
+local function controls(node, out)
+  out = out or {}
+  if type(node) ~= "table" then return out end
+  if node.on_click or node.on_key then out[#out + 1] = node end
+  for _, child in ipairs(node) do controls(child, out) end
+  return out
+end
+local function joined(node) return table.concat(node_texts(node), "|") end
+
+test("gui does not wrap the prompt and shows the suggestion above the composer", function()
+  local m = mock("gui"); m.b.ui.prompt_highlight = function() error("prompt_highlight") end
+  eq(m.slot_adds, 1); eq(m.slots["composer.above"][1].id, "prompt-suggestions")
+  eq(m.slots["composer.below"], nil); eq(m.b.ui.prompt.placeholder, m.original.placeholder)
+  m:predict(); eq(m.invalidations > 0, true, "invalidate when the suggestion changes")
+  local row = m:row(); eq(joined(row), "Suggestion|Run the tests|Accept|Dismiss")
+  for _, node in ipairs(controls(row)) do
+    eq(node.focusable, false, "pointer control must not take the prompt keyboard")
+    eq(node.on_key, nil, "no key hook")
+  end
+  eq(m.input.text, ""); eq(#m.sets, 0); eq(m.submits, 0)
+  find_control(row, "Accept").on_click(); eq(m.sets[1], "Run the tests"); eq(m.submits, 0); eq(m:row(), nil)
+  eq(m.b.ui.actions.complete(), "fallback"); eq(m.complete_calls, 1)
+end)
+test("gui Tab accepts a prefix without ghost text; click and Escape dismiss", function()
+  local m = mock("gui"); m:predict(); m.input = ctx("Run", { focused = false })
+  eq(joined(m:row()), "Suggestion|Run| the tests|Accept|Dismiss")
+  eq(m.b.ui.actions.complete(), true, "tab"); eq(m.sets[1], "Run the tests", "accepted")
+  eq(m.submits, 0, "no submit"); eq(m.complete_calls, 0, "no fallback")
+  m.input = ctx(""); m:predict(); m.dismiss_handled = true
+  eq(m.b.ui.actions.dismiss(), true, "menu dismiss"); eq(joined(m:row()):find("Run the tests", 1, true) ~= nil, true, "kept")
+  m.dismiss_handled = false; eq(m.b.ui.actions.dismiss(), true, "our dismiss"); eq(m:row(), nil)
+  eq(m.b.ui.actions.dismiss(), false, "nothing left"); eq(m.dismiss_calls, 3, "dismiss calls")
+  m:predict(); local sets = #m.sets
+  find_control(m:row(), "Dismiss").on_click(); eq(#m.sets, sets, "click does not edit"); eq(m:row(), nil)
+end)
+test("gui hides the row the way the terminal hides ghost text", function()
+  local m = mock("gui"); m:predict()
+  m.input = ctx("Other"); eq(m:row(), nil); eq(m.b.ui.actions.complete(), "fallback"); eq(#m.sets, 0)
+  m.input = ctx("Run"); eq(m:row() ~= nil, true)
+  for _, hidden in ipairs({
+    ctx("Run", { cursor = { row = 0, col = 1 } }), ctx("Run", { selection = { text = "Run" } }),
+    ctx("Run\n"), ctx("/help"), ctx("Run the tests"),
+  }) do m.input = hidden; eq(m:row(), nil, "hidden") end
+  m.input = ctx(""); m.context = "popup"; eq(m:row(), nil)
+  m.context = "main"; m.panel_focus = "term"; eq(m:row(), nil)
+  m.panel_focus = nil; m.node_focus = "search"; eq(m:row(), nil)
+  m.node_focus = nil; eq(m:row({ chat = 2 }), nil); eq(m:row({}) ~= nil, true)
+end)
+test("gui in-flight row can cancel, and a late result stays hidden", function()
+  local m = mock("gui"); m:finish(); local row = m:row()
+  eq(joined(row), "Suggesting a next prompt…|Dismiss"); eq(find_control(row, "Accept"), nil)
+  find_control(row, "Dismiss").on_click(); m:deliver_messages(); eq(#m.calls, 0); eq(m:row(), nil)
+  m:finish(); m:deliver_messages(); eq(find_control(m:row(), "Accept"), nil)
+  find_control(m:row(), "Dismiss").on_click(); eq(m.calls[1].cancels, 1)
+  m:deliver({ content = "Stale prediction" }); m:deliver(nil, "late error"); eq(m:row(), nil); eq(#m.notices, 0)
+end)
+test("gui unicode prefix accepts like the terminal", function()
+  local m = mock("gui"); m:predict("修复é🙂 tests")
+  m.input = ctx("修复é🙂"); eq(joined(m:row()), "Suggestion|修复é🙂| tests|Accept|Dismiss")
+  find_control(m:row(), "Accept").on_click(); eq(m.sets[1], "修复é🙂 tests"); eq(m.submits, 0)
+end)
+test("gui ready rewraps actions without touching the prompt or stacking slots", function()
+  local m = mock("gui"); local wrapped = m.b.ui.actions.complete
+  m:emit("ready"); eq(m.b.ui.actions.complete, wrapped); eq(m.slot_adds, 1)
+  eq(m.b.ui.prompt.placeholder, m.original.placeholder); eq(m.b.ui.prompt_highlight, m.original.highlight)
+  local replacement_complete = function() return "replacement complete" end
+  local replacement_dismiss = function() return false end
+  m.b.ui.actions.complete = replacement_complete
+  m.b.ui.actions.dismiss = replacement_dismiss
+  m:emit("ready"); m:predict(); m.input = ctx("Other")
+  eq(m.b.ui.actions.complete(), "replacement complete"); eq(#m.sets, 0)
+  m.input = ctx(""); eq(m.b.ui.actions.complete(), true); eq(m.submits, 0)
+  m.shutdown(); eq(m.b.ui.actions.complete, replacement_complete)
+  eq(m.b.ui.actions.dismiss, replacement_dismiss)
+  eq(m.b.ui.prompt.placeholder, m.original.placeholder); eq(m.b.ui.prompt_highlight, m.original.highlight)
+  eq(m:row(), nil); eq(#(m.slots["composer.above"] or {}), 0)
+end)
+test("gui unload keeps external action replacements and never restores prompt hooks", function()
+  local m = mock("gui"); local external = function() return "external" end
+  m.b.ui.prompt.placeholder = external; m.b.ui.prompt_highlight = external
+  m.b.ui.actions.complete = external; m.b.ui.actions.dismiss = external; m.shutdown()
+  eq(m.b.ui.prompt.placeholder, external); eq(m.b.ui.prompt_highlight, external)
+  eq(m.b.ui.actions.complete, external); eq(m.b.ui.actions.dismiss, external)
+  eq(#(m.slots["composer.above"] or {}), 0)
+end)
+test("gui without node slots leaves prompt actions alone but still predicts", function()
+  local m = mock("gui", { nodes = false })
+  eq(m.slot_adds, 0); eq(m.b.ui.prompt.placeholder, m.original.placeholder)
+  eq(m.b.ui.prompt_highlight, m.original.highlight)
+  eq(m.b.ui.actions.complete, m.original.complete); eq(m.b.ui.actions.dismiss, m.original.dismiss)
+  m:finish(); m:deliver_messages(); eq(#m.calls, 1); eq(m.calls[1].req.provider, nil)
+  m:deliver({ content = "Run the tests" }); eq(m.b.ui.actions.complete(), "fallback"); eq(#m.sets, 0)
+  eq(m.invalidations, 0); eq(m:row(), nil)
 end)
 
 local passed, failed = 0, 0

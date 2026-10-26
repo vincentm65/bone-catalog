@@ -120,7 +120,7 @@ bone.request = function(name, args, cb) assert(name == "session/list"); queue[#q
 local function flush() local fn = table.remove(queue, 1); assert(fn); fn() end
 local function run(arg) command({ args = arg }) end
 local function shown_child() id = shown.target; shown.fn() end
-dofile("plugins/fork/tui.lua")
+dofile("plugins/fork/ui.lua")
 run("2"); flush(); flush()
 assert(prompt == "" and id == nil)
 shown_child(); assert(prompt == "second" and images[1].id == "blob2")

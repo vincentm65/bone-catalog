@@ -98,6 +98,7 @@ local function popup(origin, token)
       end
       rebuild()
       if initial then for i, row in ipairs(st.rows) do if row.key == origin then st.selected = i end end end
+      if bone.ui.update and window then bone.ui.update(window, {}) end
     end)
   end
   local function move(n) st.selected = math.max(1, math.min(#st.rows, st.selected + n)) end
@@ -126,6 +127,26 @@ local function popup(origin, token)
     st.busy = true
     create(row.id, row.point.before_turn, st.cache[row.id], valid, function() st.busy = false end)
   end
+  local function row_label(row)
+    local label
+    if row.point then
+      local p = row.point
+      label = "↳ " .. p.before_turn .. "  " .. (p.text ~= "" and p.text or "[image message]"):gsub("%s+", " ")
+      if #(p.images or {}) > 0 then label = label .. "  [" .. #p.images .. " image(s)]" end
+      if not p.safe then label = label .. " [unsafe cutoff]" end
+    else
+      local info, e = st.infos[row.id] or {}, st.edges[row.id]
+      label = (st.expanded[row.id] and "▾ " or "▸ ") .. (info.title or row.id)
+      if row.id == origin then label = label .. "  ●" end
+      if e then label = label .. (e.before_turn and ("  ← before #" .. e.before_turn) or e.legacy and "  ← legacy (unknown cutoff)" or "  ← copy") end
+      if st.loading[row.id] then label = label .. " …" end
+      if not info.cwd then label = label .. " [missing]" end
+    end
+    return label
+  end
+  local function touch()
+    if bone.ui.update and window then bone.ui.update(window, {}) end
+  end
   close()
   window = bone.ui.popup{
     width = 84, height = 22, anchor = "screen", guard = 100,
@@ -136,21 +157,8 @@ local function popup(origin, token)
       if st.selected >= st.top + st.page then st.top = st.selected - st.page + 1 end
       local lines = {}
       for i = st.top, math.min(#st.rows, st.top + st.page - 1) do
-        local row, label = st.rows[i]
-        if row.point then
-          local p = row.point
-          label = "↳ " .. p.before_turn .. "  " .. (p.text ~= "" and p.text or "[image message]"):gsub("%s+", " ")
-          if #(p.images or {}) > 0 then label = label .. "  [" .. #p.images .. " image(s)]" end
-          if not p.safe then label = label .. " [unsafe cutoff]" end
-        else
-          local info, e = st.infos[row.id] or {}, st.edges[row.id]
-          label = (st.expanded[row.id] and "▾ " or "▸ ") .. (info.title or row.id)
-          if row.id == origin then label = label .. "  ●" end
-          if e then label = label .. (e.before_turn and ("  ← before #" .. e.before_turn) or e.legacy and "  ← legacy (unknown cutoff)" or "  ← copy") end
-          if st.loading[row.id] then label = label .. " …" end
-          if not info.cwd then label = label .. " [missing]" end
-        end
-        local text = string.rep("  ", math.min(row.depth, 12)) .. label
+        local row = st.rows[i]
+        local text = string.rep("  ", math.min(row.depth, 12)) .. row_label(row)
         text = bone.text.truncate(text, width - 4)
         lines[#lines + 1] = { { text, i == st.selected and "Selection" or row.point and "Dim" or "Normal" } }
       end
@@ -163,6 +171,60 @@ local function popup(origin, token)
       pageup = function() move(-st.page) end, pagedown = function() move(st.page) end,
       home = function() move(-#st.rows) end, ["end"] = function() move(#st.rows) end,
       left = left, right = right, enter = enter },
+    node = function()
+      local ok, pop = pcall(require, "bone.nodes.popups")
+      local function press(label, click, primary)
+        local wok, w = pcall(require, "bone.nodes.widgets")
+        if wok and w.button then return w.button(label, click, primary) end
+        return {
+          text = label, hl = primary and "Accent" or "Normal", bg = primary and "TextSelection" or "Selection",
+          padding = { 6, 12 }, radius = 8, cursor = "pointer", role = "button", on_click = click,
+        }
+      end
+      local items = {}
+      for i, row in ipairs(st.rows) do
+        local on = i == st.selected
+        local depth = math.min(row.depth or 0, 12)
+        items[#items + 1] = {
+          direction = "row", align = "center", gap = 8, padding = { 5, 8, 5, 8 + depth * 14 }, radius = 8,
+          bg = on and "Selection" or nil, selected = on, cursor = "pointer", role = "option",
+          on_click = function()
+            st.selected = i
+            if not row.point then
+              if st.expanded[row.id] then st.expanded[row.id] = nil; rebuild()
+              else right() end
+            end
+            touch()
+          end,
+          { text = row_label(row), hl = row.point and "Dim" or "Normal", grow = 1 },
+        }
+      end
+      if #items == 0 then items[1] = { text = st.status, hl = "Dim" } end
+      local list
+      if ok and type(pop.list) == "function" and bone.has_capability and bone.has_capability("gui.nodes")
+          and bone.gui and bone.gui.scroll_item then
+        list = pop.list("fork:rows", items, #st.rows > 0 and st.selected or nil)
+      else
+        list = { id = "fork:rows", direction = "column", gap = 2, grow = 1, overflow = "scroll" }
+        for i, item in ipairs(items) do list[i] = item end
+      end
+      local row = st.rows[st.selected]
+      local action = row and (row.point and "Fork here" or "Open session") or "Open"
+      return {
+        direction = "column", gap = 10, grow = 1,
+        { text = "Fork · session family", bold = true, size = 20, hl = "Normal" },
+        { text = "Click a session to expand or collapse it. Fork / Open uses the selected row.", hl = "Dim", size = 12 },
+        list,
+        {
+          direction = "row", gap = 8, align = "center", flex_wrap = true,
+          st.busy and { text = "Creating…", hl = "Dim", grow = 1 } or { grow = 1 },
+          press(action, function()
+            if row then enter() end
+          end, true),
+          press("Close", close),
+        },
+      }
+    end,
   }
   bone.request("session/list", {}, function(list, err)
     if not valid() then return end

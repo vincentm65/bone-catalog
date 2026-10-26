@@ -32,7 +32,7 @@ assert(retry_hook({ error = "response incomplete: max_output_tokens", attempt = 
 local r = prepare({ options = { api_key = "test", model = "test" }, messages = {}, session_id = "s" })
 assert(r.api == "responses" and r.base_url == "https://api.openai.com/v1" and r.headers == nil)
 assert(r.body.prompt_cache_key == "s")
-dofile("plugins/codex/tui.lua")
+dofile("plugins/codex/ui.lua")
 local function tier(fast)
   return prepare({ options = { fast = fast, api_key = "test", model = "test" }, messages = {} }).body.service_tier
 end

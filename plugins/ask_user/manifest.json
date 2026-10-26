@@ -1,1 +1,1 @@
-{"title":"Ask User","version":"1.1.1","description":"Ask the user questions in the prompt, like the first bone","capabilities":["tool","ask","ui"]}
+{"title":"Ask User","version":"1.2.1","description":"Ask the user questions in the terminal prompt or a desktop window, like the first bone","capabilities":["tool","ask","ui"]}

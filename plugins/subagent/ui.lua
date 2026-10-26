@@ -1,6 +1,8 @@
 -- /subagents: a popup to create and tune named agents. Agents on the left,
 -- the selected one's settings on the right; every change is saved at once
 -- (subagent.agents in settings). Blank fields inherit the defaults.
+-- Shared by the terminal and the desktop app. Click an agent to open it,
+-- a field to edit it, and New / Rename / Delete / Inherit for the key actions.
 local PATH = "subagent.agents"
 local FIELDS = {
   { "description", "Description", "what the model reads to decide when to hand work to this agent" },
@@ -331,6 +333,117 @@ local function render(ctx)
   return bone.ui.box(rows, { title = "Subagents", width = w })
 end
 
+local function scroll_list(list_id, items, selected)
+  local ok, pop = pcall(require, "bone.nodes.popups")
+  if ok and type(pop.list) == "function" and bone.has_capability and bone.has_capability("gui.nodes")
+      and bone.gui and bone.gui.scroll_item then
+    return pop.list(list_id, items, selected)
+  end
+  local col = { id = list_id, direction = "column", gap = 2, grow = 1, overflow = "scroll" }
+  for i, item in ipairs(items) do col[i] = item end
+  return col
+end
+
+local function press(label, click, primary)
+  local ok, w = pcall(require, "bone.nodes.widgets")
+  if ok and w.button then return w.button(label, click, primary) end
+  return {
+    text = label, hl = primary and "Accent" or "Normal", bg = primary and "TextSelection" or "Selection",
+    padding = { 6, 12 }, radius = 8, cursor = "pointer", role = "button", on_click = click,
+  }
+end
+
+local function subagent_node()
+  if not st then return { text = "Subagents", hl = "Normal" } end
+  local name, list = current()
+  local rows, selected = {}, nil
+  for i, item in ipairs(list) do
+    if item == name then selected = i end
+    local on = item == name
+    rows[#rows + 1] = {
+      direction = "row", align = "center", padding = { 6, 8 }, radius = 8,
+      bg = on and "Selection" or nil, selected = on, cursor = "pointer", role = "option",
+      on_click = function()
+        if st.input or st.confirm then return end
+        st.sel, st.sel_name, st.focus, st.field = i, item, "fields", 1
+        redraw()
+      end,
+      { text = item, hl = "Normal", grow = 1 },
+    }
+  end
+  local detail = { direction = "column", gap = 6, grow = 1, overflow = "scroll" }
+  if not name then
+    detail[#detail + 1] = { text = "No agents yet. Create one: a name, then a prompt, and the model can hand it work with the subagent tool.", hl = "Dim" }
+  else
+    local spec = st.agents[name]
+    detail[#detail + 1] = { text = name, hl = "Accent", bold = true, size = 18 }
+    for i, f in ipairs(FIELDS) do
+      local key, label = f[1], f[2]
+      local on = st.focus == "fields" and st.field == i
+      local editing = st.input and st.input.name == name and st.input.key == key
+      local value = editing and (st.input.value .. "▏") or (key == "tools" and tools_text(spec.tools) or spec[key] or "")
+      local empty = value == ""
+      if empty then value = "inherits the default" end
+      detail[#detail + 1] = {
+        direction = "column", gap = 2, padding = { 6, 8 }, radius = 8,
+        bg = on and "Selection" or nil, selected = on, cursor = "pointer", role = "option",
+        on_click = function()
+          if st.input or st.confirm then return end
+          st.focus, st.field, st.sel_name = "fields", i, name
+          if key == "provider" then pick_provider(name) else open_field(name, key) end
+          redraw()
+        end,
+        { text = label, hl = on and "Accent" or "Normal", bold = on },
+        { text = f[3], hl = "Dim", size = 12 },
+        { text = value, hl = empty and "Dim" or "Normal", selectable = true },
+      }
+    end
+  end
+  local bar
+  if st.input then
+    local k = st.input.key
+    bar = {
+      direction = "column", gap = 4,
+      { text = (k == "new" and "New agent name" or k == "rename" and "New name" or ("Editing " .. tostring(k))) .. ": " .. st.input.value .. "▏", hl = "Normal", selectable = true },
+      { text = (k == "system" and "enter newline · ctrl+s save" or "enter save") .. " · ctrl+u clear · esc cancel", hl = "Dim", size = 12 },
+    }
+  elseif st.confirm then
+    bar = {
+      direction = "row", gap = 8, align = "center", flex_wrap = true,
+      { text = "Delete " .. tostring(name) .. "?", hl = "WarningMsg", grow = 1 },
+      press("Delete", function() on_key("y") end, true),
+      press("Cancel", function() on_key("n") end),
+    }
+  else
+    bar = { direction = "row", gap = 8, flex_wrap = true,
+      press("New", function()
+        if st.input or st.confirm then return end
+        st.focus = "list"
+        on_key("n")
+      end, true),
+    }
+    if name then
+      bar[#bar + 1] = press("Rename", function() on_key("r") end)
+      bar[#bar + 1] = press("Delete", function() on_key("d") end)
+      bar[#bar + 1] = press("Inherit", function()
+        if st.focus ~= "fields" then st.focus, st.field = "fields", st.field or 1 end
+        on_key("x")
+      end)
+    end
+  end
+  local note = st.note and st.note[1] and { text = st.note[1][1], hl = st.note[1][2] or "Dim", size = 12 } or nil
+  return {
+    direction = "column", gap = 10, grow = 1,
+    { text = "Subagents", bold = true, size = 20, hl = "Normal" },
+    {
+      direction = "row", gap = 12, grow = 1,
+      { width = 220, direction = "column", scroll_list("subagent:agents", rows, selected) },
+      detail,
+    },
+    note, bar,
+  }
+end
+
 bone.on("paste", function(ev)
   if st and id and bone.ui.is_open(id) and st.input then
     local text = (ev.text or ""):gsub("\r\n?", "\n")
@@ -358,7 +471,7 @@ local function open(arg)
       st.input = { key = "new", name = "", value = arg }
     end
   end
-  id = bone.ui.popup({ lines = render, on_key = on_key, width = 104, height = 28 })
+  id = bone.ui.popup({ lines = render, on_key = on_key, node = subagent_node, width = 104, height = 28 })
 end
 
 bone.cmd.create("subagents", function(c)

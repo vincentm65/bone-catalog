@@ -34,11 +34,14 @@ and session filters; tools cannot be attributed to a model and are marked
 unfiltered by model. Activity remains all-history within those filters.
 Wide terminals get two columns. Scrolling reuses rendered sections; period
 switches reuse activity until refresh, a filter change, a new day or reopening.
-Mouse filtering requires Bone's popup mouse-hit support; keyboard filtering
-works without it.
+In the terminal, mouse filtering requires Bone's popup mouse-hit support;
+keyboard filtering works without it. In the desktop app the same filters are
+clicks: a period, a model, a chart column, a calendar day, a session, or a
+filter chip.
 
 Usage is recorded per model call from the version that added it on; older
-sessions show tool calls but no tokens. It is only TUI Lua: read-only SQL
-queries sent with `bone.request("store/query", { sql, params }, callback)` and
-a full-screen `bone.ui.popup` drawn with highlight groups (`UsageHeat0`-`4`,
-`UsageBar`, `UsageValue`, derived from your colorscheme).
+sessions show tool calls but no tokens. The dashboard is shared UI Lua for the
+terminal and the desktop app: read-only SQL queries sent with
+`bone.request("store/query", { sql, params }, callback)` and a full-screen
+`bone.ui.popup`. Chart, punchcard and calendar colors are foreground highlight
+groups (`UsageHeat0`-`4`, `UsageBar`, `UsageValue`, derived from your colorscheme).

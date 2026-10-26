@@ -1,6 +1,8 @@
 -- context: what fills the conversation's context, estimated without model
--- calls. /context shows the current conversation, /context request the last
--- model request observed. Tab or 1/2 switches · r refreshes · ↑↓ scroll · q closes.
+-- calls. Shared by the terminal and the desktop app. /context shows the
+-- current conversation, /context request the last model request observed.
+-- Tab or 1/2 switches · r refreshes · ↑↓ scroll · q closes.
+-- In the desktop app, click Current / Last request, Refresh, or scroll the page.
 
 local alive, window, serial = true, nil, 0
 local data, failure, loading, scroll, max_scroll, page = nil, nil, false, 0, 0, 1
@@ -450,7 +452,26 @@ local function open(request)
       elseif key == "home" or key == "g" then scroll = 0
       elseif key == "end" or key == "G" then scroll = max_scroll
       else return false end
+      if bone.has_capability and bone.has_capability("gui.nodes") and bone.gui and bone.gui.scroll then
+        pcall(bone.gui.scroll, "context:body", scroll * 18)
+      end
       return true
+    end,
+    node = function()
+      local ok, view = pcall(require, "context.nodes")
+      if not ok or type(view) ~= "table" or type(view.build) ~= "function" then
+        return { text = failure or "Context", hl = failure and "ErrorMsg" or "Normal", selectable = true }
+      end
+      return view.build({
+        data = data, failure = failure, loading = loading, mode = mode, kinds = KIND,
+        num = num, tokens = tokens, pct = pct, ago = ago,
+        capacity = function() return tonumber(bone.settings.get("context.window_tokens")) or 0 end,
+        set_mode = function(next_mode)
+          if mode ~= next_mode then mode, scroll = next_mode, 0 end
+          if bone.ui.update and window then bone.ui.update(window, {}) end
+        end,
+        refresh = load, close = close,
+      })
     end,
   })
   load()

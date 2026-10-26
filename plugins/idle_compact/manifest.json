@@ -1,16 +1,26 @@
 {
   "title": "Idle Compact",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Compact the chat you were last using after it sits idle with a large context",
   "min_bone_version": "3.0.3",
-  "capabilities": ["ui"],
+  "capabilities": [
+    "ui"
+  ],
   "settings": [
     {
-      "key": "minutes", "label": "Idle minutes", "type": "integer", "default": 45, "min": 1,
+      "key": "minutes",
+      "label": "Idle minutes",
+      "type": "integer",
+      "default": 45,
+      "min": 1,
       "desc": "How long the chat must sit without a message or reply before it is compacted"
     },
     {
-      "key": "threshold", "label": "Context threshold (tokens)", "type": "integer", "default": 50000, "min": 0,
+      "key": "threshold",
+      "label": "Context threshold (tokens)",
+      "type": "integer",
+      "default": 50000,
+      "min": 0,
       "desc": "Compact only when the chat's last turn sent at least this many tokens"
     }
   ]

@@ -1,9 +1,17 @@
 -- A small, native Bone 3 version of /recap.  It deliberately runs outside a
 -- turn, so the summary cannot mutate the session transcript.
 
+local previous_recap = bone.ui.views.recap
 bone.ui.views.recap = function(item, ctx)
-  return bone.text.wrap({ { "Recap: " .. (item.text or ""), "Dim" } }, ctx.width, { first = "  " })
+  local lines = bone.text.wrap({ { "Recap: " .. (item.text or ""), "Dim" } }, ctx.width, { first = "  " })
+  -- The terminal draws a returned array of lines. The desktop view only
+  -- paints `{ lines = ... }` or `{ node = ... }`; a bare array draws nothing.
+  if bone.has_capability and bone.has_capability("gui.nodes") then return { lines = lines } end
+  return lines
 end
+bone.plugin.on_shutdown(function()
+  if bone.ui.views.recap then bone.ui.views.recap = previous_recap end
+end)
 
 local seq = 0
 local function request()

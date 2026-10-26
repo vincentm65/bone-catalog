@@ -136,7 +136,7 @@ bone = {
   action = function(value) action = value end,
   notify = function(value) notice = value end,
 }
-dofile("plugins/review/tui.lua")
+dofile("plugins/review/ui.lua")
 for _, args in ipairs({ "", "low", "main", "main high", " main medium " }) do
   command({ args = args })
   assert(text == "/review" .. (args ~= "" and " " .. args or "") and action == "submit")

@@ -1,6 +1,8 @@
--- mcp, TUI side: /mcp opens a popup to see, add, sign in to and manage MCP
+-- mcp, shared UI: /mcp opens a popup to see, add, sign in to and manage MCP
 -- servers: state, errors, and every tool with its description. Servers added
 -- here are kept in ~/.bone/mcp.json (loaded by this plugin's core half).
+-- The desktop app clicks a server to select it, scrolls its tools, and uses
+-- the same Add / Reconnect / Sign in / Sign out / Enable / Remove actions.
 local FILE = bone.config_dir .. "/mcp.json"
 local STATES = {
   ready = { "●", "DiffAdd", "ready" }, starting = { "◐", "WarningMsg", "starting" },
@@ -213,6 +215,13 @@ local function on_key(k)
     else
       bone.ui.close(id)
     end
+  elseif k == "c" and st.signing then
+    if bone.clipboard then
+      bone.clipboard.copy(st.signing.url)
+      note("copied the sign-in address")
+    else
+      note("copying needs a newer Bone; select the address with the mouse instead", true)
+    end
   elseif k == "up" or k == "k" then
     st.sel, st.tools_at, st.note = math.max(1, st.sel - 1), 0, nil
   elseif k == "down" or k == "j" then
@@ -236,6 +245,9 @@ local function on_key(k)
     st.confirm = function()
       change(s, function(all) all[s.name] = nil end, "removed " .. s.name)
     end
+  end
+  if bone.has_capability and bone.has_capability("gui.nodes") and bone.gui and bone.gui.scroll and st then
+    pcall(bone.gui.scroll, "mcp:tools", (st.tools_at or 0) * 36)
   end
   redraw()
   return true
@@ -333,11 +345,132 @@ local function render(ctx)
   elseif st.confirm then
     rows[#rows + 1] = { { "Remove " .. st.servers[st.sel].name .. " from mcp.json?  y yes · any other key cancels", "WarningMsg" } }
     rows[#rows + 1] = {}
+  elseif st.signing then
+    rows[#rows + 1] = st.note or {}
+    rows[#rows + 1] = { { "c copy address · paste the redirected address · esc cancel", "Dim" } }
   else
     rows[#rows + 1] = st.note or {}
     rows[#rows + 1] = { { "a add · r reconnect · s sign in · x sign out · space on/off · d remove · esc", "Dim" } }
   end
   return bone.ui.box(rows, { title = "MCP servers", width = w })
+end
+
+local function scroll_list(list_id, items, selected)
+  local ok, pop = pcall(require, "bone.nodes.popups")
+  if ok and type(pop.list) == "function" and bone.has_capability and bone.has_capability("gui.nodes")
+      and bone.gui and bone.gui.scroll_item then
+    return pop.list(list_id, items, selected)
+  end
+  local col = { id = list_id, direction = "column", gap = 2, grow = 1, overflow = "scroll" }
+  for i, item in ipairs(items) do col[i] = item end
+  return col
+end
+
+local function press(label, click, primary)
+  local ok, w = pcall(require, "bone.nodes.widgets")
+  if ok and w.button then return w.button(label, click, primary) end
+  return {
+    text = label, hl = primary and "Accent" or "Normal", bg = primary and "TextSelection" or "Selection",
+    padding = { 6, 12 }, radius = 8, cursor = "pointer", role = "button", on_click = click,
+  }
+end
+
+-- Same actions as the keys. Row clicks select; buttons call on_key so the
+-- confirm, sign-in and editor paths stay one implementation.
+local function mcp_node()
+  if not st then return { text = "MCP servers", hl = "Normal" } end
+  local servers = st.servers or {}
+  local rows = {}
+  for i, s in ipairs(servers) do
+    local state = STATES[s.state] or STATES.failed
+    local on = i == st.sel
+    rows[#rows + 1] = {
+      direction = "row", gap = 8, align = "center", padding = { 6, 8 }, radius = 8,
+      bg = on and "Selection" or nil, selected = on, cursor = "pointer", role = "option",
+      on_click = function()
+        st.sel, st.tools_at, st.note = i, 0, nil
+        redraw()
+      end,
+      { text = state[1] .. " " .. s.name, hl = on and "Normal" or state[2], grow = 1 },
+    }
+  end
+  local s = servers[st.sel]
+  local detail = { direction = "column", gap = 6, grow = 1 }
+  local function add(node) detail[#detail + 1] = node end
+  if s then
+    local state = STATES[s.state] or STATES.failed
+    add({ text = s.name, hl = "Accent", bold = true, size = 18 })
+    add({ text = state[1] .. " " .. state[3], hl = state[2] })
+    local where = s.url or (s.command and ("$ " .. s.command:gsub("%s+", " "))) or ""
+    if where ~= "" then add({ text = where, hl = "Dim", selectable = true }) end
+    if s.signed_in or s.lazy then
+      add({ text = (s.signed_in and "signed in" or "") .. (s.signed_in and s.lazy and " · " or "") .. (s.lazy and "lazy" or ""), hl = "Dim" })
+    end
+    if s.error then add({ text = s.error, hl = "ErrorMsg", selectable = true }) end
+    if st.signing and st.signing.name == s.name then
+      add({ text = "Open this address in a browser and approve. If the browser is on another machine, paste the address it ends up on.", hl = "Normal" })
+      add({ text = st.signing.url, hl = "Accent", selectable = true })
+    else
+      local tools = { id = "mcp:tools", direction = "column", gap = 4, grow = 1, overflow = "scroll" }
+      tools[#tools + 1] = { text = "Tools  " .. #(s.tool_info or {}), hl = "Accent", bold = true }
+      for _, t in ipairs(s.tool_info or {}) do
+        tools[#tools + 1] = {
+          direction = "column", gap = 2,
+          { text = t.name, hl = "ToolName" },
+          (t.description or "") ~= "" and { text = (t.description or ""):gsub("%s+", " "), hl = "Dim", size = 12 } or nil,
+          t.read_only and { text = "read-only", hl = "Dim", size = 12 } or nil,
+        }
+      end
+      if #(s.tool_info or {}) == 0 then tools[#tools + 1] = { text = "No tools reported.", hl = "Dim" } end
+      add(tools)
+    end
+  end
+  -- One empty line. A list placeholder beside a detail placeholder reads as
+  -- the same sentence twice, side by side.
+  local body = s and {
+    direction = "row", gap = 12, grow = 1,
+    { width = 240, direction = "column", overflow = "hidden", scroll_list("mcp:servers", rows, st.sel) },
+    detail,
+  } or {
+    grow = 1, direction = "column", justify = "center", gap = 6,
+    { text = "No MCP servers yet.", hl = "Dim" },
+    { text = "Add a command or an https:// URL.", hl = "Dim", size = 13 },
+  }
+  local bar = { direction = "row", gap = 8, flex_wrap = true }
+  if st.input then
+    bar = {
+      direction = "column", gap = 4,
+      { text = (STEPS[st.input.step] or "") .. ": " .. st.input.value .. "▏", hl = "Normal", selectable = true },
+      { text = "Type, then enter · esc cancels", hl = "Dim", size = 12 },
+    }
+  elseif st.confirm and s then
+    bar = {
+      direction = "row", gap = 8, align = "center", flex_wrap = true,
+      { text = "Remove " .. s.name .. " from mcp.json?", hl = "WarningMsg", grow = 1 },
+      press("Remove", function() on_key("y") end, true),
+      press("Cancel", function() on_key("n") end),
+    }
+  elseif st.signing then
+    bar[#bar + 1] = press("Copy address", function() on_key("c") end)
+    bar[#bar + 1] = press("Cancel sign-in", function() on_key("esc") end)
+  else
+    bar[#bar + 1] = press("Add", function() on_key("a") end, true)
+    if s and s.state ~= "disabled" then bar[#bar + 1] = press("Reconnect", function() on_key("r") end) end
+    if s and s.url and s.state ~= "disabled" then bar[#bar + 1] = press("Sign in", function() on_key("s") end) end
+    if s and s.signed_in then bar[#bar + 1] = press("Sign out", function() on_key("x") end) end
+    if s then
+      bar[#bar + 1] = press(s.state == "disabled" and "Enable" or "Disable", function() on_key("space") end)
+      bar[#bar + 1] = press("Remove", function() on_key("d") end)
+    end
+  end
+  local note = st and st.note and st.note[1] and { text = st.note[1][1], hl = st.note[1][2] or "Dim", size = 12 } or nil
+  return {
+    direction = "column", gap = 10, grow = 1,
+    { text = "MCP servers", bold = true, size = 20, hl = "Normal" },
+    body,
+    note,
+    bar,
+  }
 end
 
 bone.on("paste", function(ev)
@@ -361,7 +494,7 @@ bone.cmd.create("mcp", function()
     return bone.ui.close(id)
   end
   st = { servers = {}, sel = 1, tools_at = 0 }
-  id = bone.ui.popup({ lines = render, on_key = on_key, width = 104, height = 26 })
+  id = bone.ui.popup({ lines = render, on_key = on_key, node = mcp_node, width = 104, height = 26 })
   refresh()
 end, { desc = "MCP servers: state, tools, sign-in, add and remove (mcp plugin)" })
 

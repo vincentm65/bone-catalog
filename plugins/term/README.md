@@ -4,6 +4,10 @@ Interactive local shells and commands in pseudo-terminal panels (Unix). Nothing
 is sent to a model. Requires Bone **3.0.3** or newer; install this directory as
 `~/.bone/plugins/term` and load it with `/plugins load term`.
 
+The terminal UI uses this plugin's panel renderer. The desktop app already
+has the same `/term` command, ctrl+] / ctrl+5 keys and panel terminals, so
+this plugin does not replace them there.
+
 ## Commands and keys
 
 - `/term` (alias `/terminal`): open `$SHELL`, falling back to `/bin/sh`.

@@ -58,6 +58,7 @@ function M.open(path)
           st.text = table.concat(chunks):gsub("\r\n", "\n")
           if st.text:find("%z") then st.text, st.read_error = nil, "Not a text Markdown file (contains NUL bytes)." end
         end
+        if bone.ui.update and id then bone.ui.update(id, {}) end
       end,
     })
   end
@@ -114,6 +115,7 @@ function M.open(path)
           if found then select_file(); st.pane = "reader"
           else bone.notify("Markdown file not found: " .. wanted, "error") end
         end
+        if bone.ui.update and id then bone.ui.update(id, {}) end
       end,
     })
   end
@@ -209,9 +211,96 @@ function M.open(path)
       st.query, st.sel = query, 1
       filter()
     else return false end
+    if bone.has_capability and bone.has_capability("gui.nodes") and bone.gui and bone.gui.scroll then
+      pcall(bone.gui.scroll, "md:reader", (st.top or 0) * 22)
+    end
     return true
   end
-  id = bone.ui.popup({ lines = render, on_key = on_key })
+  local function touch()
+    if bone.ui.update and id then bone.ui.update(id, {}) end
+  end
+  local function markdown_node()
+    local function press(label, click, primary)
+      local ok, w = pcall(require, "bone.nodes.widgets")
+      if ok and w.button then return w.button(label, click, primary) end
+      return {
+        text = label, hl = primary and "Accent" or "Normal", bg = primary and "TextSelection" or "Selection",
+        padding = { 6, 12 }, radius = 8, cursor = "pointer", role = "button", on_click = click,
+      }
+    end
+    local items = {}
+    for i, file in ipairs(st.filtered) do
+      local on = i == st.sel
+      items[#items + 1] = {
+        direction = "row", align = "center", padding = { 5, 8 }, radius = 8,
+        bg = on and "Selection" or nil, selected = on, cursor = "pointer", role = "option",
+        on_click = function()
+          st.sel, st.pane = i, "reader"
+          select_file()
+          touch()
+        end,
+        { text = file, hl = "Normal", grow = 1 },
+      }
+    end
+    if #items == 0 then
+      items[1] = { text = st.loading and "Scanning…" or (#st.files == 0 and "No Markdown files." or "No matches."), hl = "Dim" }
+    end
+    local list
+    local ok, pop = pcall(require, "bone.nodes.popups")
+    if ok and type(pop.list) == "function" and bone.has_capability and bone.has_capability("gui.nodes")
+        and bone.gui and bone.gui.scroll_item then
+      list = pop.list("md:files", items, #st.filtered > 0 and st.sel or nil)
+    else
+      list = { id = "md:files", direction = "column", gap = 2, grow = 1, overflow = "scroll" }
+      for i, item in ipairs(items) do list[i] = item end
+    end
+    local preview = { id = "md:reader", direction = "column", gap = 6, grow = 1, overflow = "scroll" }
+    if st.read_error then
+      preview[#preview + 1] = { text = st.read_error, hl = "ErrorMsg", selectable = true }
+    elseif st.file and not st.text then
+      preview[#preview + 1] = { text = "Loading document…", hl = "Dim" }
+    elseif st.text then
+      local mok, md = pcall(require, "bone.desktop.markdown")
+      local nodes = mok and md.nodes and md.nodes(st.text) or nil
+      if nodes and #nodes > 0 then
+        for _, node in ipairs(nodes) do preview[#preview + 1] = node end
+      elseif st.text == "" then
+        preview[#preview + 1] = { text = "Empty Markdown file.", hl = "Dim" }
+      else
+        preview[#preview + 1] = { text = st.text, hl = "Normal", selectable = true }
+      end
+    else
+      preview[#preview + 1] = { text = "Select a Markdown file to read.", hl = "Dim" }
+    end
+    local filter_text = st.loading and "Scanning Markdown files…"
+      or ("Filter: " .. (st.query == "" and "click here, then type" or st.query))
+    return {
+      direction = "column", gap = 8, grow = 1,
+      {
+        direction = "row", align = "center", gap = 8,
+        { text = "Markdown", bold = true, size = 20, hl = "Normal" },
+        { text = cwd, hl = "Dim", size = 12, grow = 1 },
+        press("Refresh", function() on_key("ctrl+r"); touch() end),
+        press("Close", close),
+      },
+      {
+        direction = "row", gap = 8, align = "center", flex_wrap = true,
+        press("Files" .. (st.pane == "files" and " ◂" or ""), function() st.pane = "files"; touch() end, st.pane == "files"),
+        press((st.file or "Preview") .. (st.pane == "reader" and " ◂" or ""), function() st.pane = "reader"; touch() end, st.pane == "reader"),
+        {
+          text = filter_text, hl = "Dim", size = 12, grow = 1, cursor = "pointer", role = "button",
+          on_click = function() st.pane = "files"; touch() end,
+        },
+      },
+      st.scan_error and { text = st.scan_error, hl = "WarningMsg", size = 12 } or nil,
+      {
+        direction = "row", gap = 12, grow = 1,
+        { width = 280, direction = "column", list },
+        { direction = "column", grow = 1, preview },
+      },
+    }
+  end
+  id = bone.ui.popup({ lines = render, on_key = on_key, node = markdown_node })
   markdown_close = close
   close_event = bone.on("panel/closed", function(ev) if ev.id == id and ev.kind == "popup" then close() end end)
   discover(path)

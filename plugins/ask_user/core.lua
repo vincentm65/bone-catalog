@@ -1,15 +1,16 @@
 -- Interactive questions use Bone 3's transport-level ask mechanism. Any
--- client can answer them; the catalog TUI asks them in the prompt.
+-- client can answer them; this plugin asks them in the terminal prompt
+-- and in a desktop window.
 --
 -- An answer is a string (older clients; multi-select values comma-separated)
 -- or a table: { value, label, index } for a pick, { values, labels } for
--- multi-select, { value, custom = true } for a typed answer. "cancelled"
+-- multi-select (with custom = true when one is typed), { value, custom = true }
+-- for a typed answer. Typing your own answer is always possible. "cancelled"
 -- (or nil, when the turn is cancelled) stops asking.
 local function question_spec(q, index, total)
   local out = { kind = "ask_user", text = q.question or q.text or "Question", index = index, total = total }
   out.type = q.type or (q.options and "single_select" or "text_input")
   out.options = q.options or {}
-  out.allow_custom = q.allow_custom == true
   return out
 end
 
@@ -17,7 +18,8 @@ local ANSWER_FIELDS = { "value", "values", "label", "labels", "index", "custom" 
 
 bone.tool.register({
   name = "ask_user",
-  description = "Ask one or more questions and return the user's answers.",
+  description = "Ask one or more questions and return the user's answers. "
+    .. "The user can always type their own answer instead of picking an option.",
   parameters = {
     type = "object",
     properties = {
@@ -39,7 +41,6 @@ bone.tool.register({
                 },
               },
             },
-            allow_custom = { type = "boolean" },
           },
           required = { "question" },
         },

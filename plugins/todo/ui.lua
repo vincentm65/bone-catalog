@@ -1,6 +1,7 @@
 -- Shows the on-screen chat's latest finished todo call in a drawer under it,
--- and hides when that chat has no unfinished list. Syncs automatically when
--- switching chats; /todo also syncs it manually.
+-- and hides when that chat has no unfinished list. The same drawer is drawn
+-- in the terminal (render) and the desktop app (node). Syncs automatically
+-- when switching chats; /todo also syncs it manually.
 local MARK = { pending = "· ", in_progress = "▸ ", completed = "✓ " }
 local HL = { pending = "Normal", in_progress = "TodoActive", completed = "TodoDone" }
 local ICON_HL = { pending = "Dim", in_progress = "Accent", completed = "TodoCheck" }
@@ -62,6 +63,29 @@ local function render()
   return lines
 end
 
+-- Desktop drawer: the same title, marks and hide rules. Clicks do not edit.
+local function todo_node()
+  local items, title = list()
+  if not items then
+    bone.defer(0, function() if panel then panel:hide() end end)
+    return nil
+  end
+  local rows = { direction = "column", gap = 3, overflow = "scroll", grow = 1 }
+  rows[#rows + 1] = { text = title, hl = "PanelTitle", bold = true, wrap = false, text_overflow = "ellipsis" }
+  for _, it in ipairs(items) do
+    local status = it.status
+    rows[#rows + 1] = {
+      direction = "row", gap = 6, align = "center",
+      { text = MARK[status] or "· ", hl = ICON_HL[status] or "Dim", font = "mono", wrap = false },
+      {
+        text = tostring(it.text), hl = HL[status] or "Normal", grow = 1, wrap = true,
+        bold = status == "in_progress" or nil, strike = status == "completed" or nil,
+      },
+    }
+  end
+  return rows
+end
+
 local function sync()
   local items = list()
   if not items then
@@ -72,7 +96,13 @@ local function sync()
     panel:show()
   else
     -- Include the spacer and heading in the auto-sized drawer (max 10 rows).
-    panel = bone.ui.panel.open({ id = "todo", dock = "bottom", title = false, render = render, focusable = false })
+    panel = bone.ui.panel.open({
+      id = "todo", dock = "bottom", title = false, render = render, focusable = false, node = todo_node,
+    })
+  end
+  -- The terminal sizes from the lines. The desktop dock needs a row count.
+  if bone.has_capability and bone.has_capability("gui.nodes") and panel.update then
+    panel:update({ size = math.min(10, math.max(1, #items + 1)) })
   end
 end
 

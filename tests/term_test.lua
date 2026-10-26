@@ -68,7 +68,7 @@ function panel.close(id)
 end
 local function load()
   owner = "term"
-  dofile("plugins/term/tui.lua")
+  dofile("plugins/term/tui.lua") -- the desktop app loads gui.lua, which adds nothing
   return require("bone.ui.terminal")
 end
 local function command(args) return commands.term.fn({ args = args }) end
@@ -77,6 +77,7 @@ local function paste(text, context)
 end
 -- A dependency may require the module before term loads. It must stay inert,
 -- then activate when term's own tui.lua runs (and register paste as term).
+-- The desktop half (gui.lua) intentionally registers nothing.
 owner = "windows"
 local preloaded = require("bone.ui.terminal")
 assert(preloaded.open() == nil and #jobs == 0 and next_event == 0)

@@ -38,7 +38,7 @@ local function wrap(spans, n)
 end
 -- Loading the API only to obtain its actual box helper; no calls reach Rust.
 bone = { _api = function() end, on = function() end, text = {} }
-dofile(BONE_SOURCE .. "runtime/tui/api.lua")
+dofile(BONE_SOURCE .. "runtime/ui/api.lua")
 local real_box, real_edit = bone.ui.box, bone.text.edit
 print = original_print
 
@@ -397,7 +397,7 @@ test("plugin /md command is registered and forwards optional argument; shutdown 
   bone.plugin = { on_shutdown = function(fn) shutdown = fn end }
   local saved = package.loaded["md_browser"]
   package.loaded["md_browser"] = f.help
-  dofile(ROOT .. "plugins/md/tui.lua")
+  dofile(ROOT .. "plugins/md/ui.lua")
   assert(commands.md); contains(commands.md.opts.desc, "Markdown")
   local id = commands.md.fn({ args = "docs/a.md" }); eq(id, f.next_id - 1)
   f.id = id; f:scan({ "docs/a.md" }); f:read("command document")

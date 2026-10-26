@@ -55,7 +55,7 @@ External diff helpers and text conversions are disabled. Branch mode resolves
 the merge base once and uses that same scope for all diff commands.
 
 Uses existing `turn_start`, `system`, and `turn_end` core hooks and `bone.system`,
-plus Lua file reads for untracked content; the TUI uses `bone.prompt` and
+plus Lua file reads for untracked content; the TUI and the GUI use `bone.prompt` and
 `bone.action`. No protocol extensions are needed.
 
 Run real-Git standalone checks from the catalog checkout (no model credentials required):

@@ -5,6 +5,6 @@ Resume a recent conversation
 This is the Bone 3 port of the `history` catalog package.
 
 - core half: no
-- TUI half: yes
+- TUI and GUI: yes
 
 Install with `python3 install.py history` from the repository root.

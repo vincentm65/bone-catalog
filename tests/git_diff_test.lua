@@ -67,11 +67,11 @@ local function text()
 end
 local function contains(s, needle) return s:find(needle, 1, true) ~= nil end
 
-dofile("plugins/git-diff/tui.lua")
+dofile("plugins/git-diff/ui.lua")
 shell("git init; git config user.email test@example.com; git config user.name Test")
 write("tracked", "before\n"); shell("git add tracked")
 commands.diff({ args = "" })
-assert(panel.spec.dock == "right" and panel.spec.size == 0.5 and panel.spec.full_height)
+assert(panel.spec.dock == "right" and panel.spec.size == 0.65 and panel.spec.full_height)
 finish(jobs[#jobs]); panel.spec.keys.enter(); assert(contains(text(), "before")) -- unborn HEAD
 shell("git commit -m initial")
 write("tracked", "staged\n"); shell("git add tracked")
@@ -95,6 +95,33 @@ assert(add and del)
 panel.spec.render({ width = 12 }) -- narrow prefix
 panel.spec.keys.s(); finish(jobs[#jobs]); panel.spec.keys.enter(); assert(contains(text(), "staged") and contains(text(), "unstaged"))
 panel.spec.keys.s(); finish(jobs[#jobs]); panel.spec.keys.enter(); assert(contains(text(), "staged") and not contains(text(), "unstaged"))
+panel.spec.keys.b(); assert(contains(text(), "tracked"))
+assert(panel.spec.on_key("pageup") == false)
+local node = panel.spec.node({ width = 420, height = 640, cell = { w = 8, h = 18 } })
+local function texts(n)
+  local acc = {}
+  local function walk(x)
+    if type(x) ~= "table" then return end
+    if type(x.text) == "string" then acc[#acc + 1] = x.text end
+    for _, c in ipairs(x) do walk(c) end
+  end
+  walk(n)
+  return table.concat(acc, " ")
+end
+local function find_click(n, pred)
+  if type(n) ~= "table" then return end
+  if n.on_click and pred(n) then return n.on_click end
+  for _, c in ipairs(n) do
+    local f = find_click(c, pred)
+    if f then return f end
+  end
+end
+assert(texts(node):find("Staged", 1, true) and texts(node):find("tracked", 1, true))
+assert(find_click(node, function(n) return texts(n):find("Staged", 1, true) and not texts(n):find("tracked", 1, true) end))
+local open_file = find_click(node, function(n) return texts(n):find("tracked", 1, true) end)
+assert(open_file)
+open_file()
+assert(panel.focused and contains(text(), "staged"))
 panel.spec.keys.b(); assert(contains(text(), "tracked"))
 assert(events.mouse({ panel = "git-diff", panel_line = 4, button = "left", action = "down" }))
 assert(panel.focused and contains(text(), "staged"))

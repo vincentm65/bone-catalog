@@ -14,6 +14,8 @@ the conversation.
 - `r` refreshes. Arrows, `j`/`k`, Page Up/Down, Home/End and the wheel scroll.
   `q` or Escape closes. The open dashboard also refreshes when messages
   complete, turns finish, the conversation compacts or you switch chats.
+- In the desktop app, click **Current** or **Last request**, **Refresh** or
+  **Close**, and scroll the page. The same keys still work.
 
 The dashboard shows:
 
@@ -70,7 +72,7 @@ shown separately and is not treated as the model's capacity.
 
 ## Install
 
-Install it from `/catalog`. Both `core.lua` and `tui.lua` must load. It needs
+Install it from `/catalog`. Both `core.lua` and `ui.lua` must load (terminal and desktop). It needs
 `bone.session.snapshot`, the request and message hooks, plugin RPC and the Lua
 window API.
 

@@ -2,6 +2,9 @@
 -- the session index (`store/query`): token cards compared with the period
 -- before, a usage chart, models, tools, a weekday × hour punchcard, a
 -- daily activity calendar with streaks, and the busiest sessions.
+-- Shared by the terminal and the desktop app. The terminal still hit-tests
+-- popup cells; the desktop app clicks the same period, model, chart bucket,
+-- calendar day, session and filter chip.
 --
 --   /usage (or /stats)          the last 7 days
 --   /usage today|week|month|year|all
@@ -1076,6 +1079,9 @@ local function open(period, custom)
       elseif k:match("^[%d%.%-]$") and #st.input < 24 then
         st.input = st.input .. k
       end
+      if bone.has_capability and bone.has_capability("gui.nodes") and bone.gui and bone.gui.scroll then
+        pcall(bone.gui.scroll, "usage:body", (st.scroll or 0) * 20)
+      end
       return true
     end
     local idx = 1
@@ -1125,6 +1131,9 @@ local function open(period, custom)
     elseif k == "end" or k == "G" then
       st.scroll = st.max_scroll or 0
     end
+    if bone.has_capability and bone.has_capability("gui.nodes") and bone.gui and bone.gui.scroll then
+      pcall(bone.gui.scroll, "usage:body", (st.scroll or 0) * 20)
+    end
     return true
   end
 
@@ -1137,6 +1146,19 @@ local function open(period, custom)
     col = 0,
     width = 10000,
     height = 10000,
+    node = function(ctx)
+      local ok, view = pcall(require, "usage.nodes")
+      if not ok or type(view) ~= "table" or type(view.build) ~= "function" then
+        return { text = ok and "Usage" or tostring(view), hl = ok and "Normal" or "ErrorMsg", selectable = true }
+      end
+      return view.build(ctx, {
+        st = st, activate = activate, load = load,
+        periods = PERIODS, titles = TITLES, weekdays = WEEKDAYS,
+        buckets = buckets, bucket_range = bucket_range, num = num, metrics = metrics, pct = pct,
+        streaks = streaks, ymd = ymd, parse_date = parse_date, midnight = midnight,
+        noon_plus = noon_plus, monday = monday, span = span,
+      })
+    end,
   })
   local mouse, closed
   mouse = bone.on("mouse", function(ev)

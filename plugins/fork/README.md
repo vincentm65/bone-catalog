@@ -12,12 +12,12 @@ From the bone repository:
 
 ```sh
 mkdir -p ~/.bone/plugins/fork
-cp plugins/fork/{core.lua,tui.lua,README.md} ~/.bone/plugins/fork/
+cp plugins/fork/{core.lua,ui.lua,README.md} ~/.bone/plugins/fork/
 ```
 
 Restart bone, or run `/plugins reload fork` (load it with `/plugins load fork`
 if it was not loaded already). Install both halves on the machine running
-the core and the machine running the TUI if those are separate.
+the core and the machine running the terminal or desktop app if those are separate.
 
 ## Use
 
@@ -25,7 +25,8 @@ the core and the machine running the TUI if those are separate.
   and selectable user-message points. Children with a known cutoff appear just
   before that user point; their edge is labeled **before #N**. Up/down, wheel,
   PageUp/PageDown and Home/End navigate; right expands, left collapses/goes to the parent;
-  Escape or `q` closes. Enter on a session opens it. Enter on a user point
+  Escape or `q` closes. In the desktop app, click a session row to expand or collapse it
+  and the action button to open or branch. Enter on a session opens it. Enter on a user point
   creates a branch **before** that message, opens it, and restores that
   message's text and image references into the draft. Nothing is sent.
 - `/fork N`: the same operation before the current session's **Nth user
@@ -94,7 +95,7 @@ available. Older snapshots without `raw_messages` fall back to parsed entries.
 ```sh
 lua plugins/fork/test.lua
 luajit plugins/fork/test.lua
-luac -p plugins/fork/core.lua plugins/fork/tui.lua plugins/fork/test.lua
+luac -p plugins/fork/core.lua plugins/fork/ui.lua plugins/fork/test.lua
 ```
 
 Standalone Lua/LuaJIT tests use fake bone APIs: exact JSON-string and parsed

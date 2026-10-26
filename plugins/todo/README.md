@@ -10,15 +10,18 @@ Nothing is stored. The list is the latest *finished, successful* `todo`
 call in the chat's own history, so it never appears in another chat and it
 survives any number of later tool calls. A call that is still running does
 not replace the previous list until it finishes. Sub-agents start empty, and
-a fork keeps its parent's list. The drawer across the bottom of the chat on
-screen shows that chat's list, with a blank row above its title and progress
-count. It hides when the list is empty or every item is completed. `/todo`
-shows an unfinished list again. The drawer is as tall as the list plus its
-spacer and heading, up to the panel cap of 10 rows.
+a fork keeps its parent's list. The terminal and the desktop app both show
+that chat's list in a drawer across the bottom. In the terminal there is a
+blank row above the title and progress count; the desktop drawer shows the
+same title, count and marks. It hides when the list is empty or every item
+is completed. `/todo` shows an unfinished list again. The drawer is as tall
+as the list plus its spacer and heading, up to the panel cap of 10 rows
+(the desktop list scrolls inside that cap). Pointer clicks do not edit the
+list.
 Completed items have green checkmarks and muted, struck-through text;
 the active item is bold with an accent-colored arrow. Native strikethrough
-requires a Bone build supporting `bone.hl.set(..., { strikethrough = true })`
-and a terminal that supports SGR 9.
+in the terminal requires a Bone build supporting `bone.hl.set(..., { strikethrough = true })`
+and a terminal that supports SGR 9. The desktop app draws the same strike.
 The tool never makes the model keep working or queues another turn.
 
 While items are open, the `todo` result ends with a one-line nudge to mark

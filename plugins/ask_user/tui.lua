@@ -1,36 +1,32 @@
--- ask_user, TUI half: questions are asked in the input field, like the
--- first bone. While one is open the field becomes the question: the prompt
--- is swapped out of the layout for a region drawn in the prompt's own style
--- (background, border, padding, prefix) holding the question, its options,
--- an input row and the keys. Typing still goes into the (hidden) prompt, so
--- editing works as usual; the region draws its text and cursor. The draft
--- you had in the prompt comes back afterwards.
+-- ask_user, terminal half: questions are asked in the input field, like the
+-- first bone. The queue and the answer live in ui.lua (loaded before this
+-- file, and not loaded by the desktop). While one is open the field becomes
+-- the question: the prompt is swapped out of the layout for a region drawn
+-- in the prompt's own style (background, border, padding, prefix) holding
+-- the question, its options, an input row and the keys. Typing still goes
+-- into the (hidden) prompt, so editing works as usual; the region draws its
+-- text and cursor. The draft you had in the prompt comes back afterwards.
 --
 --   ↑↓ move · enter choose · 1-9 pick · space toggle (multi) · esc cancel
 --
--- Typed text is the answer for text questions, and a custom answer for
--- choice questions that allow one. Questions arriving while one is open
--- wait their turn. A question belongs to its session's chat: it shows only
--- while that chat is on screen, and is put away (typed answer and choice
--- kept) while another chat is.
+-- Typed text is the answer for text questions and your own answer for
+-- choice questions (always an option). A question belongs to its session's
+-- chat: it shows only while that chat is on screen, and is put away (typed
+-- answer and choice kept) while another chat is.
+
+local ask = package.loaded["ask_user.ui"]
+if not ask then
+  error("ask_user: ui.lua must be loaded before tui.lua")
+end
 
 local REGION = "ask_user"
 local CONTEXT = "ask_user"
 local MAX_OPTIONS = 8 -- option rows shown at once; the list scrolls
 local MAX_INPUT = 4 -- input rows shown at once
-local GUARD_MS = 250 -- keys this soon after a question appears are ignored
 -- The layout Rust draws when the TUI library sets none (bare does not).
 local DEFAULT_LAYOUT = { "top", "chat", "divider", "above_prompt", "prompt", "statusline" }
 
-local queue = {} -- ask/requested events, oldest first
-local cur -- the open question: { ev, q, opts, sel, checked, opened, style, saved }
-local parked = {} -- ask_id -> { draft, sel, checked } of questions whose chat left the screen
-
 -- Helpers ---------------------------------------------------------------------
-
-local function trim(s)
-  return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
-end
 
 local function copy(t)
   if type(t) ~= "table" then
@@ -47,20 +43,6 @@ local function utf8_chars(s)
   local out = {}
   for ch in tostring(s):gmatch("[%z\1-\127\194-\244][\128-\191]*") do
     out[#out + 1] = ch
-  end
-  return out
-end
-
--- Options as { label, value, desc }, from strings or { label, value, description }.
-local function options(q)
-  local out = {}
-  for _, o in ipairs(type(q.options) == "table" and q.options or {}) do
-    if type(o) == "table" then
-      local label = tostring(o.label or o.value or "")
-      out[#out + 1] = { label = label, value = o.value and tostring(o.value) or label, desc = o.description }
-    else
-      out[#out + 1] = { label = tostring(o), value = tostring(o) }
-    end
   end
   return out
 end
@@ -177,12 +159,6 @@ local function placeholder(q, opts)
   return "or type your own answer"
 end
 
--- Whether the field shows an input row: text questions and custom answers,
--- and any typed text (so nothing typed is invisible).
-local function wants_input(q, opts, text)
-  return #opts == 0 or q.allow_custom or text ~= ""
-end
-
 local function hints(q, opts)
   if #opts == 0 then
     return { { "enter", "send" }, { "esc", "cancel" } }
@@ -236,6 +212,7 @@ local function input_rows(width)
 end
 
 local function render(ctx)
+  local cur = ask.cur
   if not cur then
     return nil
   end
@@ -324,21 +301,16 @@ local function render(ctx)
     end
   end
 
-  local text = bone.prompt.get()
-  if wants_input(q, opts, text) then
-    row()
-    local prefix = { s.prefix, hl("UserPrompt") }
-    local pw = bone.text.width(s.prefix)
-    if text == "" then
-      row({ prefix, { " ", hl("Cursor") }, { placeholder(q, opts), hl("Placeholder") } })
-    else
-      for i, spans in ipairs(input_rows(math.max(inner - pw - 1, 4))) do
-        table.insert(spans, 1, i == 1 and prefix or { string.rep(" ", pw), hl("Normal") })
-        row(spans)
-      end
-      if #opts > 0 and not q.allow_custom then
-        row({ { string.rep(" ", pw) .. "this question takes no typed answer · ctrl+u clears", hl("Dim") } })
-      end
+  -- Your own answer is always an option.
+  row()
+  local prefix = { s.prefix, hl("UserPrompt") }
+  local pw = bone.text.width(s.prefix)
+  if bone.prompt.get() == "" then
+    row({ prefix, { " ", hl("Cursor") }, { placeholder(q, opts), hl("Placeholder") } })
+  else
+    for i, spans in ipairs(input_rows(math.max(inner - pw - 1, 4))) do
+      table.insert(spans, 1, i == 1 and prefix or { string.rep(" ", pw), hl("Normal") })
+      row(spans)
     end
   end
 
@@ -358,15 +330,7 @@ local function render(ctx)
   return out
 end
 
--- Opening, answering, closing ---------------------------------------------------
-
-local open_next
-
--- Whether a question's chat is the one on screen.
-local function on_screen(ev)
-  local s = bone.chat.session()
-  return ev.session_id == nil or (s and s.session_id) == ev.session_id
-end
+-- Opening and closing the field -------------------------------------------------
 
 -- Undo what opening changed to the layout: only if it is still ours, so a
 -- config that changed the layout meanwhile keeps its change.
@@ -376,146 +340,44 @@ local function restore_layout(saved)
   end
 end
 
-local function restore(saved)
-  restore_layout(saved)
-  bone.prompt.set(saved.draft or "")
-end
-
-local function remove(ask_id)
-  for i = #queue, 1, -1 do
-    if queue[i].ask_id == ask_id then
-      table.remove(queue, i)
-    end
-  end
-  parked[ask_id] = nil
-end
-
-local function close()
-  if not cur then
-    return
-  end
-  local saved = cur.saved
-  remove(cur.ev.ask_id)
-  cur = nil
-  restore(saved)
-  bone.keymap.clear()
-  open_next()
-end
-
--- Another chat came on screen: put the question away. The prompt is now
--- that chat's, and the TUI kept ours (typed answer and all) as our chat's
--- draft, so the prompt is left alone.
-local function park()
-  local saved = cur.saved
-  parked[cur.ev.ask_id] = { draft = saved.draft, sel = cur.sel, checked = cur.checked }
-  cur = nil
-  restore_layout(saved)
-  bone.keymap.clear()
-end
-
-local function respond(answer)
-  bone.request("ask/respond", { ask_id = cur.ev.ask_id, answer = answer }, function(_, err)
-    if err then
-      bone.notify("ask_user: " .. (type(err) == "table" and err.message or tostring(err)), "error")
-    end
-  end)
-  close()
-end
-
--- Open the oldest question for the chat on screen, or one put away earlier
--- as it was (its typed answer is back in the prompt as the chat's draft).
-function open_next()
-  if cur then
-    return
-  end
-  local ev
-  for _, e in ipairs(queue) do
-    if on_screen(e) then
-      ev = e
-      break
-    end
-  end
-  if not ev then
-    return
-  end
-  local p = parked[ev.ask_id]
-  parked[ev.ask_id] = nil
+local function show(cur, snap)
   local style = prompt_style(bone.ui.prompt)
   setup_groups(style.bg)
-  local saved = { layout = bone.ui.layout, draft = p and p.draft or bone.prompt.get() }
+  local saved = { layout = bone.ui.layout, draft = snap and snap.draft or bone.prompt.get() }
   saved.our_layout = with_region(bone.ui.layout or DEFAULT_LAYOUT)
-  cur = {
-    ev = ev,
-    q = ev.question,
-    opts = options(ev.question),
-    sel = p and p.sel or 1,
-    checked = p and p.checked or {},
-    opened = bone.now(),
-    style = style,
-    saved = saved,
-  }
+  cur.style = style
+  cur.saved = saved
   if saved.our_layout then
     bone.ui.layout = saved.our_layout
   end
-  if not p then
+  if not snap then
     bone.prompt.set("")
   end
   bone.keymap.focus(CONTEXT)
 end
 
-local function submit()
-  local q, opts = cur.q, cur.opts
-  local text = trim(bone.prompt.get())
-  if #opts == 0 then
-    if text ~= "" then
-      respond({ value = text })
-    end
+local function hide(cur, why)
+  if not cur.saved then
     return
   end
-  if text ~= "" then
-    if q.allow_custom then
-      return respond({ value = text, custom = true })
-    end
-    return bone.notify("ask_user: pick one of the options (this question takes no typed answer)", "error")
+  restore_layout(cur.saved)
+  if why ~= "park" then
+    bone.prompt.set(cur.saved.draft or "")
   end
-  if q.type == "multi_select" then
-    local values, labels = {}, {}
-    for i, o in ipairs(opts) do
-      if cur.checked[i] then
-        values[#values + 1], labels[#labels + 1] = o.value, o.label
-      end
-    end
-    if #values == 0 then
-      local o = opts[cur.sel]
-      values, labels = { o.value }, { o.label }
-    end
-    return respond({ values = values, labels = labels })
+  -- Unload removes the maps. While the question is up, leave the context.
+  if why ~= "shutdown" then
+    bone.keymap.clear()
   end
-  local o = opts[cur.sel]
-  respond({ value = o.value, label = o.label, index = cur.sel })
 end
 
 -- Keys: a context over the prompt. Unmapped keys type into the prompt; a
 -- callback returning false lets its key through too.
 
-local function active()
-  return cur and bone.now() - cur.opened >= GUARD_MS
-end
-
-local function prompt_empty()
-  return trim(bone.prompt.get()) == ""
-end
-
-local function toggle(i)
-  cur.checked[i] = not cur.checked[i] or nil
-  cur.sel = i
-end
-
 bone.keymap.context(CONTEXT, { fallback = { "main" }, priority = 20 })
 
 local function map(key, fn)
   bone.keymap.set(key, function()
-    if not cur then
+    if not ask.cur then
       return false
     end
     return fn()
@@ -523,96 +385,49 @@ local function map(key, fn)
 end
 
 map("up", function()
-  if #cur.opts == 0 then
+  if not ask.move(-1) then
     return false
   end
-  cur.sel = math.max(1, cur.sel - 1)
 end)
 map("down", function()
-  if #cur.opts == 0 then
+  if not ask.move(1) then
     return false
   end
-  cur.sel = math.min(#cur.opts, cur.sel + 1)
 end)
 map("enter", function()
-  if active() then
-    submit()
-  end
+  ask.submit_key()
 end)
 map("esc", function()
-  if active() then
-    respond("cancelled")
-  end
+  ask.cancel_key()
 end)
 map("space", function()
-  if cur.q.type ~= "multi_select" or #cur.opts == 0 or not prompt_empty() then
+  if not ask.toggle_space() then
     return false
   end
-  toggle(cur.sel)
 end)
 for n = 1, 9 do
   map(tostring(n), function()
-    if n > #cur.opts or not prompt_empty() then
+    if not ask.pick_key(n) then
       return false
-    end
-    if not active() then
-      return
-    end
-    if cur.q.type == "multi_select" then
-      toggle(n)
-    else
-      cur.sel = n
-      submit()
     end
   end)
 end
 
--- Events ------------------------------------------------------------------------
-
 bone.ui.regions[REGION] = { size = "auto", max = 40, render = render }
 
-bone.on("ask/requested", function(ev)
-  local q = ev.question
-  if type(q) ~= "table" or q.kind ~= "ask_user" then
-    return
-  end
-  queue[#queue + 1] = ev
-  open_next()
-end)
-
-bone.on("ask/resolved", function(ev)
-  if cur and cur.ev.ask_id == ev.ask_id then
-    return close()
-  end
-  remove(ev.ask_id)
-end)
-
-bone.on("chat/shown", function()
-  if cur and not on_screen(cur.ev) then
-    park()
-  end
-  open_next()
-end)
-
--- A reload while a question is open: put everything back as it was and
--- keep the questions, which the fresh state shows again.
-local state = bone.plugin.state()
-if type(state.pending) == "table" and (os.time() - (state.saved_at or 0)) <= 5 then
-  for _, ev in ipairs(state.pending) do
-    queue[#queue + 1] = ev
-  end
-  bone.defer(0, open_next)
-end
-state.pending, state.saved_at = nil, nil
-
-bone.plugin.on_shutdown(function()
-  if #queue > 0 then
-    state.pending, state.saved_at = copy(queue), os.time()
-  end
-  if cur then
-    local saved = cur.saved
-    cur = nil
-    restore(saved)
-  end
-  bone.ui.regions[REGION] = nil
-end)
+ask.attach({
+  show = show,
+  hide = hide,
+  shutdown = function()
+    bone.ui.regions[REGION] = nil
+  end,
+  text = function()
+    return bone.prompt.get()
+  end,
+  snapshot = function(cur)
+    return { draft = cur.saved and cur.saved.draft }
+  end,
+  restore_draft = function(text)
+    bone.prompt.set(text or "")
+  end,
+})

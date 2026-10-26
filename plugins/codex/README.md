@@ -6,7 +6,7 @@ Codex backend, so turns count against your ChatGPT plan. Give it an
 `api_key` and it uses `https://api.openai.com/v1` instead.
 
 - core half: yes
-- TUI half: yes (`/fast`, `/usage`, `/codex-usage`)
+- TUI and GUI: yes (`/fast`, `/usage`, `/codex-usage`)
 
 Install with `python3 install.py codex` from the repository root. If you are
 logged in to the Codex CLI, a `codex` provider (`gpt-6.1-sol`) appears in

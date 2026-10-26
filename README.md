@@ -3,7 +3,8 @@
 This repository is now the native Bone 3 catalog. Bone 3's built-in `/catalog`
 page reads this repository's `catalog.json`, verifies every file hash, and can
 install or update packages directly into `~/.bone/plugins`. Every package is a normal Bone 3
-plugin and may contain a `core.lua` half, a `tui.lua` half, shared `lua/`
+plugin and may contain a `core.lua` half, a `ui.lua` half (the TUI and the GUI),
+a frontend file (`tui.lua` or `gui.lua`), shared `lua/`
 modules, colors, documentation, and tests. Packages are installed by copying
 their directory to `~/.bone/plugins/<name>`; the runtime's `/plugin` command
 then controls loading and unloading.

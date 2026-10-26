@@ -1,0 +1,4 @@
+-- The desktop app already provides /term, ctrl+] / ctrl+5 and panel
+-- terminals through runtime/lua/bone/terminal.lua (see runtime/lua/bone/gui.lua).
+-- This plugin's terminal renderer is the terminal UI's. Loading it here
+-- would replace the desktop commands and panels, so the GUI half does nothing.

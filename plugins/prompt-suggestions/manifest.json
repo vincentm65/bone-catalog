@@ -1,6 +1,6 @@
 {
-  "version": "1.1.1",
-  "description": "Grey next-prompt predictions with configurable provider and model; Tab accepts, Escape dismisses",
+  "version": "1.1.2",
+  "description": "Next-prompt predictions in the terminal and desktop composer; Tab or Accept accepts, Escape or Dismiss dismisses",
   "min_bone_version": "3.0.2",
   "capabilities": ["ui", "model"],
   "title": "Prompt Suggestions",

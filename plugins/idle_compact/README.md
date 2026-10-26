@@ -8,7 +8,7 @@ It compacts a chat only when all of these hold:
 
 - your last message went to it (chats you left for another one are never
   compacted, however old they get);
-- it is still open in the TUI and no turn is running;
+- it is still open in this frontend and no turn is running;
 - nothing happened in it for **45 minutes** (your message or a reply);
 - its last turn sent at least **50k tokens** of context;
 - it has not already been compacted since it was last used.
@@ -20,4 +20,4 @@ Compaction is the core's `session/compact`: the transcript is kept, only
 what later model calls send is summarized.
 
 - core half: no
-- TUI half: yes
+- TUI and GUI: yes

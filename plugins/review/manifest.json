@@ -1,1 +1,12 @@
-{"title":"Review","version":"2.0.0","description":"Submit verification-first Git reviews of unstaged/untracked or branch changes with bounded turn-only context and selectable effort","capabilities":["hooks","system","command","prompt","action"]}
+{
+  "title": "Review",
+  "version": "2.0.1",
+  "description": "Submit verification-first Git reviews of unstaged/untracked or branch changes with bounded turn-only context and selectable effort",
+  "capabilities": [
+    "hooks",
+    "system",
+    "command",
+    "prompt",
+    "action"
+  ]
+}

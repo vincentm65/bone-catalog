@@ -26,7 +26,7 @@ bone = {
     return job
   end },
 }
-dofile("plugins/shell/tui.lua")
+dofile("plugins/shell/ui.lua")
 local function submit(text, images) return events.submit({ text = text, images = images }) end
 local function contains(text, part) return text:find(part, 1, true) ~= nil end
 assert(submit("hello") == nil)

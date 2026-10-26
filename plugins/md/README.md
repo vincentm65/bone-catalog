@@ -25,6 +25,8 @@ python3 install.py md
 - `enter` focuses the reader. `tab`/`shift+tab` switch panes.
 - In the reader, navigation keys scroll and `space` pages down.
 - `ctrl+r` rescans and reloads the selected file; `esc` closes the popup.
+- In the desktop app, click a file to open it, **Files** or **Preview** to switch
+  panes, and **Refresh** or **Close**. Typing still filters when the file pane is active.
 
 Reading positions are remembered while the popup remains open. Narrow terminals
 show only the active pane. The preview reuses Bone's Markdown renderer, including

@@ -32,7 +32,7 @@ bone = {
   },
   notify = function(text) error(text) end,
 }
-dofile("plugins/usage/tui.lua")
+dofile("plugins/usage/ui.lua")
 assert(commands.usage == commands.stats)
 commands.usage({ args = "week" })
 assert(#requests == 9)

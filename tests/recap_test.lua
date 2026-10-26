@@ -21,11 +21,12 @@ local function fixture(settings)
     on = function(event, fn) f.events[event] = fn end,
     defer = function(ms, fn) f.timers[#f.timers + 1] = { ms = ms, run = fn } end,
     notify = function(message) error(message) end,
+    plugin = { on_shutdown = function() end },
   }
   function f.finish(status)
     f.events["turn/finished"]({ outcome = { status = status or "completed" } })
   end
-  dofile("plugins/recap/tui.lua")
+  dofile("plugins/recap/ui.lua")
   return f
 end
 

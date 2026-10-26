@@ -32,16 +32,19 @@ It ends when:
 - a continuation turn makes no tool calls (no progress);
 - you stop it, or a turn fails.
 
-There is no turn limit. A band under the chat shows the running goal:
+There is no turn limit. In the terminal and the desktop app, a band under
+the chat shows the running goal:
 `◎ make the parser tests pass  turn 7  12m`.
+It redraws every 30 seconds while the goal is running. The band does not
+take the pointer.
 
 ## Isolation
 
 One core hook (`turn_end`), which returns at once for sessions without a
 goal. No tools and no system prompt changes, so other sessions are
 untouched and the prompt cache is never invalidated: a goal only appends
-messages to its own chat. The TUI asks about sessions with a goal only and
-overrides nothing.
+messages to its own chat. The terminal and the desktop app ask about sessions with a goal only and
+override nothing.
 
 Running goals are kept in `~/.bone/state/core/goal.json`, which is removed
 when the last one ends. A goal survives a reload (`/plugins reload`,

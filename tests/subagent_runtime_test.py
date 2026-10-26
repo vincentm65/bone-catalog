@@ -250,7 +250,7 @@ def main():
             config = Path(raw) / "config"
             plugin = config / "plugins/subagent"
             plugin.mkdir(parents=True)
-            for name in ("core.lua", "tui.lua", "manifest.json"):
+            for name in ("core.lua", "ui.lua", "manifest.json"):
                 shutil.copy2(ROOT / "plugins/subagent" / name, plugin / name)
             cwd = Path(raw) / "work"
             cwd.mkdir()
