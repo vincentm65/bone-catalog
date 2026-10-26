@@ -6,7 +6,6 @@ Lua runtime.
 | Package | Bone 3 entry points | Notes |
 | --- | --- | --- |
 | `ask_user` | `core.lua`, `ui.lua`, `tui.lua`, `gui.lua` | Uses `bone.ask`; the terminal asks in the input field, the desktop app in a modal. |
-| `cron` | `core.lua` | Requires `BONE3_CRON_COMMAND` when the default headless launcher is not suitable. |
 | `history` | `ui.lua` | Alias around the built-in session picker. |
 | `mcp` | copied native example | Uses Bone 3's MCP manager rather than the old one-shot client. |
 | `recap` | `ui.lua` | Runs a model call outside the session and adds a local chat item. |

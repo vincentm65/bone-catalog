@@ -217,33 +217,6 @@
     ]
   },
   {
-    "name": "cron",
-    "title": "Cron",
-    "kind": "plugin",
-    "version": "1.0.0",
-    "description": "Manage Bone 3 recurring crontab jobs",
-    "min_bone_version": "0.1.0",
-    "capabilities": [
-      "tool",
-      "shell",
-      "persistent-jobs"
-    ],
-    "files": [
-      {
-        "path": "README.md",
-        "sha256": "2f67a5e857c6abefedc82f9d942d881a4301b18b4f1dad91f1c3efced5589f7b"
-      },
-      {
-        "path": "core.lua",
-        "sha256": "f20de09169512e7ac6fc18c953a7a1fa02cfbaed48a5df23940c6421586bd5d6"
-      },
-      {
-        "path": "manifest.json",
-        "sha256": "7d8af3a194d463cdb52c1087ccb7e892a57edac5e667ee429eaa835dcd06b684"
-      }
-    ]
-  },
-  {
     "name": "fork",
     "title": "Fork",
     "kind": "plugin",
