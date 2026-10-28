@@ -832,6 +832,40 @@
     ]
   },
   {
+    "name": "toolstrip",
+    "title": "Toolstrip",
+    "kind": "plugin",
+    "version": "1.1.1",
+    "description": "Show duration-weighted tool timelines consistently in the TUI and GUI",
+    "min_bone_version": "3.0.3",
+    "capabilities": [
+      "tui",
+      "gui"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "96233afac980ea988ab2d49cd7e335414376c7023c171721ba213b556c1a3212"
+      },
+      {
+        "path": "gui.lua",
+        "sha256": "ae55a23126f6892a79cd6e77462e92536c9a1bb11857e9536e2e528d97972a2a"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "780af4fde86b0b117788ba8bfa033d492267215decce830468f13ddb0741cd7f"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "4900bd11f924c8d26f209a8c6622be2c7b420d38d06f155986b38dada5055601"
+      },
+      {
+        "path": "ui.lua",
+        "sha256": "31416ea8ecde0a86833a4f5f370fed579444f311279e543a528e2217c59dc59a"
+      }
+    ]
+  },
+  {
     "name": "usage",
     "title": "Usage",
     "kind": "plugin",

@@ -31,6 +31,7 @@ TITLES = {
     "term": "Terminal",
     "themes": "Themes",
     "todo": "Todo",
+    "toolstrip": "Toolstrip",
     "usage": "Usage",
     "web_search": "Web Search",
     "windows": "Windows",
