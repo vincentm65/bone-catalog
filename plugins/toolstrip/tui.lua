@@ -644,9 +644,10 @@ bone.on("mouse", function(ev)
     -- Off the segments (the indent or the duration) folds an earlier turn again.
     open_turns[key] = nil
   end
-  -- The TUI renderer keeps the current item/line anchored while chat rows are
-  -- rebuilt. Do not scroll_to here: it changes the user's viewport (and used
-  -- to make opening a historical bar jump to the current turn).
+  -- Stop following the end without moving: the chat then holds the row at
+  -- the top while the turn opens or folds below it, so the clicked row
+  -- stays put instead of the view staying at the bottom.
+  bone.chat.scroll(0)
   bone.chat.redraw()
   return true
 end)

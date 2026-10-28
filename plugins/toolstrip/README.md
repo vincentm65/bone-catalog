@@ -14,7 +14,8 @@ the selected tool.
 The TUI draws a bar under each user message and folds earlier turns into one
 row: the message and its bar. Click a folded row to open the turn; on an open
 bar, click a segment to select it, and click off the segments (the indent or
-the duration) to fold an earlier turn again. While a turn runs, a live bar
+the duration) to fold an earlier turn again. Opening or folding a turn keeps
+the view where it is, even at the end of the chat. While a turn runs, a live bar
 sits above the prompt; clicking a segment there selects it, shows its label,
 and centers the corresponding chat item. Both sides keep working with old
 sessions that do not have persisted tool timings.
