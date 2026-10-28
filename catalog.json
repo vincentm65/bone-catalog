@@ -835,8 +835,8 @@
     "name": "toolstrip",
     "title": "Toolstrip",
     "kind": "plugin",
-    "version": "1.1.5",
-    "description": "Show duration-weighted tool timelines consistently in the TUI and GUI",
+    "version": "1.1.6",
+    "description": "Show tool timelines consistently in the TUI and GUI; history uses equal-width segments",
     "min_bone_version": "3.0.3",
     "capabilities": [
       "tui",
@@ -845,7 +845,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "c635d76fa0d7c8f12477bb48cb25c64a92d2681a86dfaa6b67eeef25735378fe"
+        "sha256": "403198da03e0146a01faacd578ec1777433a5a753551e7a5d6b2684ae150ef20"
       },
       {
         "path": "gui.lua",
@@ -853,15 +853,15 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "ec93ccadcaf97cfbd3a52e7c333d9c5eee87fa07c4dc1f28c13ed206cd4010e5"
+        "sha256": "484860f31d25e8485f46e061d3e3cba897517323a15d40398316068ebb462e28"
       },
       {
         "path": "tui.lua",
-        "sha256": "1bfa2719c24048ea8fb4f1d4758e8f4a1106d21ab8bb735db32bd69ee1b9770d"
+        "sha256": "a8b29b43ceab9e7ba60b8d4d719d07e6024dbae7fc488e7797e8fcab0d7146d5"
       },
       {
         "path": "ui.lua",
-        "sha256": "31416ea8ecde0a86833a4f5f370fed579444f311279e543a528e2217c59dc59a"
+        "sha256": "29b40782bbaa6301c0c2bede525172a1be1e105873049f109048d34a692c14f3"
       }
     ]
   },

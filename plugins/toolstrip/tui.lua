@@ -263,7 +263,9 @@ local function layout_segments(width, right_width, now)
   local usable = math.max(#list, cells - gap * (#list - 1))
   local total = 0
   for _, seg in ipairs(list) do
-    seg.weight = seg.duration
+    -- A completed turn is history. Its persisted timings are useful in the
+    -- labels, but should not make old bars look like duration charts.
+    seg.weight = cached.running and seg.duration or 1
     total = total + seg.weight
   end
   if total <= 0 then total = #list end
@@ -543,7 +545,9 @@ local function bar_line(s, turn, width, item_index)
 
   local spans, mapped, edge, acc = {}, {}, 0, 0
   for i, seg in ipairs(list) do
-    acc = acc + math.max(seg.duration, 1)
+    -- Historical bars use one share per segment; only the live turn is
+    -- duration-weighted.
+    acc = acc + (running and math.max(seg.duration, 1) or 1)
     local to = i == #list and cells or math.floor(acc / sum * cells + 0.5)
     to = math.min(math.max(to, edge + 1), cells - (#list - i))
     seg.width = math.max(1, to - edge)

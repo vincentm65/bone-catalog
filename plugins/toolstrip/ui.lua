@@ -8,7 +8,7 @@ local function define(name, default, opts)
 end
 
 define("tool_strip", true, {
-  desc = "show the duration-weighted tool timeline",
+  desc = "show the tool timeline; history uses equal-width segments",
   on_change = function() bone.ui.refresh() end,
 })
 define("fold_turns", true, {

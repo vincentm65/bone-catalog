@@ -1,6 +1,6 @@
 # Toolstrip
 
-Toolstrip is the shared duration-weighted tool timeline for the TUI and GUI.
+Toolstrip is the shared tool timeline for the TUI and GUI. Live turns are duration-weighted; historical turns use equal-width segments.
 Both frontends use the same timing data, segment categories, running/waiting/
 failure states, and navigation behavior. Each frontend renders it in its own
 native way: terminal blocks in the TUI and the proportional node bar in the
