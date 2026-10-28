@@ -48,9 +48,37 @@ local function id_of(v)
   return v == nil and nil or tostring(v)
 end
 
+-- Turn `n` of chat `s` (bone.chat.session()), or nil. It reads only that
+-- turn's messages and calls: bone.chat.turns() would make a chat view
+-- depend on every item, so each streamed word would draw every view again,
+-- and each of those would build every turn again.
+local function turn_of(s, n)
+  n = tonumber(n)
+  if not s or not n or n < 1 then return nil end
+  local sid = s.session_id
+  local user = bone.chat.items({ kind = "user", turn = n, session = sid })[1]
+  if not user then return nil end
+  local last = s.items
+  if n < (s.turns or 0) then
+    local after = bone.chat.items({ kind = "user", turn = n + 1, session = sid })[1]
+    last = after and after.index - 1 or last
+  end
+  return {
+    index = n, first = user.index, last = last, running = n == s.turns and s.running == true,
+  }
+end
+
+-- The turn chat item `item` belongs to: views get no `turn`, so ask for the
+-- item itself (a query that depends on that item alone).
+local function turn_number(item)
+  if not item then return nil end
+  if item.turn then return tonumber(item.turn) end
+  local found = item.index and bone.chat.items({ from = item.index, to = item.index })[1]
+  return found and tonumber(found.turn)
+end
+
 local function current_turn(s)
-  local turns = bone.chat.turns({ session = s and s.session_id }) or {}
-  return turns[#turns], s and s.session_id
+  return s and turn_of(s, s.turns), s and s.session_id
 end
 
 local function record(sid, id)
@@ -136,7 +164,7 @@ local function build()
   if displayed_turn ~= turn_key then
     displayed_turn, selected, selected_label = turn_key, nil, nil
   end
-  local calls = bone.chat.items({ kind = "tool", from = turn.first, to = turn.last, session = sid }) or {}
+  local calls = bone.chat.items({ kind = "tool", turn = turn.index, session = sid }) or {}
   local first_at, last_at
   for _, call in ipairs(calls) do
     local ran_at = tonumber(call.started_at)
@@ -419,52 +447,30 @@ end
 -- fill items, so a malformed bar can never turn into a full-screen region.
 local open_turns, base_views, view_hits = {}, {}, {}
 
-local function turn_for(s, n)
-  n = tonumber(n)
-  if not s or not n or n <= 0 then return nil end
-  for _, turn in ipairs(bone.chat.turns({ session = s.session_id }) or {}) do
-    if tonumber(turn.index) == n then return turn end
-  end
-end
-
 local function turn_key(turn)
   local s = bone.chat.session()
   return (s and s.session_id or "") .. ":" .. tostring(turn and turn.index or "")
 end
 
 local function turn_for_item(s, item)
-  local direct = turn_for(s, item and item.turn)
-  if direct then return direct end
-  if not s or not item or not item.index then return nil end
-  for _, turn in ipairs(bone.chat.turns({ session = s.session_id }) or {}) do
-    if turn.first and turn.last and item.index >= turn.first and item.index <= turn.last then
-      return turn
-    end
-  end
+  return turn_of(s, turn_number(item))
 end
 
 local function folded(item)
   if bone.o.fold_turns == false then return false end
   local s = bone.chat.session()
-  local turn = turn_for_item(s, item)
-  if not turn then return false end
-  local turns = bone.chat.turns({ session = s and s.session_id }) or {}
-  local last = tonumber(s and s.turns) or (#turns > 0 and tonumber(turns[#turns].index) or 0)
-  local n = tonumber(turn.index)
-  return n and n < last and not open_turns[turn_key(turn)] or false
+  local n = s and turn_number(item)
+  if not n then return false end
+  return n < (tonumber(s.turns) or 0) and not open_turns[turn_key({ index = n })]
 end
 
 local function turn_segments(s, turn)
   if not s or not turn or not turn.first or not turn.last then return nil end
-  local calls = (turn.tools or 0) > 0 and bone.chat.items({
-    kind = "tool", from = turn.first, to = turn.last, session = s.session_id,
-  }) or {}
+  local calls = bone.chat.items({ kind = "tool", turn = turn.index, session = s.session_id }) or {}
   -- The clock is per session and only ever times its latest turn; chat turns
   -- carry no id, so an earlier turn must not borrow it.
-  local turns = bone.chat.turns({ session = s.session_id }) or {}
-  local latest = turns[#turns]
   local now = bone.now()
-  local clock = latest and latest.index == turn.index and times[s.session_id] or nil
+  local clock = turn.index == s.turns and times[s.session_id] or nil
   local first_at, last_at
   for _, call in ipairs(calls) do
     local ran = tonumber(call.started_at)
@@ -620,10 +626,38 @@ local function install_inline_views()
 end
 
 install_inline_views()
-bone.on("turn/started", function() view_hits = {}; bone.chat.redraw() end)
-bone.on("turn/finished", function() view_hits = {}; bone.chat.redraw() end)
-bone.on("tool/started", function() bone.chat.redraw() end)
-bone.on("tool/finished", function() bone.chat.redraw() end)
+
+-- Draw turn `n` again: all its items (`whole`, it opens or folds), else its
+-- message, which carries the bar. Views read their own turn's calls, so a
+-- call starting or finishing draws only that turn again by itself.
+local function redraw_turn(n, whole)
+  local turn = turn_of(bone.chat.session(), n)
+  if not turn then return end
+  for i = turn.first, whole and turn.last or turn.first do bone.chat.redraw(i) end
+end
+
+-- A turn starting folds the one before it, and one finishing stops its
+-- clock: those two turns are drawn again, not the whole transcript.
+local function redraw_recent()
+  local s = bone.chat.session()
+  if not s or not s.turns then return end
+  redraw_turn(s.turns - 1, true)
+  redraw_turn(s.turns, true)
+end
+bone.on("turn/started", redraw_recent)
+bone.on("turn/finished", redraw_recent)
+
+-- The bar showing the selected segment, drawn again when it changes.
+local selected_turn
+local function pick(seg, turn)
+  local before = selected_turn
+  if seg then
+    selected, selected_label, selected_turn = seg.key, label_for(seg), turn
+  else
+    selected, selected_label, selected_turn = nil, nil, nil
+  end
+  if before and before ~= selected_turn then redraw_turn(before) end
+end
 bone.on("mouse", function(ev)
   if ev.action ~= "down" or ev.button ~= "left" or not ev.index then return end
   local hit = view_hits[ev.index]
@@ -632,14 +666,14 @@ bone.on("mouse", function(ev)
   for _, segment in ipairs(hit.segments or {}) do
     if ev.col >= segment.from and ev.col <= segment.to then chosen = segment.segment; break end
   end
-  local key = turn_key(hit.turn)
+  local key, n = turn_key(hit.turn), hit.turn.index
   if hit.folded then
     open_turns[key] = true
-    if chosen then selected, selected_label = chosen.key, label_for(chosen) end
+    if chosen then pick(chosen, n) end
   elseif chosen and selected == chosen.key then
-    selected, selected_label = nil, nil
+    pick(nil)
   elseif chosen then
-    selected, selected_label = chosen.key, label_for(chosen)
+    pick(chosen, n)
   else
     -- Off the segments (the indent or the duration) folds an earlier turn again.
     open_turns[key] = nil
@@ -648,7 +682,7 @@ bone.on("mouse", function(ev)
   -- the top while the turn opens or folds below it, so the clicked row
   -- stays put instead of the view staying at the bottom.
   bone.chat.scroll(0)
-  bone.chat.redraw()
+  redraw_turn(n, true)
   return true
 end)
 
@@ -662,12 +696,14 @@ bone.on("mouse", function(ev)
   for _, seg in ipairs(hits) do
     if ev.col >= seg.from and ev.col <= seg.to then hit = seg; break end
   end
-  if not hit then selected = nil; return true end
-  if selected == hit.key then
-    selected, selected_label = nil, nil
+  local n = cached and cached.turn and cached.turn.index
+  if not hit or selected == hit.key then
+    pick(nil)
+    redraw_turn(n)
     return true
   end
-  selected, selected_label = hit.key, label_for(hit)
+  pick(hit, n)
+  redraw_turn(n)
   if hit.call then
     bone.chat.scroll_to(hit.call.index, "center")
   else
