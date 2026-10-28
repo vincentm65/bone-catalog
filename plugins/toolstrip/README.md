@@ -11,15 +11,16 @@ renderer: one bar under each open turn, folded rows for earlier turns, hover
 descriptions, glowing live segments, and clicks that open a turn and center
 the selected tool.
 
-The TUI draws a bar under each user message and folds earlier turns into one
-row: the message and its bar. Click a folded row to open the turn, and click
+The TUI draws the latest turn's bar above the prompt, running or finished,
+with how long the turn took. Once the next message is sent it moves into the
+chat: earlier turns fold into one row each, the message and its bar. Click a folded row to open the turn, and click
 an earlier turn's bar anywhere to fold it again; on the latest turn's bar, a
 click selects a segment. Opening or folding a turn keeps the view where it is,
 even at the end of the chat. Each turn's start and finish are saved, so a bar
 keeps its thinking time across restarts (turns from before that use the turn
-footers' saved times where there are some). While a turn runs, a live bar
-sits above the prompt; clicking a segment there selects it, shows its label,
-and centers the corresponding chat item. Both sides keep working with old
+footers' saved times where there are some). Clicking a segment of the bar
+above the prompt selects it, shows its label, and centers the corresponding
+chat item. Both sides keep working with old
 sessions that do not have persisted tool timings.
 
 Shared options:
@@ -30,7 +31,7 @@ Shared options:
 TUI settings are available under `/config`:
 
 - `toolstrip.label` (default `true`) shows the selected segment label on the
-  live bar.
+  bar above the prompt.
 
 The shared highlight groups are `ToolStripModel`, `ToolStripRead`,
 `ToolStripCommand`, `ToolStripEdit`, `ToolStripFail`, `ToolStripLive`,

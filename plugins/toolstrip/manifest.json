@@ -1,11 +1,19 @@
 {
   "title": "Toolstrip",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Show duration-weighted tool timelines consistently in the TUI and GUI",
   "min_bone_version": "3.0.3",
-  "capabilities": ["tui", "gui"],
+  "capabilities": [
+    "tui",
+    "gui"
+  ],
   "settings": [
-    { "key": "label", "label": "Show labels", "type": "boolean", "default": true,
-      "desc": "Show the selected segment label on the live bar" }
+    {
+      "key": "label",
+      "label": "Show labels",
+      "type": "boolean",
+      "default": true,
+      "desc": "Show the selected segment label on the bar above the prompt"
+    }
   ]
 }

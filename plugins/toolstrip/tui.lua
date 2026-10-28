@@ -339,19 +339,22 @@ end
 
 -- The live bar above the prompt; finished turns keep theirs under the user
 -- message instead.
+-- The latest turn's bar, above the prompt, running or finished; it moves
+-- into the chat under its message once the next message is sent.
 local function render_active(ctx)
   if bone.o.tool_strip == false then return nil end
   local session = bone.chat.session()
   local turn = current_turn(session)
   if not turn then return nil end
-  local running = turn.running == true or (session and session.running == true)
-  if not running then return nil end
   if dirty then build() end
   if not cached then return nil end
   local now = bone.now()
-  local label_enabled = bone.settings.get("toolstrip.label") ~= false
-  local right = label_enabled and selected and selected_label or ""
-  right = right or ""
+  local first = cached.segments[1]
+  local total = cached.running and first and first.start and now - first.start or cached.duration
+  local right = " " .. bone.util.duration(math.max(0, total or 0) / 1000)
+  if bone.settings.get("toolstrip.label") ~= false and selected and selected_label then
+    right = " " .. selected_label .. " ·" .. right
+  end
   local right_width = bone.strwidth(right)
   if right_width > math.max(0, ctx.width - 3) then
     right = bone.text.truncate(right, math.max(0, ctx.width - 3))
@@ -599,7 +602,8 @@ local function install_inline_views()
     if bone.o.tool_strip ~= false then
       local s = bone.chat.session()
       local turn = turn_for_item(s, item)
-      if s and turn then
+      -- The latest turn's bar is the one above the prompt.
+      if s and turn and turn.index < (tonumber(s.turns) or 0) then
         local bar = bar_line(s, turn, ctx.width, item.index)
         if bar then
           out[#out + 1] = bar
