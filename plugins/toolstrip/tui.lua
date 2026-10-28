@@ -1,6 +1,7 @@
 local ACTIVE_REGION = "toolstrip_active"
 local dirty, cached = true, nil
-local times, pending, asks, failures = {}, {}, {}, {}
+local pending, asks, failures = {}, {}, {}
+local turn_segments -- below, with the inline bars
 local selected, selected_label, hits, displayed_turn = nil, nil, {}, nil
 
 local groups = {
@@ -64,7 +65,8 @@ local function turn_of(s, n)
     last = after and after.index - 1 or last
   end
   return {
-    index = n, first = user.index, last = last, running = n == s.turns and s.running == true,
+    index = n, first = user.index, last = last, text = user.text,
+    running = n == s.turns and s.running == true,
   }
 end
 
@@ -81,30 +83,68 @@ local function current_turn(s)
   return s and turn_of(s, s.turns), s and s.session_id
 end
 
-local function record(sid, id)
-  if not sid then return nil end
-  local r = times[sid]
-  if not r or (id and r.id ~= id_of(id)) then
-    r = { id = id_of(id) }
-    times[sid] = r
+-- Each turn's clock, { started, finished }, by session and turn number,
+-- saved so a bar keeps the model's time before its first call and after its
+-- last across restarts. Turns timed before the plugin saved its own come
+-- from the turn footers' record (bone.timing), where there is one. A saved
+-- clock counts only for a turn with the same message: truncated history
+-- can reuse a number.
+local clocks, footers, active = {}, {}, {}
+
+local function load(name)
+  local ok, saved = pcall(bone.state.load, name)
+  return ok and type(saved) == "table" and saved or {}
+end
+
+local function clocks_of(sid)
+  if not clocks[sid] then
+    clocks[sid] = load("toolstrip-clock." .. sid).turns or {}
+    footers[sid] = load("standard-turn-timing." .. sid).turns or {}
   end
-  return r
+  return clocks[sid]
 end
 
-local function on_turn_started(ev)
-  local r = record(ev.session_id, ev.turn_id)
-  r.started, r.finished = bone.now(), nil
+local function clock_for(sid, turn)
+  local a = active[sid]
+  if a and a.turn == turn.index then return a end
+  local key = tostring(turn.index)
+  for _, saved in ipairs({ clocks_of(sid)[key] or false, footers[sid][key] or false }) do
+    if saved and saved.started and saved.text == turn.text then return saved end
+  end
+end
+
+-- The running turn of session `sid` starts its clock (once; on a restart
+-- mid-turn, from how long the core says it has run).
+local function start_clock(sid)
+  local s = sid and bone.chat.session({ session = sid })
+  if not s or not s.running or not s.turn then return end
+  local a = active[sid]
+  if a and a.id == s.turn.id then return end
+  local user = bone.chat.items({ session = sid, kind = "user", last = 1 })[1]
+  if not user then return end
+  active[sid] = {
+    id = s.turn.id, turn = tonumber(user.turn), text = user.text,
+    started = bone.now() - (tonumber(s.turn.elapsed_ms) or 0),
+  }
+end
+
+bone.on("turn/started", function(ev)
+  start_clock(ev.session_id)
   mark()
-end
-
-local function on_turn_finished(ev)
-  local r = record(ev.session_id, ev.turn_id)
-  r.finished = bone.now()
+end)
+bone.on("turn/finished", function(ev)
+  local sid, a = ev.session_id, active[ev.session_id]
+  if a and (a.id == nil or a.id == ev.turn_id) then
+    local saved = clocks_of(sid)
+    saved[tostring(a.turn)] = { text = a.text, started = a.started, finished = bone.now() }
+    pcall(bone.state.save, "toolstrip-clock." .. sid, { turns = saved })
+    active[sid] = nil
+  end
   mark()
-end
-
-bone.on("turn/started", on_turn_started)
-bone.on("turn/finished", on_turn_finished)
+end)
+bone.on("ready", function()
+  for _, s in ipairs(bone.chat.sessions()) do start_clock(s.session_id) end
+end)
 bone.on("tool/started", mark)
 bone.on("tool/finished", function(ev)
   if ev.call_id and ev.is_error then failures[id_of(ev.call_id)] = true end
@@ -127,7 +167,10 @@ bone.on("ask/resolved", function(ev)
   if ev.ask_id then asks[id_of(ev.ask_id)] = nil end
   mark()
 end)
-bone.on("chat/shown", mark)
+bone.on("chat/shown", function(ev)
+  start_clock(ev.session_id)
+  mark()
+end)
 
 local function kind_of(call, agents)
   local name = tostring(call.name or ""):lower()
@@ -159,67 +202,15 @@ local function build()
   cached = nil
   local session = bone.chat.session()
   local turn, sid = current_turn(session)
-  if not turn or not sid or not turn.first or not turn.last then return end
-  local turn_key = sid .. ":" .. tostring(turn.index or turn.first)
-  if displayed_turn ~= turn_key then
-    displayed_turn, selected, selected_label = turn_key, nil, nil
+  if not turn or not sid then return end
+  if turn.running then start_clock(sid) end
+  local key = sid .. ":" .. tostring(turn.index)
+  if displayed_turn ~= key then
+    displayed_turn, selected, selected_label = key, nil, nil
   end
-  local calls = bone.chat.items({ kind = "tool", turn = turn.index, session = sid }) or {}
-  local first_at, last_at
-  for _, call in ipairs(calls) do
-    local ran_at = tonumber(call.started_at)
-    -- A call's segment begins when the model began writing it (its reply's
-    -- first call carries that); its reasoning stays model time.
-    local at = ran_at and ran_at - (tonumber(call.generation_ms) or 0)
-    if at and (not first_at or at < first_at) then first_at = at end
-    local finish = ran_at and ran_at + (tonumber(call.duration_ms) or 0)
-    if finish and (not last_at or finish > last_at) then last_at = finish end
-  end
-
-  local running = turn.running == true or (session and session.running == true)
-  local r = times[sid]
-  if not r or (turn.id and r.id ~= id_of(turn.id)) then
-    r = record(sid, turn.id)
-  end
-  local now = bone.now()
-  local start = r.started
-  if running and not start and session.turn then
-    start = now - (tonumber(session.turn.elapsed_ms) or 0)
-  end
-  start = start or first_at
-  start = start or first_at or now
-  local finish = running and now or r.finished or last_at or start
-  if finish < start then finish = start end
-
-  local agents
-  local ok, module = pcall(require, "bone.agents")
-  if ok then agents = module end
-  local out, cursor, previous = {}, start, nil
-  for i, call in ipairs(calls) do
-    local ran_at = tonumber(call.started_at)
-    local at = ran_at and ran_at - (tonumber(call.generation_ms) or 0) or cursor
-    if at > cursor then
-      add_model(out, cursor, at, false, "model:" .. tostring(turn.index) .. ":" .. i, previous and previous + 1 or turn.first)
-    end
-    local duration = tonumber(call.duration_ms) or 0
-    local end_at = call.done and (ran_at or at) + duration or now
-    if end_at < at then end_at = at end
-    local kind = kind_of(call, agents)
-    local wait = not call.done and (pending[sid] or 0) > 0
-    out[#out + 1] = {
-      call = call, kind = wait and "wait" or kind, base_kind = kind, duration = math.max(0, end_at - at),
-      start = at, finish = end_at, live = not call.done, key = "call:" .. tostring(call.id or call.index),
-      scroll_index = call.index, previous = previous,
-    }
-    cursor = math.max(cursor, end_at)
-    previous = call.index
-  end
-  if finish > cursor then
-    add_model(out, cursor, finish, running, "model:" .. tostring(turn.index) .. ":tail", previous and previous + 1 or turn.first)
-  elseif #out == 0 then
-    add_model(out, start, finish, running, "model:" .. tostring(turn.index) .. ":only", turn.first)
-  end
-  cached = { segments = out, duration = math.max(0, finish - start), start = start, running = running, turn = turn }
+  local segments, total, running = turn_segments(session, turn)
+  if not segments then return end
+  cached = { segments = segments, duration = total, running = running, turn = turn }
 end
 
 local function merge(a, b)
@@ -464,13 +455,11 @@ local function folded(item)
   return n < (tonumber(s.turns) or 0) and not open_turns[turn_key({ index = n })]
 end
 
-local function turn_segments(s, turn)
+turn_segments = function(s, turn)
   if not s or not turn or not turn.first or not turn.last then return nil end
   local calls = bone.chat.items({ kind = "tool", turn = turn.index, session = s.session_id }) or {}
-  -- The clock is per session and only ever times its latest turn; chat turns
-  -- carry no id, so an earlier turn must not borrow it.
   local now = bone.now()
-  local clock = turn.index == s.turns and times[s.session_id] or nil
+  local clock = clock_for(s.session_id, turn)
   local first_at, last_at
   for _, call in ipairs(calls) do
     local ran = tonumber(call.started_at)
@@ -481,12 +470,15 @@ local function turn_segments(s, turn)
       last_at = last_at and math.max(last_at, finish) or finish
     end
   end
-  local running = turn.running == true or s.running == true
+  -- Only the turn running now is live: the session running says nothing
+  -- about the turns before it.
+  local running = turn.running == true
   local start = clock and clock.started
   if running and not start and s.turn then
     start = now - (tonumber(s.turn.elapsed_ms) or 0)
   end
-  start = start or first_at or now
+  -- A clock that starts after the first call is not this turn's.
+  if not start or (first_at and start > first_at) then start = first_at or now end
   local stop = running and now or (clock and clock.finished) or last_at or start
   if stop < start then stop = start end
 
@@ -514,6 +506,7 @@ local function turn_segments(s, turn)
     at = math.max(at, finish)
     previous = call.index
   end
+  if not running and stop < at then stop = at end
   if stop > at then
     add_model(out, at, stop, running, "model:" .. tostring(turn.index) .. ":tail",
       previous and previous + 1 or turn.first)
@@ -667,16 +660,17 @@ bone.on("mouse", function(ev)
     if ev.col >= segment.from and ev.col <= segment.to then chosen = segment.segment; break end
   end
   local key, n = turn_key(hit.turn), hit.turn.index
+  local s = bone.chat.session()
   if hit.folded then
     open_turns[key] = true
     if chosen then pick(chosen, n) end
+  elseif bone.o.fold_turns ~= false and s and n < (tonumber(s.turns) or 0) then
+    -- An earlier turn's bar folds it again, wherever it is clicked.
+    open_turns[key] = nil
   elseif chosen and selected == chosen.key then
     pick(nil)
   elseif chosen then
     pick(chosen, n)
-  else
-    -- Off the segments (the indent or the duration) folds an earlier turn again.
-    open_turns[key] = nil
   end
   -- Stop following the end without moving: the chat then holds the row at
   -- the top while the turn opens or folds below it, so the clicked row

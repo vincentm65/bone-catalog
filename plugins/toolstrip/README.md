@@ -12,10 +12,12 @@ descriptions, glowing live segments, and clicks that open a turn and center
 the selected tool.
 
 The TUI draws a bar under each user message and folds earlier turns into one
-row: the message and its bar. Click a folded row to open the turn; on an open
-bar, click a segment to select it, and click off the segments (the indent or
-the duration) to fold an earlier turn again. Opening or folding a turn keeps
-the view where it is, even at the end of the chat. While a turn runs, a live bar
+row: the message and its bar. Click a folded row to open the turn, and click
+an earlier turn's bar anywhere to fold it again; on the latest turn's bar, a
+click selects a segment. Opening or folding a turn keeps the view where it is,
+even at the end of the chat. Each turn's start and finish are saved, so a bar
+keeps its thinking time across restarts (turns from before that use the turn
+footers' saved times where there are some). While a turn runs, a live bar
 sits above the prompt; clicking a segment there selects it, shows its label,
 and centers the corresponding chat item. Both sides keep working with old
 sessions that do not have persisted tool timings.
