@@ -1,26 +1,9 @@
--- Desktop presentation. The composer does not read bone.ui.prompt or
--- bone.ui.prompt_highlight, so the prediction is a row above it. Tab and
--- Escape still go through bone.ui.actions; the row's controls are pointer
--- only and do not take keyboard focus (that would swallow editing keys).
+-- Desktop presentation. Show the prediction in the composer's native input:
+-- as its placeholder while empty, and as ghost text after a matching prefix.
+-- Tab and Escape still go through bone.ui.actions, so the suggestion never
+-- takes focus or adds controls above the composer.
 local core = require("prompt_suggestions")
 core.install()
-
-local SLOT = "prompt-suggestions"
-
-local function nodes_ok()
-  return type(bone.has_capability) == "function" and bone.has_capability("gui.nodes")
-      and type(bone.gui) == "table" and type(bone.gui.slots) == "table"
-      and type(bone.gui.slots.add) == "function" and type(bone.gui.slots.remove) == "function"
-end
-
-if not nodes_ok() then return end
-
-core.on_change = function()
-  if type(bone.gui.invalidate) == "function" then bone.gui.invalidate() end
-end
-
-local previous_complete, previous_dismiss
-local complete, dismiss
 
 local function prompt_focused()
   local keymap = bone.keymap
@@ -41,66 +24,68 @@ local function visible_ctx()
   return ctx
 end
 
-local function control(label, tooltip, click)
-  return {
-    text = label, label = label, tooltip = tooltip, role = "button",
-    hl = "Accent", size = 12, padding = { 2, 8 }, radius = 6,
-    cursor = "pointer", focusable = false, on_click = click,
-    hover = { bg = "Selection" },
-  }
+core.on_change = function()
+  if type(bone.gui.invalidate) == "function" then bone.gui.invalidate() end
 end
 
-local function suggesting()
-  return {
-    direction = "row", align = "center", gap = 8, focusable = false,
-    padding = { 2, 12, 4, 12 },
-    { text = "Suggesting a next prompt…", hl = "Dim", size = 12, grow = 1, wrap = false },
-    control("Dismiss", "Cancel the prediction (Esc)", function()
-      if core.pending() then core.clear() end
-    end),
-  }
-end
+local prompt, previous_placeholder, previous_highlight, previous_complete, previous_dismiss
+local placeholder, highlight, complete, dismiss
 
-local function row(ctx, rest)
-  local typed = ctx.text
-  local spans = typed ~= "" and {
-    { text = typed, hl = "Dim" }, { text = rest, hl = "Placeholder" },
-  } or { { text = core.suggestion(), hl = "Placeholder" } }
-  return {
-    direction = "row", align = "center", gap = 8, focusable = false,
-    padding = { 2, 12, 4, 12 },
-    tooltip = "Tab accepts the suggestion · Esc dismisses it",
-    { text = "Suggestion", hl = "Dim", size = 12, wrap = false },
-    { grow = 1, wrap = false, text_overflow = "ellipsis", spans = spans, size = 13 },
-    control("Accept", "Put the suggestion in the prompt (Tab)", function()
-      local info = bone.prompt.info()
-      info.focused = true
-      if core.suffix(info) then core.accept() end
-    end),
-    control("Dismiss", "Dismiss the suggestion (Esc)", function()
-      if core.pending() then core.clear() end
-    end),
-  }
-end
-
--- Same acceptance rules as the terminal, except there is no ghost text:
--- a matching prefix is visible in this row, so Tab accepts it.
+-- Preserve the final UI supplied by the user's ui.lua or gui.lua. Install
+-- again at ready because user config runs after plugins and may replace it.
 local function decorate()
-  if bone.ui.actions.complete ~= complete then
+  prompt = bone.ui.prompt or {}
+  bone.ui.prompt = prompt
+  if not placeholder or prompt.placeholder ~= placeholder then
+    local old = prompt.placeholder
+    previous_placeholder = old
+    placeholder = function(ctx)
+      local current = visible_ctx()
+      if current.text == "" and core.suffix(current) then
+        return { { core.suggestion(), "Placeholder" } }
+      end
+      if type(old) == "function" then return old(ctx) end
+      return old or {}
+    end
+    prompt.placeholder = placeholder
+  end
+  if not highlight or bone.ui.prompt_highlight ~= highlight then
+    local old = bone.ui.prompt_highlight
+    previous_highlight = old
+    highlight = function(ctx)
+      local original = old and old(ctx) or {}
+      local marks = {}
+      for key, value in pairs(original) do marks[key] = value end
+      local rest = core.suffix(ctx)
+      if rest and not marks.ghost then
+        marks.ghost, marks.ghost_hl = rest, "Placeholder"
+      end
+      return marks
+    end
+    bone.ui.prompt_highlight = highlight
+  end
+  if not complete or bone.ui.actions.complete ~= complete then
     local old = bone.ui.actions.complete
     previous_complete = old
     complete = function()
       local ctx = bone.prompt.info()
       ctx.focused = true -- action is routed to the prompt, not a focused node
-      if not core.suffix(ctx) then return old and old() or false end
-      return core.accept()
+      local rest = core.suffix(ctx)
+      local visible = ctx.text == ""
+      if rest and not visible and bone.ui.prompt_highlight then
+        local marks = bone.ui.prompt_highlight(ctx) or {}
+        visible = marks.ghost == rest
+      end
+      if rest and visible then return core.accept() end
+      return old and old() or false
     end
     bone.ui.actions.complete = complete
   end
-  if bone.ui.actions.dismiss ~= dismiss then
+  if not dismiss or bone.ui.actions.dismiss ~= dismiss then
     local old = bone.ui.actions.dismiss
     previous_dismiss = old
     dismiss = function()
+      -- Slash-menu and other UI handlers keep their precedence.
       if old and old() then return true end
       if core.pending() then
         core.clear()
@@ -115,21 +100,10 @@ end
 decorate()
 bone.on("ready", decorate)
 
-bone.gui.slots.add("composer.above", {
-  id = SLOT,
-  node = function(slot_ctx)
-    -- Background composers (another tiled chat) are not the prompt on screen.
-    if type(slot_ctx) == "table" and slot_ctx.chat then return nil end
-    local ctx = visible_ctx()
-    local rest = core.suffix(ctx)
-    if rest then return row(ctx, rest) end
-    if ctx.text == "" and core.pending() and core.allows(ctx) then return suggesting() end
-  end,
-})
-
 bone.plugin.on_shutdown(function()
   core.on_change = nil
-  bone.gui.slots.remove("composer.above", SLOT)
+  if prompt and prompt.placeholder == placeholder then prompt.placeholder = previous_placeholder end
+  if bone.ui.prompt_highlight == highlight then bone.ui.prompt_highlight = previous_highlight end
   if bone.ui.actions.complete == complete then bone.ui.actions.complete = previous_complete end
   if bone.ui.actions.dismiss == dismiss then bone.ui.actions.dismiss = previous_dismiss end
 end)

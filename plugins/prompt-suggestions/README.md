@@ -1,26 +1,18 @@
 # Prompt Suggestions
 
-Next-prompt predictions after a successful reply. The terminal shows one in
-grey in the prompt. The desktop app shows it in a row just above the composer.
-Either way this plugin makes one separate, tool-free model call, and the
-prediction never enters the transcript or the actual draft until you accept it.
+Next-prompt predictions after a successful reply. The terminal and desktop app
+show the prediction as placeholder or ghost text in the composer. Either way
+this plugin makes one separate, tool-free model call, and the prediction never
+enters the transcript or the actual draft until you accept it.
 
 ## Use
 
 - **Tab** accepts the visible prediction into your draft; **Enter** then sends it.
-  In the desktop app, **Accept** does the same thing.
 - **Escape** dismisses a prediction or cancels one still being generated.
-  In the desktop app, **Dismiss** does the same thing. Those controls are not
-  keyboard targets, so arrows, typing, and the other editing keys stay in the
-  composer. Tab and Escape keep their usual prompt actions.
-- Typing a matching prefix shows the remaining text in grey (terminal) or after
-  the typed prefix in the row (desktop). Diverging text, slash commands,
-  selections, an unfocused prompt, and a cursor away from the end hide the
-  prediction. Normal command completion is preserved. A background chat's
-  composer does not show the row.
-- While a prediction is still being requested and the composer is empty, the
-  desktop row says so and **Dismiss** cancels it. The terminal has no extra
-  row; Escape cancels the request there too.
+- Typing a matching prefix shows the remaining text in grey after the typed
+  prefix. Diverging text, slash commands, selections, an unfocused prompt, and
+  a cursor away from the end hide the prediction. Normal command completion is
+  preserved.
 - Starting a turn, switching chats, changing settings, or unloading the plugin
   clears the prediction and invalidates pending results.
 

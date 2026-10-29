@@ -457,6 +457,16 @@ function M.new(fe)
     changing(function()
       if W.panel_win(bone.ui.panel.focused()) then bone.ui.panel.focus(nil) end
     end)
+    -- A chat change can be triggered by /new while the old pane's native
+    -- editor still owns egui's keyboard. The new pane is the active chat,
+    -- so explicitly return focus to its prompt in the desktop UI. Only a
+    -- chat's editor gives it up: the sidebar's search, arrowing through
+    -- chats, keeps the keys.
+    local held = bone.gui and bone.gui.focused and bone.gui.focused()
+    if bone.gui and bone.gui.focus
+      and (not held or held:match("^composer%-input") or held:match("^prompt:")) then
+      bone.gui.focus(nil)
+    end
     apply()
   end)
 

@@ -445,90 +445,83 @@ local function controls(node, out)
 end
 local function joined(node) return table.concat(node_texts(node), "|") end
 
-test("gui does not wrap the prompt and shows the suggestion above the composer", function()
-  local m = mock("gui"); m.b.ui.prompt_highlight = function() error("prompt_highlight") end
-  eq(m.slot_adds, 1); eq(m.slots["composer.above"][1].id, "prompt-suggestions")
-  eq(m.slots["composer.below"], nil); eq(m.b.ui.prompt.placeholder, m.original.placeholder)
+test("gui shows the suggestion in the input placeholder without adding controls", function()
+  local m = mock("gui")
+  eq(m.slot_adds, 0); eq(m.b.ui.prompt.placeholder ~= m.original.placeholder, true)
   m:predict(); eq(m.invalidations > 0, true, "invalidate when the suggestion changes")
-  local row = m:row(); eq(joined(row), "Suggestion|Run the tests|Accept|Dismiss")
-  for _, node in ipairs(controls(row)) do
-    eq(node.focusable, false, "pointer control must not take the prompt keyboard")
-    eq(node.on_key, nil, "no key hook")
-  end
-  eq(m.input.text, ""); eq(#m.sets, 0); eq(m.submits, 0)
-  find_control(row, "Accept").on_click(); eq(m.sets[1], "Run the tests"); eq(m.submits, 0); eq(m:row(), nil)
-  eq(m.b.ui.actions.complete(), "fallback"); eq(m.complete_calls, 1)
+  eq(m:placeholder()[1][1], "Run the tests"); eq(m:placeholder()[1][2], "Placeholder")
+  eq(m:row(), nil); eq(m.input.text, ""); eq(#m.sets, 0); eq(m.submits, 0)
+  eq(m.b.ui.actions.complete(), true, "tab"); eq(m.sets[1], "Run the tests"); eq(m.submits, 0)
 end)
-test("gui Tab accepts a prefix without ghost text; click and Escape dismiss", function()
-  local m = mock("gui"); m:predict(); m.input = ctx("Run", { focused = false })
-  eq(joined(m:row()), "Suggestion|Run| the tests|Accept|Dismiss")
-  eq(m.b.ui.actions.complete(), true, "tab"); eq(m.sets[1], "Run the tests", "accepted")
-  eq(m.submits, 0, "no submit"); eq(m.complete_calls, 0, "no fallback")
-  m.input = ctx(""); m:predict(); m.dismiss_handled = true
-  eq(m.b.ui.actions.dismiss(), true, "menu dismiss"); eq(joined(m:row()):find("Run the tests", 1, true) ~= nil, true, "kept")
-  m.dismiss_handled = false; eq(m.b.ui.actions.dismiss(), true, "our dismiss"); eq(m:row(), nil)
-  eq(m.b.ui.actions.dismiss(), false, "nothing left"); eq(m.dismiss_calls, 3, "dismiss calls")
-  m:predict(); local sets = #m.sets
-  find_control(m:row(), "Dismiss").on_click(); eq(#m.sets, sets, "click does not edit"); eq(m:row(), nil)
+test("gui shows a matching suffix as ghost text and Tab accepts it", function()
+  local m = mock("gui"); m:predict(); m.input = ctx("Run")
+  eq(m:ghost(), " the tests"); eq(m:placeholder()[1][1], "Original placeholder")
+  eq(m.b.ui.actions.complete(), true, "tab"); eq(m.sets[1], "Run the tests")
+  eq(m.submits, 0); eq(m.complete_calls, 0)
 end)
-test("gui hides the row the way the terminal hides ghost text", function()
+test("gui hides the placeholder and ghost when the input is ineligible", function()
   local m = mock("gui"); m:predict()
-  m.input = ctx("Other"); eq(m:row(), nil); eq(m.b.ui.actions.complete(), "fallback"); eq(#m.sets, 0)
-  m.input = ctx("Run"); eq(m:row() ~= nil, true)
   for _, hidden in ipairs({
-    ctx("Run", { cursor = { row = 0, col = 1 } }), ctx("Run", { selection = { text = "Run" } }),
+    ctx("Other"), ctx("Run", { cursor = { row = 0, col = 1 } }), ctx("Run", { selection = { text = "Run" } }),
     ctx("Run\n"), ctx("/help"), ctx("Run the tests"),
-  }) do m.input = hidden; eq(m:row(), nil, "hidden") end
-  m.input = ctx(""); m.context = "popup"; eq(m:row(), nil)
-  m.context = "main"; m.panel_focus = "term"; eq(m:row(), nil)
-  m.panel_focus = nil; m.node_focus = "search"; eq(m:row(), nil)
-  m.node_focus = nil; eq(m:row({ chat = 2 }), nil); eq(m:row({}) ~= nil, true)
+  }) do
+    m.input = hidden; eq(m:ghost(), nil, "hidden ghost")
+    eq(m:placeholder()[1][1], "Original placeholder", "hidden placeholder")
+  end
+  m.input = ctx(""); m.context = "popup"; eq(m:placeholder()[1][1], "Original placeholder")
+  m.context = "main"; m.panel_focus = "term"; eq(m:placeholder()[1][1], "Original placeholder")
+  m.panel_focus = nil; m.node_focus = "search"; eq(m:placeholder()[1][1], "Original placeholder")
 end)
-test("gui in-flight row can cancel, and a late result stays hidden", function()
-  local m = mock("gui"); m:finish(); local row = m:row()
-  eq(joined(row), "Suggesting a next prompt…|Dismiss"); eq(find_control(row, "Accept"), nil)
-  find_control(row, "Dismiss").on_click(); m:deliver_messages(); eq(#m.calls, 0); eq(m:row(), nil)
-  m:finish(); m:deliver_messages(); eq(find_control(m:row(), "Accept"), nil)
-  find_control(m:row(), "Dismiss").on_click(); eq(m.calls[1].cancels, 1)
-  m:deliver({ content = "Stale prediction" }); m:deliver(nil, "late error"); eq(m:row(), nil); eq(#m.notices, 0)
+test("gui Escape dismisses an in-flight or ready prediction", function()
+  local m = mock("gui"); m:finish()
+  eq(m:placeholder()[1][1], "Original placeholder")
+  eq(m.b.ui.actions.dismiss(), true); m:deliver_messages(); eq(#m.calls, 0)
+  m:predict(); m.dismiss_handled = true
+  eq(m.b.ui.actions.dismiss(), true, "existing handler"); eq(m:ghost(ctx("Run")), " the tests")
+  m.dismiss_handled = false; eq(m.b.ui.actions.dismiss(), true); eq(m:ghost(ctx("Run")), nil)
+  eq(m.b.ui.actions.dismiss(), false); eq(m.dismiss_calls, 4)
 end)
 test("gui unicode prefix accepts like the terminal", function()
   local m = mock("gui"); m:predict("修复é🙂 tests")
-  m.input = ctx("修复é🙂"); eq(joined(m:row()), "Suggestion|修复é🙂| tests|Accept|Dismiss")
-  find_control(m:row(), "Accept").on_click(); eq(m.sets[1], "修复é🙂 tests"); eq(m.submits, 0)
+  m.input = ctx("修复é🙂"); eq(m:ghost(), " tests")
+  eq(m.b.ui.actions.complete(), true); eq(m.sets[1], "修复é🙂 tests"); eq(m.submits, 0)
 end)
-test("gui ready rewraps actions without touching the prompt or stacking slots", function()
+test("gui ready rewraps the prompt and actions without stacking hooks", function()
   local m = mock("gui"); local wrapped = m.b.ui.actions.complete
-  m:emit("ready"); eq(m.b.ui.actions.complete, wrapped); eq(m.slot_adds, 1)
-  eq(m.b.ui.prompt.placeholder, m.original.placeholder); eq(m.b.ui.prompt_highlight, m.original.highlight)
-  local replacement_complete = function() return "replacement complete" end
-  local replacement_dismiss = function() return false end
-  m.b.ui.actions.complete = replacement_complete
-  m.b.ui.actions.dismiss = replacement_dismiss
-  m:emit("ready"); m:predict(); m.input = ctx("Other")
+  m:emit("ready"); eq(m.b.ui.actions.complete, wrapped); eq(m.slot_adds, 0)
+  local replacement = {
+    placeholder = { { "Replacement placeholder", "Replacement" } },
+    highlight = function() return { ghost = "replacement ghost", ghost_hl = "Replacement" } end,
+    complete = function() return "replacement complete" end, dismiss = function() return false end,
+  }
+  m.b.ui.prompt = { placeholder = replacement.placeholder, custom = 42 }
+  m.b.ui.prompt_highlight = replacement.highlight; m.b.ui.actions.complete = replacement.complete
+  m.b.ui.actions.dismiss = replacement.dismiss
+  m:emit("ready"); local decorated = m.b.ui.prompt.placeholder; m:emit("ready")
+  eq(m.b.ui.prompt.placeholder, decorated); eq(m.b.ui.prompt.custom, 42)
+  m:predict(); m.input = ctx("Other")
   eq(m.b.ui.actions.complete(), "replacement complete"); eq(#m.sets, 0)
-  m.input = ctx(""); eq(m.b.ui.actions.complete(), true); eq(m.submits, 0)
-  m.shutdown(); eq(m.b.ui.actions.complete, replacement_complete)
-  eq(m.b.ui.actions.dismiss, replacement_dismiss)
-  eq(m.b.ui.prompt.placeholder, m.original.placeholder); eq(m.b.ui.prompt_highlight, m.original.highlight)
-  eq(m:row(), nil); eq(#(m.slots["composer.above"] or {}), 0)
+  m.input = ctx(""); eq(m.b.ui.actions.complete(), true); eq(m.sets[1], "Run the tests")
+  m.shutdown(); eq(m.b.ui.actions.complete, replacement.complete)
+  eq(m.b.ui.actions.dismiss, replacement.dismiss)
+  eq(m.b.ui.prompt.placeholder, replacement.placeholder); eq(m.b.ui.prompt_highlight, replacement.highlight)
 end)
-test("gui unload keeps external action replacements and never restores prompt hooks", function()
+test("gui unload keeps external replacements", function()
   local m = mock("gui"); local external = function() return "external" end
   m.b.ui.prompt.placeholder = external; m.b.ui.prompt_highlight = external
   m.b.ui.actions.complete = external; m.b.ui.actions.dismiss = external; m.shutdown()
   eq(m.b.ui.prompt.placeholder, external); eq(m.b.ui.prompt_highlight, external)
   eq(m.b.ui.actions.complete, external); eq(m.b.ui.actions.dismiss, external)
-  eq(#(m.slots["composer.above"] or {}), 0)
 end)
-test("gui without node slots leaves prompt actions alone but still predicts", function()
+test("gui installs prompt hooks without requiring node slots", function()
   local m = mock("gui", { nodes = false })
-  eq(m.slot_adds, 0); eq(m.b.ui.prompt.placeholder, m.original.placeholder)
-  eq(m.b.ui.prompt_highlight, m.original.highlight)
-  eq(m.b.ui.actions.complete, m.original.complete); eq(m.b.ui.actions.dismiss, m.original.dismiss)
+  eq(m.slot_adds, 0); eq(m.b.ui.prompt.placeholder ~= m.original.placeholder, true)
+  eq(m.b.ui.prompt_highlight ~= m.original.highlight, true)
+  eq(m.b.ui.actions.complete ~= m.original.complete, true); eq(m.b.ui.actions.dismiss ~= m.original.dismiss, true)
   m:finish(); m:deliver_messages(); eq(#m.calls, 1); eq(m.calls[1].req.provider, nil)
-  m:deliver({ content = "Run the tests" }); eq(m.b.ui.actions.complete(), "fallback"); eq(#m.sets, 0)
-  eq(m.invalidations, 0); eq(m:row(), nil)
+  m:deliver({ content = "Run the tests" }); m.input = ctx("")
+  eq(m.b.ui.actions.complete(), true); eq(#m.sets, 1)
+  eq(m.invalidations > 0, true); eq(m:row(), nil)
 end)
 
 local passed, failed = 0, 0

@@ -9,7 +9,8 @@ GUI.
 The GUI's standard library (Bone newer than 3.0.3) supplies the full node
 renderer: one bar under each open turn, folded rows for earlier turns, hover
 descriptions, glowing live segments, and clicks that open a turn and center
-the selected tool.
+the selected tool; as in the TUI, a click anywhere on an earlier turn's bar
+folds it again.
 
 The TUI draws the latest turn's bar above the prompt, running or finished,
 with how long the turn took. Once the next message is sent it moves into the

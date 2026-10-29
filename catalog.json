@@ -516,8 +516,8 @@
     "name": "prompt-suggestions",
     "title": "Prompt Suggestions",
     "kind": "plugin",
-    "version": "1.1.2",
-    "description": "Next-prompt predictions in the terminal and desktop composer; Tab or Accept accepts, Escape or Dismiss dismisses",
+    "version": "1.1.3",
+    "description": "Next-prompt predictions in the terminal and desktop composer; Tab accepts, Escape dismisses",
     "min_bone_version": "3.0.2",
     "capabilities": [
       "ui",
@@ -526,11 +526,11 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "a89e55d84935a4efb1a342fcb62b54cdfedb1497db1a277b8e6a1029b63fc704"
+        "sha256": "529fa7149cd288142e9d431722201974b04e4b017bcd3bff18361294eb3f2741"
       },
       {
         "path": "gui.lua",
-        "sha256": "b286c7c5434a1e215cf111d128964a67de135b4f2aba86df0844af14ba0c342c"
+        "sha256": "57cedb08130c1b7ad72a894e01e005c1ffe50b349893ac3dd1268b9809352051"
       },
       {
         "path": "lua/prompt_suggestions.lua",
@@ -538,7 +538,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "b715e7963b2c1e1958711af650bc42f8e25f27317c52954433cae99c1d3e6bf7"
+        "sha256": "e5e4e7e2bf956e763bc7cf092598d555f78e9ab834263af2fc5314ccd99719f1"
       },
       {
         "path": "tui.lua",
@@ -835,7 +835,7 @@
     "name": "toolstrip",
     "title": "Toolstrip",
     "kind": "plugin",
-    "version": "1.1.9",
+    "version": "1.1.10",
     "description": "Show tool timelines consistently in the TUI and GUI; history uses equal-width segments",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -845,7 +845,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "9c705f40da817a205b7f33ca09b90a2c8d282bf614e3f8223a6d3afb7d0ea082"
+        "sha256": "d90cced47c9446abb417ce7278dcbcd68e2346c8acc8950728702a732b2869af"
       },
       {
         "path": "gui.lua",
@@ -853,7 +853,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "05c91a41814d2b3b81b388624c7df1307e01630632ef4444df783b98462564a4"
+        "sha256": "1222a4e2198cc65b501ea224c608265abdeb5cdfb6873b06d8d09120a16b4367"
       },
       {
         "path": "tui.lua",
@@ -926,7 +926,7 @@
     "name": "windows",
     "title": "Windows",
     "kind": "plugin",
-    "version": "1.5.0",
+    "version": "1.5.1",
     "description": "Tiled chat windows, in the terminal and the desktop app: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -948,11 +948,11 @@
       },
       {
         "path": "lua/windows/tree.lua",
-        "sha256": "8dbc3bc28d5c7af3f692943912b87d24aab00ccf7a9173bb6ee918de8f0dea52"
+        "sha256": "fcd8fe3720159dc9e9956a47dc6c15fef24c2d66466beca23c428fcb7b55e1de"
       },
       {
         "path": "manifest.json",
-        "sha256": "861c2c4ae5deef3c57be131e4295e119b3c3951e83ed6dbccb00e7c29b066ddf"
+        "sha256": "ced731f4eba9045000d8ee060db4fd287bad8090ed7326a0c67657181ea560b3"
       },
       {
         "path": "tui.lua",
