@@ -22,7 +22,7 @@
       },
       {
         "path": "gui.lua",
-        "sha256": "4968441d02e03d431008c505361dfe8ad688dae30c8338cd17b54da3c45ad26d"
+        "sha256": "98a79d097f06290e7ef2bdc2f565924a455c863efe9794caef8a157fa8338ff7"
       },
       {
         "path": "manifest.json",
@@ -204,7 +204,7 @@
       },
       {
         "path": "lua/context/nodes.lua",
-        "sha256": "9c81e4f56491afdbf5f97c252eafce2ba5337472492ada1612137e479f9c39ab"
+        "sha256": "44def50479e08712e67153763f084aefa3b6596d94c42bbac34bffa609abda16"
       },
       {
         "path": "manifest.json",
@@ -242,7 +242,7 @@
       },
       {
         "path": "ui.lua",
-        "sha256": "14d7d1b4ccda7805826125828728c4c21d8c7fc8cb7d7aef027932a138d0028b"
+        "sha256": "a98b1440c95e65d65dd1d84e231c468854144df5580a240f7d0b13003977b82a"
       }
     ]
   },
@@ -307,7 +307,7 @@
       },
       {
         "path": "ui.lua",
-        "sha256": "a78c6fddade01f9579737bcb36f39c6fde371167cb3141bd98c785bb99b88d8f"
+        "sha256": "efc442233a4082f1a99eb9025002223fe7e60254db7e4559fb81d9115c0f788a"
       }
     ]
   },
@@ -415,7 +415,7 @@
       },
       {
         "path": "ui.lua",
-        "sha256": "12dac1332d6ff73a9d6b07ac582335fcc69d871c5be2d27773b1cae5a8fa4f12"
+        "sha256": "848882b4094cdcf57db02c001f0167664c40f804b7659a7c90846db266c05c95"
       }
     ]
   },
@@ -438,7 +438,7 @@
       },
       {
         "path": "lua/md_browser.lua",
-        "sha256": "ae787a062c508ba71ca7e50a46266097819f5c50f03ff3cffac8356e713299c3"
+        "sha256": "736488ebade35971d63b7f4724e3dbea3161eafa58f887d67e5a50810aa42dee"
       },
       {
         "path": "manifest.json",
@@ -692,7 +692,7 @@
       },
       {
         "path": "ui.lua",
-        "sha256": "53fa51c777c9e53aac37227268aaec5f29c81ac4aef6640fd500e54aa9659040"
+        "sha256": "35744d21bd3593c08f3d8c592f6a7aebdc09408d04530e8bebe841c2d7aaad99"
       }
     ]
   },
@@ -883,7 +883,7 @@
       },
       {
         "path": "lua/usage/nodes.lua",
-        "sha256": "d6d5c35225253da6e5425c0a3351f47e613a8ed5247a47599d0df1f872249f0d"
+        "sha256": "75a1b3afa90b19ea864fc691777a4f1a46dfdc6bbc864cb8f84dfa2d89fa96a9"
       },
       {
         "path": "manifest.json",
@@ -891,7 +891,7 @@
       },
       {
         "path": "ui.lua",
-        "sha256": "85caf02fbe3ba0a2d18ee09f40a9c547b67367ee15bbc5653cb70ab67b4058ff"
+        "sha256": "5461ab00aa9e7f5a818ddcfaf0227eb804c5000dce6deb335e4b0e529d4beba3"
       }
     ]
   },
@@ -940,7 +940,7 @@
       },
       {
         "path": "gui.lua",
-        "sha256": "1562e70ee03432fd15ec66c50eae3214d8908f705e8ec108d2a6d05de48eb8be"
+        "sha256": "39ca68b6b22f38f23f2a1d697c5df5f80e664599d983b658cf08eec0e6c6c9c6"
       },
       {
         "path": "lua/windows/drop.lua",

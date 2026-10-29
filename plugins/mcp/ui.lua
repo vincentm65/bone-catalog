@@ -355,118 +355,155 @@ local function render(ctx)
   return bone.ui.box(rows, { title = "MCP servers", width = w })
 end
 
-local function scroll_list(list_id, items, selected)
-  local ok, pop = pcall(require, "bone.nodes.popups")
-  if ok and type(pop.list) == "function" and bone.has_capability and bone.has_capability("gui.nodes")
-      and bone.gui and bone.gui.scroll_item then
-    return pop.list(list_id, items, selected)
+-- The desktop library's widgets and sizes. Without them (an older bone) the
+-- same calls make bare nodes: the layout and presses stay, the look does not.
+local has_w, W = pcall(require, "bone.nodes.widgets")
+local has_s, S = pcall(require, "bone.nodes.style")
+if not (has_w and has_s and type(W.list) == "function" and bone.gui and bone.gui.scroll_item) then
+  S = { size = {}, radius = {}, space = { xs = 2, sm = 4, md = 8, lg = 12, xl = 16 } }
+  local function press(node, click, role)
+    node.on_click, node.cursor, node.role = click, "pointer", role or "button"
+    return node
   end
-  local col = { id = list_id, direction = "column", gap = 2, grow = 1, overflow = "scroll" }
-  for i, item in ipairs(items) do col[i] = item end
-  return col
-end
-
-local function press(label, click, primary)
-  local ok, w = pcall(require, "bone.nodes.widgets")
-  if ok and w.button then return w.button(label, click, primary) end
-  return {
-    text = label, hl = primary and "Accent" or "Normal", bg = primary and "TextSelection" or "Selection",
-    padding = { 6, 12 }, radius = 8, cursor = "pointer", role = "button", on_click = click,
+  local function choices(names, current, pick)
+    local row = { direction = "row", gap = 12 }
+    for i, name in ipairs(names) do
+      row[i] = press({ text = name, hl = i == current and "Normal" or "Dim", selected = i == current },
+        function() pick(i) end, "option")
+    end
+    return row
+  end
+  W = {
+    press = press,
+    title = function(text) return { text = text, bold = true } end,
+    note = function(text, _, hl) return { text = text, hl = hl or "Dim" } end,
+    pill = function(text, o) return { text = text, hl = (o or {}).hl or "Accent" } end,
+    divider = function() return { height = 1 } end,
+    hints = function(text) return { text = text, hl = "Dim" } end,
+    button = function(label, click, primary, _, o)
+      local node = press({ text = label, hl = primary and "Accent" or "Normal" }, click)
+      for k, v in pairs(o or {}) do node[k] = v end
+      return node
+    end,
+    checkbox = function(on) return { text = on and "☑" or "☐", hl = on and "Accent" or "Dim", role = "checkbox", selected = on } end,
+    link = function(text, click) return press({ text = text, hl = "Accent" }, click, "link") end,
+    icon_button = function(glyph, label, click) return press({ text = glyph, label = label }, click) end,
+    segmented = choices,
+    tabs = choices,
+    surface = function(o) return o or {} end,
+    entry = function(on, children, click)
+      local node = { direction = "column", bg = on and "Selection" or nil, selected = on }
+      for _, c in ipairs(children) do node[#node + 1] = c end
+      return click and press(node, click, "option") or node
+    end,
+    list = function(list_id, items, _, opts)
+      local col = { id = list_id, direction = "column", grow = 1, overflow = "scroll" }
+      for i, item in ipairs(items) do col[i] = item end
+      if not (opts and opts.footer) then return col end
+      return { direction = "column", grow = 1, col, opts.footer }
+    end,
+    field = function(label, value, o)
+      o = o or {}
+      local node = { text = label .. ": " .. value .. (o.editing and "▏" or "") }
+      return o.click and press(node, o.click) or node
+    end,
   }
 end
 
 -- Same actions as the keys. Row clicks select; buttons call on_key so the
 -- confirm, sign-in and editor paths stay one implementation.
 local function mcp_node()
-  if not st then return { text = "MCP servers", hl = "Normal" } end
+  if not st then return W.title("MCP servers") end
   local servers = st.servers or {}
   local rows = {}
   for i, s in ipairs(servers) do
     local state = STATES[s.state] or STATES.failed
-    local on = i == st.sel
-    rows[#rows + 1] = {
-      direction = "row", gap = 8, align = "center", padding = { 6, 8 }, radius = 8,
-      bg = on and "Selection" or nil, selected = on, cursor = "pointer", role = "option",
-      on_click = function()
-        st.sel, st.tools_at, st.note = i, 0, nil
-        redraw()
-      end,
-      { text = state[1] .. " " .. s.name, hl = on and "Normal" or state[2], grow = 1 },
-    }
+    rows[#rows + 1] = W.entry(i == st.sel, {
+      {
+        direction = "row", gap = S.space.md, align = "center",
+        { text = state[1], hl = state[2], size = S.size.caption, width = 12, shrink = 0, wrap = false },
+        { text = s.name, hl = "Normal", size = S.size.body, bold = i == st.sel or nil,
+          grow = 1, width = 0, wrap = false, text_overflow = "ellipsis" },
+      },
+    }, function()
+      st.sel, st.tools_at, st.note = i, 0, nil
+      redraw()
+    end)
   end
   local s = servers[st.sel]
-  local detail = { direction = "column", gap = 6, grow = 1 }
+  local detail = { direction = "column", gap = S.space.sm, grow = 1, width = 0 }
   local function add(node) detail[#detail + 1] = node end
   if s then
     local state = STATES[s.state] or STATES.failed
-    add({ text = s.name, hl = "Accent", bold = true, size = 18 })
-    add({ text = state[1] .. " " .. state[3], hl = state[2] })
+    add({
+      direction = "row", gap = S.space.md, align = "center",
+      { text = s.name, hl = "Normal", bold = true, size = S.size.lead, wrap = false, text_overflow = "ellipsis" },
+      W.pill(state[3]:upper(), { hl = state[2], bg = "Selection" }),
+      s.signed_in and W.pill("SIGNED IN", { hl = "Dim", bg = "Selection" }) or nil,
+      s.lazy and W.pill("LAZY", { hl = "Dim", bg = "Selection" }) or nil,
+    })
     local where = s.url or (s.command and ("$ " .. s.command:gsub("%s+", " "))) or ""
-    if where ~= "" then add({ text = where, hl = "Dim", selectable = true }) end
-    if s.signed_in or s.lazy then
-      add({ text = (s.signed_in and "signed in" or "") .. (s.signed_in and s.lazy and " · " or "") .. (s.lazy and "lazy" or ""), hl = "Dim" })
-    end
-    if s.error then add({ text = s.error, hl = "ErrorMsg", selectable = true }) end
+    if where ~= "" then add({ text = where, hl = "Dim", font = "mono", size = S.size.small, selectable = true }) end
+    if s.error then add({ text = s.error, hl = "ErrorMsg", size = S.size.small, selectable = true }) end
     if st.signing and st.signing.name == s.name then
-      add({ text = "Open this address in a browser and approve. If the browser is on another machine, paste the address it ends up on.", hl = "Normal" })
-      add({ text = st.signing.url, hl = "Accent", selectable = true })
+      add(W.divider())
+      add({ text = "Open this address in a browser and approve. If the browser is on another machine, paste the address it ends up on.",
+        hl = "Normal", size = S.size.caption })
+      add({ text = st.signing.url, hl = "Accent", font = "mono", size = S.size.small, selectable = true })
     else
-      local tools = { id = "mcp:tools", direction = "column", gap = 4, grow = 1, overflow = "scroll" }
-      tools[#tools + 1] = { text = "Tools  " .. #(s.tool_info or {}), hl = "Accent", bold = true }
+      add(W.divider())
+      local tools = { id = "mcp:tools", direction = "column", gap = S.space.sm, grow = 1, height = 0, overflow = "scroll" }
+      tools[#tools + 1] = { text = "TOOLS  " .. #(s.tool_info or {}), hl = "Dim", bold = true, size = S.size.micro }
       for _, t in ipairs(s.tool_info or {}) do
+        local desc = (t.description or ""):gsub("%s+", " ")
         tools[#tools + 1] = {
-          direction = "column", gap = 2,
-          { text = t.name, hl = "ToolName" },
-          (t.description or "") ~= "" and { text = (t.description or ""):gsub("%s+", " "), hl = "Dim", size = 12 } or nil,
-          t.read_only and { text = "read-only", hl = "Dim", size = 12 } or nil,
+          direction = "column", gap = S.space.xs,
+          {
+            direction = "row", gap = S.space.md, align = "center",
+            { text = t.name, hl = "ToolName", font = "mono", size = S.size.caption, wrap = false },
+            t.read_only and W.pill("READ-ONLY", { hl = "Dim", bg = "Selection" }) or nil,
+          },
+          desc ~= "" and { text = desc, hl = "Dim", size = S.size.small } or nil,
         }
       end
-      if #(s.tool_info or {}) == 0 then tools[#tools + 1] = { text = "No tools reported.", hl = "Dim" } end
+      if #(s.tool_info or {}) == 0 then tools[#tools + 1] = { text = "No tools reported.", hl = "Dim", size = S.size.small } end
       add(tools)
     end
   end
   -- One empty line. A list placeholder beside a detail placeholder reads as
   -- the same sentence twice, side by side.
   local body = s and {
-    direction = "row", gap = 12, grow = 1,
-    { width = 240, direction = "column", overflow = "hidden", scroll_list("mcp:servers", rows, st.sel) },
+    direction = "row", gap = S.space.lg, grow = 1, height = 0,
+    { width = 220, shrink = 0, direction = "column", W.list("mcp:servers", rows, st.sel) },
     detail,
   } or {
-    grow = 1, direction = "column", justify = "center", gap = 6,
-    { text = "No MCP servers yet.", hl = "Dim" },
-    { text = "Add a command or an https:// URL.", hl = "Dim", size = 13 },
+    grow = 1, direction = "column", justify = "center",
+    W.note("No MCP servers yet. Add a command or an https:// URL.", { 0, 0 }),
   }
-  local bar = { direction = "row", gap = 8, flex_wrap = true }
+  local bar = { direction = "row", gap = S.space.md, align = "center", flex_wrap = true }
   if st.input then
-    bar = {
-      direction = "column", gap = 4,
-      { text = (STEPS[st.input.step] or "") .. ": " .. st.input.value .. "▏", hl = "Normal", selectable = true },
-      { text = "Type, then enter · esc cancels", hl = "Dim", size = 12 },
-    }
+    bar = W.field(STEPS[st.input.step] or "", st.input.value, { editing = true, on = true, hint = "enter next · esc cancel" })
   elseif st.confirm and s then
-    bar = {
-      direction = "row", gap = 8, align = "center", flex_wrap = true,
-      { text = "Remove " .. s.name .. " from mcp.json?", hl = "WarningMsg", grow = 1 },
-      press("Remove", function() on_key("y") end, true),
-      press("Cancel", function() on_key("n") end),
-    }
+    bar[#bar + 1] = { text = "Remove " .. s.name .. " from mcp.json?", hl = "WarningMsg", size = S.size.body, grow = 1 }
+    bar[#bar + 1] = W.button("Remove", function() on_key("y") end, true)
+    bar[#bar + 1] = W.button("Cancel", function() on_key("n") end)
   elseif st.signing then
-    bar[#bar + 1] = press("Copy address", function() on_key("c") end)
-    bar[#bar + 1] = press("Cancel sign-in", function() on_key("esc") end)
+    bar[#bar + 1] = W.button("Copy address", function() on_key("c") end, true)
+    bar[#bar + 1] = W.button("Cancel sign-in", function() on_key("esc") end)
   else
-    bar[#bar + 1] = press("Add", function() on_key("a") end, true)
-    if s and s.state ~= "disabled" then bar[#bar + 1] = press("Reconnect", function() on_key("r") end) end
-    if s and s.url and s.state ~= "disabled" then bar[#bar + 1] = press("Sign in", function() on_key("s") end) end
-    if s and s.signed_in then bar[#bar + 1] = press("Sign out", function() on_key("x") end) end
+    bar[#bar + 1] = W.button("Add", function() on_key("a") end, true)
+    if s and s.state ~= "disabled" then bar[#bar + 1] = W.button("Reconnect", function() on_key("r") end) end
+    if s and s.url and s.state ~= "disabled" then bar[#bar + 1] = W.button("Sign in", function() on_key("s") end) end
+    if s and s.signed_in then bar[#bar + 1] = W.button("Sign out", function() on_key("x") end) end
     if s then
-      bar[#bar + 1] = press(s.state == "disabled" and "Enable" or "Disable", function() on_key("space") end)
-      bar[#bar + 1] = press("Remove", function() on_key("d") end)
+      bar[#bar + 1] = W.button(s.state == "disabled" and "Enable" or "Disable", function() on_key("space") end)
+      bar[#bar + 1] = W.button("Remove", function() on_key("d") end)
     end
   end
-  local note = st and st.note and st.note[1] and { text = st.note[1][1], hl = st.note[1][2] or "Dim", size = 12 } or nil
+  local note = st.note and st.note[1] and W.note(st.note[1][1], { 0, 0 }, st.note[1][2]) or nil
   return {
-    direction = "column", gap = 10, grow = 1,
-    { text = "MCP servers", bold = true, size = 20, hl = "Normal" },
+    direction = "column", gap = S.space.md, grow = 1,
+    W.title("MCP servers"),
     body,
     note,
     bar,

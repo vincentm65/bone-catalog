@@ -333,111 +333,131 @@ local function render(ctx)
   return bone.ui.box(rows, { title = "Subagents", width = w })
 end
 
-local function scroll_list(list_id, items, selected)
-  local ok, pop = pcall(require, "bone.nodes.popups")
-  if ok and type(pop.list) == "function" and bone.has_capability and bone.has_capability("gui.nodes")
-      and bone.gui and bone.gui.scroll_item then
-    return pop.list(list_id, items, selected)
+-- The desktop library's widgets and sizes. Without them (an older bone) the
+-- same calls make bare nodes: the layout and presses stay, the look does not.
+local has_w, W = pcall(require, "bone.nodes.widgets")
+local has_s, S = pcall(require, "bone.nodes.style")
+if not (has_w and has_s and type(W.list) == "function" and bone.gui and bone.gui.scroll_item) then
+  S = { size = {}, radius = {}, space = { xs = 2, sm = 4, md = 8, lg = 12, xl = 16 } }
+  local function press(node, click, role)
+    node.on_click, node.cursor, node.role = click, "pointer", role or "button"
+    return node
   end
-  local col = { id = list_id, direction = "column", gap = 2, grow = 1, overflow = "scroll" }
-  for i, item in ipairs(items) do col[i] = item end
-  return col
-end
-
-local function press(label, click, primary)
-  local ok, w = pcall(require, "bone.nodes.widgets")
-  if ok and w.button then return w.button(label, click, primary) end
-  return {
-    text = label, hl = primary and "Accent" or "Normal", bg = primary and "TextSelection" or "Selection",
-    padding = { 6, 12 }, radius = 8, cursor = "pointer", role = "button", on_click = click,
+  local function choices(names, current, pick)
+    local row = { direction = "row", gap = 12 }
+    for i, name in ipairs(names) do
+      row[i] = press({ text = name, hl = i == current and "Normal" or "Dim", selected = i == current },
+        function() pick(i) end, "option")
+    end
+    return row
+  end
+  W = {
+    press = press,
+    title = function(text) return { text = text, bold = true } end,
+    note = function(text, _, hl) return { text = text, hl = hl or "Dim" } end,
+    pill = function(text, o) return { text = text, hl = (o or {}).hl or "Accent" } end,
+    divider = function() return { height = 1 } end,
+    hints = function(text) return { text = text, hl = "Dim" } end,
+    button = function(label, click, primary, _, o)
+      local node = press({ text = label, hl = primary and "Accent" or "Normal" }, click)
+      for k, v in pairs(o or {}) do node[k] = v end
+      return node
+    end,
+    checkbox = function(on) return { text = on and "☑" or "☐", hl = on and "Accent" or "Dim", role = "checkbox", selected = on } end,
+    link = function(text, click) return press({ text = text, hl = "Accent" }, click, "link") end,
+    icon_button = function(glyph, label, click) return press({ text = glyph, label = label }, click) end,
+    segmented = choices,
+    tabs = choices,
+    surface = function(o) return o or {} end,
+    entry = function(on, children, click)
+      local node = { direction = "column", bg = on and "Selection" or nil, selected = on }
+      for _, c in ipairs(children) do node[#node + 1] = c end
+      return click and press(node, click, "option") or node
+    end,
+    list = function(list_id, items, _, opts)
+      local col = { id = list_id, direction = "column", grow = 1, overflow = "scroll" }
+      for i, item in ipairs(items) do col[i] = item end
+      if not (opts and opts.footer) then return col end
+      return { direction = "column", grow = 1, col, opts.footer }
+    end,
+    field = function(label, value, o)
+      o = o or {}
+      local node = { text = label .. ": " .. value .. (o.editing and "▏" or "") }
+      return o.click and press(node, o.click) or node
+    end,
   }
 end
 
 local function subagent_node()
-  if not st then return { text = "Subagents", hl = "Normal" } end
+  if not st then return W.title("Subagents") end
   local name, list = current()
   local rows, selected = {}, nil
   for i, item in ipairs(list) do
     if item == name then selected = i end
-    local on = item == name
-    rows[#rows + 1] = {
-      direction = "row", align = "center", padding = { 6, 8 }, radius = 8,
-      bg = on and "Selection" or nil, selected = on, cursor = "pointer", role = "option",
-      on_click = function()
-        if st.input or st.confirm then return end
-        st.sel, st.sel_name, st.focus, st.field = i, item, "fields", 1
-        redraw()
-      end,
-      { text = item, hl = "Normal", grow = 1 },
-    }
+    local desc = (st.agents[item].description or ""):gsub("%s+", " ")
+    rows[#rows + 1] = W.entry(item == name, {
+      { text = item, hl = "Normal", size = S.size.body, bold = item == name or nil, wrap = false, text_overflow = "ellipsis" },
+      desc ~= "" and { text = desc, hl = "Dim", size = S.size.small, wrap = false, text_overflow = "ellipsis",
+        margin = { 2, 0, 0, 0 } } or nil,
+    }, function()
+      if st.input or st.confirm then return end
+      st.sel, st.sel_name, st.focus, st.field = i, item, "fields", 1
+      redraw()
+    end)
   end
-  local detail = { direction = "column", gap = 6, grow = 1, overflow = "scroll" }
+  local keys = (st.input and st.input.key == "system" and "enter newline · ctrl+s save" or "enter save")
+    .. " · ctrl+u clear · esc cancel"
+  local detail = { direction = "column", grow = 1, width = 0, height = 0, overflow = "scroll" }
   if not name then
-    detail[#detail + 1] = { text = "No agents yet. Create one: a name, then a prompt, and the model can hand it work with the subagent tool.", hl = "Dim" }
+    detail[#detail + 1] = W.note("No agents yet. Create one: a name, then a prompt, and the model can hand it work with the subagent tool.", { 0, 0 })
   else
     local spec = st.agents[name]
-    detail[#detail + 1] = { text = name, hl = "Accent", bold = true, size = 18 }
+    detail[#detail + 1] = { text = name, hl = "Normal", bold = true, size = S.size.lead, margin = { 0, 0, 8, 0 } }
     for i, f in ipairs(FIELDS) do
       local key, label = f[1], f[2]
-      local on = st.focus == "fields" and st.field == i
       local editing = st.input and st.input.name == name and st.input.key == key
-      local value = editing and (st.input.value .. "▏") or (key == "tools" and tools_text(spec.tools) or spec[key] or "")
-      local empty = value == ""
-      if empty then value = "inherits the default" end
-      detail[#detail + 1] = {
-        direction = "column", gap = 2, padding = { 6, 8 }, radius = 8,
-        bg = on and "Selection" or nil, selected = on, cursor = "pointer", role = "option",
-        on_click = function()
+      local value = editing and st.input.value or (key == "tools" and tools_text(spec.tools) or spec[key] or "")
+      detail[#detail + 1] = W.field(label, value, {
+        editing = editing, on = st.focus == "fields" and st.field == i, empty = "inherits the default",
+        hint = editing and keys or f[3],
+        click = function()
           if st.input or st.confirm then return end
           st.focus, st.field, st.sel_name = "fields", i, name
           if key == "provider" then pick_provider(name) else open_field(name, key) end
           redraw()
         end,
-        { text = label, hl = on and "Accent" or "Normal", bold = on },
-        { text = f[3], hl = "Dim", size = 12 },
-        { text = value, hl = empty and "Dim" or "Normal", selectable = true },
-      }
+      })
     end
   end
-  local bar
-  if st.input then
-    local k = st.input.key
-    bar = {
-      direction = "column", gap = 4,
-      { text = (k == "new" and "New agent name" or k == "rename" and "New name" or ("Editing " .. tostring(k))) .. ": " .. st.input.value .. "▏", hl = "Normal", selectable = true },
-      { text = (k == "system" and "enter newline · ctrl+s save" or "enter save") .. " · ctrl+u clear · esc cancel", hl = "Dim", size = 12 },
-    }
+  local bar = { direction = "row", gap = S.space.md, align = "center", flex_wrap = true }
+  if st.input and (st.input.key == "new" or st.input.key == "rename") then
+    bar = W.field(st.input.key == "new" and "New agent name" or "New name", st.input.value,
+      { editing = true, on = true, hint = keys })
   elseif st.confirm then
-    bar = {
-      direction = "row", gap = 8, align = "center", flex_wrap = true,
-      { text = "Delete " .. tostring(name) .. "?", hl = "WarningMsg", grow = 1 },
-      press("Delete", function() on_key("y") end, true),
-      press("Cancel", function() on_key("n") end),
-    }
-  else
-    bar = { direction = "row", gap = 8, flex_wrap = true,
-      press("New", function()
-        if st.input or st.confirm then return end
-        st.focus = "list"
-        on_key("n")
-      end, true),
-    }
+    bar[#bar + 1] = { text = "Delete " .. tostring(name) .. "?", hl = "WarningMsg", size = S.size.body, grow = 1 }
+    bar[#bar + 1] = W.button("Delete", function() on_key("y") end, true)
+    bar[#bar + 1] = W.button("Cancel", function() on_key("n") end)
+  elseif not st.input then
+    bar[#bar + 1] = W.button("New", function()
+      st.focus = "list"
+      on_key("n")
+    end, true)
     if name then
-      bar[#bar + 1] = press("Rename", function() on_key("r") end)
-      bar[#bar + 1] = press("Delete", function() on_key("d") end)
-      bar[#bar + 1] = press("Inherit", function()
+      bar[#bar + 1] = W.button("Rename", function() on_key("r") end)
+      bar[#bar + 1] = W.button("Delete", function() on_key("d") end)
+      bar[#bar + 1] = W.button("Inherit", function()
         if st.focus ~= "fields" then st.focus, st.field = "fields", st.field or 1 end
         on_key("x")
       end)
     end
   end
-  local note = st.note and st.note[1] and { text = st.note[1][1], hl = st.note[1][2] or "Dim", size = 12 } or nil
+  local note = st.note and st.note[1] and W.note(st.note[1][1], { 0, 0 }, st.note[1][2]) or nil
   return {
-    direction = "column", gap = 10, grow = 1,
-    { text = "Subagents", bold = true, size = 20, hl = "Normal" },
+    direction = "column", gap = S.space.md, grow = 1,
+    W.title("Subagents"),
     {
-      direction = "row", gap = 12, grow = 1,
-      { width = 220, direction = "column", scroll_list("subagent:agents", rows, selected) },
+      direction = "row", gap = S.space.lg, grow = 1, height = 0,
+      { width = 220, shrink = 0, direction = "column", W.list("subagent:agents", rows, selected) },
       detail,
     },
     note, bar,

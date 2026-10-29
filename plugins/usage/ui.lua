@@ -260,6 +260,14 @@ local function fg_of(group)
   return h and h.fg
 end
 
+-- Groups the colorscheme or config already set, before this plugin set any
+-- (bone.hl.get resolves any name, so ask bone.hl.names): those are kept.
+local theirs = {}
+for _, name in ipairs(bone.hl.names and bone.hl.names() or {}) do theirs[name] = true end
+local function define(name, spec)
+  if not theirs[name] then bone.hl.set(name, spec) end
+end
+
 -- Heat levels 0-4: from the border color up to the accent when both are
 -- #rrggbb, otherwise existing groups.
 local function setup_colors()
@@ -270,15 +278,15 @@ local function setup_colors()
       for j = 1, 3 do
         c[j] = math.floor(lo[j] + (hi[j] - lo[j]) * f + 0.5)
       end
-      bone.hl.set("UsageHeat" .. (i - 1), { fg = string.format("#%02x%02x%02x", c[1], c[2], c[3]) })
+      define("UsageHeat" .. (i - 1), { fg = string.format("#%02x%02x%02x", c[1], c[2], c[3]) })
     end
   else
     for i, g in ipairs({ "WinSeparator", "Dim", "ToolArgs", "Normal", "Accent" }) do
-      bone.hl.set("UsageHeat" .. (i - 1), { link = g })
+      define("UsageHeat" .. (i - 1), { link = g })
     end
   end
-  bone.hl.set("UsageBar", { link = "Accent" })
-  bone.hl.set("UsageValue", { link = "MdBold" })
+  define("UsageBar", { link = "Accent" })
+  define("UsageValue", { link = "MdBold" })
 end
 
 local function heat(v, max)

@@ -1,6 +1,62 @@
 -- Project Markdown browser; uses Bone popup, Markdown and job APIs.
 local M = {}
 
+-- The desktop library's widgets and sizes. Without them (an older bone) the
+-- same calls make bare nodes: the layout and presses stay, the look does not.
+local has_w, W = pcall(require, "bone.nodes.widgets")
+local has_s, S = pcall(require, "bone.nodes.style")
+if not (has_w and has_s and type(W.list) == "function" and bone.gui and bone.gui.scroll_item) then
+  S = { size = {}, radius = {}, space = { xs = 2, sm = 4, md = 8, lg = 12, xl = 16 } }
+  local function press(node, click, role)
+    node.on_click, node.cursor, node.role = click, "pointer", role or "button"
+    return node
+  end
+  local function choices(names, current, pick)
+    local row = { direction = "row", gap = 12 }
+    for i, name in ipairs(names) do
+      row[i] = press({ text = name, hl = i == current and "Normal" or "Dim", selected = i == current },
+        function() pick(i) end, "option")
+    end
+    return row
+  end
+  W = {
+    press = press,
+    title = function(text) return { text = text, bold = true } end,
+    note = function(text, _, hl) return { text = text, hl = hl or "Dim" } end,
+    pill = function(text, o) return { text = text, hl = (o or {}).hl or "Accent" } end,
+    divider = function() return { height = 1 } end,
+    hints = function(text) return { text = text, hl = "Dim" } end,
+    button = function(label, click, primary, _, o)
+      local node = press({ text = label, hl = primary and "Accent" or "Normal" }, click)
+      for k, v in pairs(o or {}) do node[k] = v end
+      return node
+    end,
+    checkbox = function(on) return { text = on and "☑" or "☐", hl = on and "Accent" or "Dim", role = "checkbox", selected = on } end,
+    link = function(text, click) return press({ text = text, hl = "Accent" }, click, "link") end,
+    icon_button = function(glyph, label, click) return press({ text = glyph, label = label }, click) end,
+    segmented = choices,
+    tabs = choices,
+    surface = function(o) return o or {} end,
+    entry = function(on, children, click)
+      local node = { direction = "column", bg = on and "Selection" or nil, selected = on }
+      for _, c in ipairs(children) do node[#node + 1] = c end
+      return click and press(node, click, "option") or node
+    end,
+    list = function(list_id, items, _, opts)
+      local col = { id = list_id, direction = "column", grow = 1, overflow = "scroll" }
+      for i, item in ipairs(items) do col[i] = item end
+      if not (opts and opts.footer) then return col end
+      return { direction = "column", grow = 1, col, opts.footer }
+    end,
+    field = function(label, value, o)
+      o = o or {}
+      local node = { text = label .. ": " .. value .. (o.editing and "▏" or "") }
+      return o.click and press(node, o.click) or node
+    end,
+  }
+end
+
+
 local markdown_close
 function M.open(path)
   path = (path or ""):match("^%s*(.-)%s*$"):gsub("^%./", "")
@@ -220,87 +276,76 @@ function M.open(path)
     if bone.ui.update and id then bone.ui.update(id, {}) end
   end
   local function markdown_node()
-    local function press(label, click, primary)
-      local ok, w = pcall(require, "bone.nodes.widgets")
-      if ok and w.button then return w.button(label, click, primary) end
-      return {
-        text = label, hl = primary and "Accent" or "Normal", bg = primary and "TextSelection" or "Selection",
-        padding = { 6, 12 }, radius = 8, cursor = "pointer", role = "button", on_click = click,
-      }
-    end
     local items = {}
     for i, file in ipairs(st.filtered) do
-      local on = i == st.sel
-      items[#items + 1] = {
-        direction = "row", align = "center", padding = { 5, 8 }, radius = 8,
-        bg = on and "Selection" or nil, selected = on, cursor = "pointer", role = "option",
-        on_click = function()
-          st.sel, st.pane = i, "reader"
-          select_file()
-          touch()
-        end,
-        { text = file, hl = "Normal", grow = 1 },
-      }
+      local dir, base = file:match("^(.*/)([^/]*)$")
+      items[#items + 1] = W.entry(i == st.sel, {
+        { spans = { { text = dir or "", hl = "Dim" }, { text = base or file, hl = "Normal" } },
+          size = S.size.caption, wrap = false, text_overflow = "ellipsis" },
+      }, function()
+        st.sel, st.pane = i, "reader"
+        select_file()
+        touch()
+      end)
     end
     if #items == 0 then
-      items[1] = { text = st.loading and "Scanning…" or (#st.files == 0 and "No Markdown files." or "No matches."), hl = "Dim" }
+      items[1] = W.note(st.loading and "Scanning…" or (#st.files == 0 and "No Markdown files." or "No matches."), { 4, 0 })
     end
-    local list
-    local ok, pop = pcall(require, "bone.nodes.popups")
-    if ok and type(pop.list) == "function" and bone.has_capability and bone.has_capability("gui.nodes")
-        and bone.gui and bone.gui.scroll_item then
-      list = pop.list("md:files", items, #st.filtered > 0 and st.sel or nil)
-    else
-      list = { id = "md:files", direction = "column", gap = 2, grow = 1, overflow = "scroll" }
-      for i, item in ipairs(items) do list[i] = item end
-    end
-    local preview = { id = "md:reader", direction = "column", gap = 6, grow = 1, overflow = "scroll" }
+    local preview = { id = "md:reader", direction = "column", gap = S.space.sm, grow = 1, height = 0, overflow = "scroll" }
     if st.read_error then
-      preview[#preview + 1] = { text = st.read_error, hl = "ErrorMsg", selectable = true }
+      preview[#preview + 1] = W.note(st.read_error, { 0, 0 }, "ErrorMsg")
     elseif st.file and not st.text then
-      preview[#preview + 1] = { text = "Loading document…", hl = "Dim" }
+      preview[#preview + 1] = W.note("Loading document…", { 0, 0 })
     elseif st.text then
       local mok, md = pcall(require, "bone.desktop.markdown")
       local nodes = mok and md.nodes and md.nodes(st.text) or nil
       if nodes and #nodes > 0 then
         for _, node in ipairs(nodes) do preview[#preview + 1] = node end
       elseif st.text == "" then
-        preview[#preview + 1] = { text = "Empty Markdown file.", hl = "Dim" }
+        preview[#preview + 1] = W.note("Empty Markdown file.", { 0, 0 })
       else
         preview[#preview + 1] = { text = st.text, hl = "Normal", selectable = true }
       end
     else
-      preview[#preview + 1] = { text = "Select a Markdown file to read.", hl = "Dim" }
+      preview[#preview + 1] = W.note("Select a Markdown file to read.", { 0, 0 })
     end
-    local filter_text = st.loading and "Scanning Markdown files…"
-      or ("Filter: " .. (st.query == "" and "click here, then type" or st.query))
+    local files = st.pane == "files"
     return {
-      direction = "column", gap = 8, grow = 1,
+      direction = "column", gap = S.space.sm, grow = 1,
       {
-        direction = "row", align = "center", gap = 8,
-        { text = "Markdown", bold = true, size = 20, hl = "Normal" },
-        { text = cwd, hl = "Dim", size = 12, grow = 1 },
-        press("Refresh", function() on_key("ctrl+r"); touch() end),
-        press("Close", close),
+        direction = "row", align = "center", gap = S.space.md,
+        W.title("Markdown"),
+        { text = cwd, hl = "Dim", font = "mono", size = S.size.small, grow = 1, width = 0,
+          wrap = false, text_overflow = "ellipsis" },
+        W.icon_button("↻", "Refresh", function() on_key("ctrl+r"); touch() end),
+        W.icon_button("✕", "Close", close),
       },
+      st.scan_error and W.note(st.scan_error, { 0, 0 }, "WarningMsg") or nil,
       {
-        direction = "row", gap = 8, align = "center", flex_wrap = true,
-        press("Files" .. (st.pane == "files" and " ◂" or ""), function() st.pane = "files"; touch() end, st.pane == "files"),
-        press((st.file or "Preview") .. (st.pane == "reader" and " ◂" or ""), function() st.pane = "reader"; touch() end, st.pane == "reader"),
+        direction = "row", gap = S.space.lg, grow = 1, height = 0,
         {
-          text = filter_text, hl = "Dim", size = 12, grow = 1, cursor = "pointer", role = "button",
-          on_click = function() st.pane = "files"; touch() end,
+          width = 280, shrink = 0, direction = "column",
+          -- The filter is where typing goes while the file pane has the keys.
+          W.field("Filter · " .. #st.filtered .. (#st.filtered == 1 and " file" or " files"), st.query,
+            { editing = files, on = files, empty = "type to filter",
+              click = function() st.pane = "files"; touch() end }),
+          W.list("md:files", items, #st.filtered > 0 and st.sel or nil),
+        },
+        {
+          direction = "column", grow = 1, width = 0,
+          st.file and { text = st.file, hl = files and "Dim" or "Accent", font = "mono", size = S.size.small,
+            wrap = false, text_overflow = "ellipsis", margin = { 0, 0, 6, 0 } } or nil,
+          preview,
         },
       },
-      st.scan_error and { text = st.scan_error, hl = "WarningMsg", size = 12 } or nil,
-      {
-        direction = "row", gap = 12, grow = 1,
-        { width = 280, direction = "column", list },
-        { direction = "column", grow = 1, preview },
-      },
+      W.hints("↑↓ move · enter read · tab panes · ctrl+r refresh · esc close", { 4, 0 }),
     }
   end
-  id = bone.ui.popup({ lines = render, on_key = on_key, node = markdown_node })
+  -- The desktop window asks for room to read in (a node window is smaller
+  -- otherwise); the terminal one keeps fitting its lines.
+  local gui = bone.has_capability and bone.has_capability("gui.nodes")
+  id = bone.ui.popup({ lines = render, on_key = on_key, node = markdown_node,
+    width = gui and 170 or nil, height = gui and 10000 or nil })
   markdown_close = close
   close_event = bone.on("panel/closed", function(ev) if ev.id == id and ev.kind == "popup" then close() end end)
   discover(path)

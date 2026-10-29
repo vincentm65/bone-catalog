@@ -103,12 +103,26 @@ local function drop_at(id, x, y)
   end
 end
 
+-- The library's glyph button where it has one.
+local function close(id)
+  local click = function() W.close(id) end
+  if has_widgets and widgets.icon_button then
+    return widgets.icon_button("✕", "Close the window", click, { size = style.size.small })
+  end
+  return {
+    text = "✕", hl = "Dim", size = style.size.small, padding = { 2, 6, 2, 6 }, radius = style.radius.md,
+    cursor = "pointer", role = "button", label = "Close the window", hover = { bg = style.hover() },
+    on_click = click,
+  }
+end
+
 local function bar(id)
   local l = W.label(id) or { name = "" }
   local mine = id == W.here()
   return {
     id = "wm:bar:" .. id,
-    direction = "row", align = "center", gap = 8, height = BAR, padding = { 0, 6, 0, 12 },
+    direction = "row", align = "center", gap = style.space.md, height = BAR,
+    padding = { 0, style.space.sm, 0, style.space.lg },
     bg = mine and "Selection" or nil, cursor = drag and drag.id == id and "grabbing" or "grab",
     on_press = function() held, drag = id, nil; W.focus(id) end,
     on_drag = function(pos)
@@ -131,11 +145,7 @@ local function bar(id)
     mark(l),
     { text = l.name, hl = mine and "Normal" or "Dim", bold = mine, size = style.size.caption,
       grow = 1, wrap = false, overflow = "hidden" },
-    {
-      text = "✕", hl = "Dim", size = style.size.small, padding = { 2, 6, 2, 6 }, radius = style.radius.md,
-      cursor = "pointer", role = "button", label = "close the window", hover = { bg = style.hover() },
-      on_click = function() W.close(id) end,
-    },
+    close(id),
   }
 end
 
@@ -190,7 +200,7 @@ local function tiled(ctx)
     out[#out + 1] = {
       id = "wm:drop", position = "absolute", z = 20,
       left = r.x - origin.x, top = r.y - origin.y, width = r.width, height = r.height,
-      border = 2, border_color = "Accent", bg = style.alpha("Accent", "18"),
+      border = 2, border_color = "Accent", bg = style.alpha("Accent", "18"), radius = style.radius.md,
     }
   end
   return out

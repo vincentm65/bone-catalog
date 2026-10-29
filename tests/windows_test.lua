@@ -27,7 +27,7 @@ local function load(saved, reloading, frontend, with_terminal)
   vm.window = window
   local modules = {
     ["bone.nodes.window"] = window,
-    ["bone.nodes.style"] = { size = {}, radius = {}, alpha = function() return "#4488ff18" end, hover = function() end },
+    ["bone.nodes.style"] = { size = {}, radius = {}, space = { xs = 2, sm = 4, md = 8, lg = 12, xl = 16 }, alpha = function() return "#4488ff18" end, hover = function() end },
   }
   local bone = {
     settings = { get = function() end }, hl = { set = function() end },

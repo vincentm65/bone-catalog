@@ -49,19 +49,23 @@ local function band(ctx)
   return { bone.text.clip(line, ctx.width) }
 end
 
+-- The band's sizes are the desktop library's; the dock draws the card.
+local has_style, S = pcall(require, "bone.nodes.style")
+if not has_style then S = { size = {}, space = { md = 8 } } end
+
 local function goal_node()
   local g = goals[current()]
   if not g or g.status ~= "running" then return nil end
   arm_clock()
   local text = (g.text:gsub("%s+", " "))
   local row = {
-    direction = "row", align = "center", gap = 0, width = "100%",
-    { text = "◎ ", hl = "Accent", wrap = false },
-    { text = text, hl = "Normal", grow = 1, wrap = false, text_overflow = "ellipsis" },
-    { text = "  turn " .. (g.turns + 1) .. "  " .. elapsed(g), hl = "Dim", wrap = false },
+    direction = "row", align = "center", gap = S.space.md, width = "100%",
+    { text = "◎", hl = "Accent", size = S.size.body, wrap = false },
+    { text = text, hl = "Normal", size = S.size.body, grow = 1, width = 0, wrap = false, text_overflow = "ellipsis" },
+    { text = "turn " .. (g.turns + 1) .. " · " .. elapsed(g), hl = "Dim", size = S.size.small, wrap = false },
   }
   if g.check_ok == false then
-    row[#row + 1] = { text = "  check ✗", hl = "ErrorMsg", wrap = false }
+    row[#row + 1] = { text = "check ✗", hl = "ErrorMsg", size = S.size.small, wrap = false }
   end
   return row
 end

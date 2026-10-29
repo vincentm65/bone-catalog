@@ -23,10 +23,59 @@ end
 local INPUT_ID = "ask_user:input"
 local MAX_OPTIONS = 8
 
-local style = { size = { small = 12, body = 14, lead = 17, caption = 13 }, radius = { lg = 10, md = 8 } }
-local ok_style, real_style = pcall(require, "bone.nodes.style")
-if ok_style and type(real_style) == "table" and type(real_style.size) == "table" then
-  style = real_style
+-- The desktop library's widgets and sizes. Without them (an older bone) the
+-- same calls make bare nodes: the layout and presses stay, the look does not.
+local has_w, W = pcall(require, "bone.nodes.widgets")
+local has_s, S = pcall(require, "bone.nodes.style")
+if not (has_w and has_s and type(W.list) == "function" and bone.gui and bone.gui.scroll_item) then
+  S = { size = {}, radius = {}, space = { xs = 2, sm = 4, md = 8, lg = 12, xl = 16 } }
+  local function press(node, click, role)
+    node.on_click, node.cursor, node.role = click, "pointer", role or "button"
+    return node
+  end
+  local function choices(names, current, pick)
+    local row = { direction = "row", gap = 12 }
+    for i, name in ipairs(names) do
+      row[i] = press({ text = name, hl = i == current and "Normal" or "Dim", selected = i == current },
+        function() pick(i) end, "option")
+    end
+    return row
+  end
+  W = {
+    press = press,
+    title = function(text) return { text = text, bold = true } end,
+    note = function(text, _, hl) return { text = text, hl = hl or "Dim" } end,
+    pill = function(text, o) return { text = text, hl = (o or {}).hl or "Accent" } end,
+    divider = function() return { height = 1 } end,
+    hints = function(text) return { text = text, hl = "Dim" } end,
+    button = function(label, click, primary, _, o)
+      local node = press({ text = label, hl = primary and "Accent" or "Normal" }, click)
+      for k, v in pairs(o or {}) do node[k] = v end
+      return node
+    end,
+    checkbox = function(on) return { text = on and "☑" or "☐", hl = on and "Accent" or "Dim", role = "checkbox", selected = on } end,
+    link = function(text, click) return press({ text = text, hl = "Accent" }, click, "link") end,
+    icon_button = function(glyph, label, click) return press({ text = glyph, label = label }, click) end,
+    segmented = choices,
+    tabs = choices,
+    surface = function(o) return o or {} end,
+    entry = function(on, children, click)
+      local node = { direction = "column", bg = on and "Selection" or nil, selected = on }
+      for _, c in ipairs(children) do node[#node + 1] = c end
+      return click and press(node, click, "option") or node
+    end,
+    list = function(list_id, items, _, opts)
+      local col = { id = list_id, direction = "column", grow = 1, overflow = "scroll" }
+      for i, item in ipairs(items) do col[i] = item end
+      if not (opts and opts.footer) then return col end
+      return { direction = "column", grow = 1, col, opts.footer }
+    end,
+    field = function(label, value, o)
+      o = o or {}
+      local node = { text = label .. ": " .. value .. (o.editing and "▏" or "") }
+      return o.click and press(node, o.click) or node
+    end,
+  }
 end
 
 local popup_id
@@ -156,41 +205,38 @@ end
 local function option_row(cur, i, o)
   local multi = cur.q.type == "multi_select"
   local on = i == cur.sel
-  local head = { direction = "row", gap = 8, align = "center" }
+  local head = { direction = "row", gap = S.space.md, align = "center" }
   if multi then
-    head[#head + 1] = {
-      text = cur.checked[i] and "☑" or "☐",
-      hl = cur.checked[i] and "Accent" or "Dim",
-      role = "checkbox",
-      selected = cur.checked[i] and true or false,
-    }
+    head[#head + 1] = W.checkbox(cur.checked[i] and true or false)
   end
   head[#head + 1] = {
-    text = (i <= 9 and (tostring(i) .. ". ") or "") .. o.label,
-    bold = on,
-    grow = 1,
-    wrap = true,
+    spans = {
+      { text = i <= 9 and (tostring(i) .. "  ") or "", hl = "Dim" },
+      { text = o.label, hl = "Normal", bold = on or nil },
+    },
+    size = S.size.body, grow = 1, width = 0,
   }
-  local row = {
-    id = "ask_user:opt:" .. i,
-    direction = "column",
-    gap = 2,
-    padding = { 6, 10 },
-    radius = style.radius.md,
-    bg = on and "Selection" or nil,
-    cursor = "pointer",
-    role = multi and "checkbox" or "option",
-    selected = multi and (cur.checked[i] and true or false) or on,
-    focusable = false,
-    on_click = function()
-      ask.activate(i)
-    end,
-    head,
-  }
+  local children = { head }
   if o.desc and o.desc ~= "" then
-    row[#row + 1] = { text = o.desc, hl = "Dim", size = style.size.small, wrap = true }
+    children[2] = { text = o.desc, hl = "Dim", size = S.size.small, margin = { 2, 0, 0, multi and 26 or 0 } }
   end
+  local row = W.entry(on, children, function()
+    ask.activate(i)
+  end)
+  row.id, row.focusable = "ask_user:opt:" .. i, false
+  row.role = multi and "checkbox" or "option"
+  row.selected = multi and (cur.checked[i] and true or false) or on
   return row
+end
+
+-- "↑ 3 more": a press that brings the hidden options into view.
+local function more(text, sel)
+  return W.press({ text = text, hl = "Dim", size = S.size.small, focusable = false, padding = { 2, 12 } }, function()
+    if ask.cur then
+      ask.cur.sel = sel
+      ask.refresh()
+    end
+  end)
 end
 
 local function node()
@@ -209,57 +255,40 @@ local function node()
     role = "dialog",
     label = q.text or "Question",
     direction = "column",
-    gap = 10,
+    gap = S.space.md,
     grow = 1,
     overflow = "scroll",
+    -- The card is as tall as the question and no wider than a dialog;
+    -- longer than the window, it scrolls.
+    fit = true,
+    max_width = 600,
     on_key = on_key,
-    { text = count, hl = "Dim", size = style.size.small },
-    { text = q.text or "Question", bold = true, size = style.size.lead, wrap = true, selectable = true },
+    { text = count, hl = "Dim", size = S.size.small },
+    { text = q.text or "Question", bold = true, size = S.size.lead, wrap = true, selectable = true },
   }
   if #opts > 0 then
     local first = math.max(1, math.min(cur.sel - math.floor(MAX_OPTIONS / 2), #opts - MAX_OPTIONS + 1))
     local last = math.min(#opts, first + MAX_OPTIONS - 1)
-    local list = { direction = "column", gap = 4 }
+    local list = { direction = "column" }
     if first > 1 then
-      list[#list + 1] = {
-        text = string.format("↑ %d more", first - 1),
-        hl = "Dim",
-        size = style.size.small,
-        cursor = "pointer",
-        focusable = false,
-        on_click = function()
-          if ask.cur then
-            ask.cur.sel = first - 1
-            ask.refresh()
-          end
-        end,
-      }
+      list[#list + 1] = more(string.format("↑ %d more", first - 1), first - 1)
     end
     for i = first, last do
       list[#list + 1] = option_row(cur, i, opts[i])
     end
     if last < #opts then
-      list[#list + 1] = {
-        text = string.format("↓ %d more", #opts - last),
-        hl = "Dim",
-        size = style.size.small,
-        cursor = "pointer",
-        focusable = false,
-        on_click = function()
-          if ask.cur then
-            ask.cur.sel = last + 1
-            ask.refresh()
-          end
-        end,
-      }
+      list[#list + 1] = more(string.format("↓ %d more", #opts - last), last + 1)
     end
     root[#root + 1] = list
   end
+  -- The library's field look around a live text input.
   root[#root + 1] = {
     id = INPUT_ID,
     bg = "InputBackground",
-    radius = style.radius.lg,
-    padding = { 8, 12 },
+    border = 1,
+    border_color = field_focused() and "Accent" or "PromptBorder",
+    radius = S.radius.lg,
+    padding = { 6, 12 },
     on_key = on_key,
     text_input = {
       placeholder = placeholder,
@@ -280,38 +309,19 @@ local function node()
   local hint = #opts == 0 and "enter send · esc cancel"
     or (q.type == "multi_select" and "↑↓ move · space toggle · enter confirm · esc cancel"
       or "↑↓ move · enter choose · 1-9 pick · esc cancel")
-  root[#root + 1] = { text = hint .. " · click an option", hl = "Dim", size = style.size.small, wrap = true }
+  local keys = W.hints(hint, { 0, 0 })
+  keys.grow, keys.width = 1, 0
   root[#root + 1] = {
     direction = "row",
-    gap = 8,
-    justify = "end",
-    {
-      id = "ask_user:cancel",
-      text = "Cancel",
-      cursor = "pointer",
-      role = "button",
-      focusable = false,
-      padding = { 7, 14 },
-      radius = style.radius.lg,
-      bg = "InputBackground",
-      on_click = function()
-        ask.cancel()
-      end,
-    },
-    {
-      id = "ask_user:submit",
-      text = "Answer",
-      bold = true,
-      cursor = "pointer",
-      role = "button",
-      focusable = false,
-      padding = { 7, 14 },
-      radius = style.radius.lg,
-      bg = "Selection",
-      on_click = function()
-        ask.submit()
-      end,
-    },
+    gap = S.space.md,
+    align = "center",
+    keys,
+    W.button("Cancel", function()
+      ask.cancel()
+    end, false, false, { id = "ask_user:cancel", focusable = false }),
+    W.button("Answer", function()
+      ask.submit()
+    end, true, false, { id = "ask_user:submit", focusable = false }),
   }
   return root
 end
