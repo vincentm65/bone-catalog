@@ -700,7 +700,7 @@
     "name": "term",
     "title": "Terminal",
     "kind": "plugin",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "Interactive shells and command output in terminal panels, with keyboard focus and scrollback",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -711,7 +711,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "b33677527a579f280d96de3048be0b757e1118b00fedf7326b7e62d03898822a"
+        "sha256": "b562831f970062979fe5ccc66e0a8c611c08aa84eb20b00eab5c6ca0bf495ef2"
       },
       {
         "path": "gui.lua",
@@ -719,11 +719,11 @@
       },
       {
         "path": "lua/bone/ui/terminal.lua",
-        "sha256": "ebbc4e11fa30272ade4100e6a4df50f8b3692ebe78a8746da47beebfd2945898"
+        "sha256": "bf86b5b12b2c5d614d21148ff0e2480eb77461204c6ff5394f6213dc96ae2f9c"
       },
       {
         "path": "manifest.json",
-        "sha256": "e88cdfb6419f1e38ec84fbfd4aa88e2e3a93346c29ba02e001d79eeccc83bf91"
+        "sha256": "d852f70eceee241997ed29b879f78812bc32687b860b54cbdf6e5a91bc39a5b6"
       },
       {
         "path": "tui.lua",

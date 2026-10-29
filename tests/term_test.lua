@@ -37,7 +37,8 @@ bone = {
       size.scroll = size.scroll or 0
       self.size = size
       return { lines = { { { "a界z", "Normal" } }, {} }, cursor = { 1, 2 },
-        scroll = size.scroll, max = 100, app_cursor = true, bracketed_paste = true }
+        scroll = size.scroll, max = 100, app_cursor = true, bracketed_paste = true,
+        mouse = "press_release", mouse_encoding = "sgr" }
     end
     jobs[#jobs + 1] = job
     return job
@@ -75,6 +76,11 @@ local function command(args) return commands.term.fn({ args = args }) end
 local function paste(text, context)
   for _, ev in pairs(events) do if ev.name == "paste" then ev.fn({ text = text, context = context or "panel" }) end end
 end
+local function mouse(ev)
+  for _, handler in pairs(events) do
+    if handler.name == "mouse" and handler.fn(ev) then return true end
+  end
+end
 -- A dependency may require the module before term loads. It must stay inert,
 -- then activate when term's own tui.lua runs (and register paste as term).
 -- The desktop half (gui.lua) intentionally registers nothing.
@@ -89,8 +95,8 @@ assert(commands.term.opts.desc ~= "")
 for _, key in ipairs({ "ctrl+]", "ctrl+5" }) do
   assert(keys[key].owner == "term" and keys[key].opts.desc ~= "")
 end
-assert(next_event == 1 and events[1].owner == "term")
-term.setup(); assert(next_event == 1)
+assert(next_event == 2 and events[1].owner == "term" and events[2].owner == "term")
+term.setup(); assert(next_event == 2)
 local old_paste = events[1].fn
 command("close"); assert(notices[#notices] == "no terminal is open")
 local encode = term.encode
@@ -119,6 +125,11 @@ assert(p.spec.on_key("shift+pageup")); p.spec.render({ width = 30, height = 8 })
 assert(j.size.scroll == 1 and #j.writes == writes)
 assert(p.spec.on_key("shift+pagedown")); p.spec.render({ width = 30, height = 8 })
 assert(j.size.scroll == 0)
+assert(mouse({ panel = p.id, panel_row = 2, panel_col = 3, action = "down", button = "left" }))
+assert(j.writes[#j.writes] == "\27[<0;3;2M")
+assert(mouse({ panel = p.id, panel_row = 2, panel_col = 3, action = "up", button = "left" }))
+assert(j.writes[#j.writes] == "\27[<3;3;2m")
+writes = #j.writes
 term.passthrough["alt+w"] = true
 assert(p.spec.on_key("alt+w") == false)
 assert(p.spec.on_key("ctrl+]") and focused == nil and #j.writes == writes)
@@ -155,7 +166,7 @@ assert(jobs[4].cancelled == 1 and term.job("term2") == nil)
 -- Unloading a dependency that first required term can evict its cache entry.
 package.loaded["bone.ui.terminal"] = nil
 assert(require("bone.ui.terminal") == term and term.setup == old_setup)
-assert(term.job(p2.id) == j2 and next_event == 1)
+assert(term.job(p2.id) == j2 and next_event == 2)
 -- A windows-like wrapper keeps the same table/open trampoline across reload.
 local original_open, wrapper_calls = term.open, 0
 term.open = function(spec, opts) wrapper_calls = wrapper_calls + 1; return original_open(spec, opts) end
@@ -163,7 +174,7 @@ owner = "windows"
 local foreign = term.open({ id = "foreign", on_close = function() error("user close error") end })
 local foreign_job = jobs[5]
 assert(foreign.owner == "windows" and foreign_job.owner == "windows")
-assert(next_event == 1) -- Paste handler was not lazily registered as windows.
+assert(next_event == 2) -- handlers were not lazily registered as windows.
 local old_shutdown = shutdowns[1]
 old_shutdown()
 assert(next(panels) == nil and next(events) == nil and term.job(foreign.id) == nil)
@@ -178,7 +189,7 @@ local reloaded = load()
 assert(reloaded == term and term.passthrough["alt+w"])
 local fresh = term.open({ id = "foreign" })
 assert(wrapper_calls >= 3 and panels.foreign == fresh)
-assert(next_event == 2 and events[2].owner == "term")
+assert(next_event == 4 and events[3].owner == "term" and events[4].owner == "term")
 -- Old-generation callbacks and shutdown cannot cancel a new same-id terminal.
 old_shutdown(); old_setup(); old_paste({ text = "late" }); foreign.spec.on_close(foreign)
 assert(panels.foreign == fresh and jobs[#jobs].cancelled == 0)
@@ -194,7 +205,7 @@ local ja = term.job(a.id)
 local b = term.open({ id = "b", on_close = function() error("bad close") end })
 local jb = term.job(b.id)
 term.close_all()
-assert(next(panels) == nil and ja.cancelled == 1 and jb.cancelled == 1 and events[3])
+assert(next(panels) == nil and ja.cancelled == 1 and jb.cancelled == 1 and events[5])
 assert(term.toggle().id == "term1")
 -- Keep the final visible screen when Bone evicts a finished job. Cursor
 -- decoration must not mutate the retained screen or leak into blurred renders.

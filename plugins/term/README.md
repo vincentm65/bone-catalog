@@ -18,8 +18,9 @@ this plugin does not replace them there.
 - **ctrl+]** or **ctrl+5**: open/focus the last terminal from the prompt; inside
   the terminal, return to the prompt. ctrl+5 is the legacy-terminal encoding of
   ctrl+]. **esc** is sent to the program (for editors and other interactive apps).
-- **shift+pageup / shift+pagedown**: scroll terminal history. Typing or pasting
-  returns to live output. Paste honors the program's bracketed-paste mode.
+- **wheel**, **pageup / pagedown**, and **home / end**: scroll terminal history.
+  Typing or pasting returns to live output. Programs that enable xterm mouse
+  reporting receive clicks, drags, and wheel events. Paste honors bracketed paste.
 
 New terminals dock at the bottom, occupying 40% of the available space. Their
 working directory defaults to the current chat's directory. After Bone expires

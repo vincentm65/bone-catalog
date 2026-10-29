@@ -1,6 +1,6 @@
 {
   "title": "Terminal",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Interactive shells and command output in terminal panels, with keyboard focus and scrollback",
   "min_bone_version": "3.0.3",
   "capabilities": ["command", "ui", "system"]

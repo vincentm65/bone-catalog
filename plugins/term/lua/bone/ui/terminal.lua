@@ -3,7 +3,9 @@
 -- bone.ui.panel option (dock, size, hidden, …) passes through, or put
 -- "panel:<id>" in bone.ui.layout. While it has the keyboard every key goes to
 -- the program except those in M.escape, which gives the keyboard back to the prompt;
--- shift+pageup/pagedown scroll back.
+-- wheel and page keys scroll back when the child has not enabled mouse
+-- reporting. Programs that enable xterm mouse reporting receive clicks,
+-- drags and wheel events instead.
 --
 --   local term = require("bone.ui.terminal")
 --   term.open({ id = "logs", dock = "right", size = 0.5 }, { cmd = "tail -f log" })
@@ -34,6 +36,11 @@ local last
 local function shift_scroll(t, by)
   local max = t.screen and t.screen.max or 0
   t.scroll = math.max(0, math.min(max, t.scroll + by))
+end
+
+local function page_scroll(t, direction)
+  local page = math.max(1, (t.screen and #t.screen.lines or 24) - 1)
+  shift_scroll(t, direction * page)
 end
 
 -- Key names (as on_key gets them) to the bytes a terminal sends.
@@ -143,9 +150,18 @@ local function on_key(id, t, key)
     return false
   elseif M.escape[key] then
     bone.ui.panel.focus(nil)
-  elseif key == "shift+pageup" or key == "shift+pagedown" then
-    local page = math.max(1, (t.screen and #t.screen.lines or 24) - 1)
-    shift_scroll(t, key == "shift+pageup" and page or -page)
+  elseif key == "wheelup" then
+    shift_scroll(t, 3)
+  elseif key == "wheeldown" then
+    shift_scroll(t, -3)
+  elseif key == "pageup" or key == "shift+pageup" then
+    page_scroll(t, 1)
+  elseif key == "pagedown" or key == "shift+pagedown" then
+    page_scroll(t, -1)
+  elseif key == "ctrl+home" or (key == "home" and (t.screen and t.screen.max or 0) > 0) then
+    shift_scroll(t, 1e9)
+  elseif key == "ctrl+end" or (key == "end" and (t.screen and t.screen.max or 0) > 0) then
+    t.scroll = 0
   else
     local bytes = encode(key, t.screen and t.screen.app_cursor)
     if bytes then
@@ -157,6 +173,54 @@ local function on_key(id, t, key)
 end
 
 local pasting
+local mouse_events
+
+local function mouse_position(ev)
+  local id = ev.panel
+  if not id and type(ev.region) == "string" then
+    id = ev.region:match("^panel:(.+)$")
+  end
+  if not id then return end
+  local t = terms[id]
+  if not t or not t.screen then return end
+  local row = ev.panel_row or ev.row
+  local col = ev.panel_col or ev.col
+  if not (row and col and row > 0 and col > 0) then return end
+  return id, t, row, col
+end
+
+local function mouse_code(t, ev)
+  local mode = t.screen.mouse
+  if mode == nil or mode == "none" then return end
+  local action, button = ev.action, ev.button
+  if action == "up" and mode == "press" then return end
+  if action == "drag" and mode ~= "button_motion" and mode ~= "any_motion" then return end
+  local code
+  if action == "wheel" then
+    code = button == "up" and 64 or 65
+  else
+    code = ({ left = 0, middle = 1, right = 2 })[button]
+    if code == nil then return end
+    if action == "up" then
+      code = 3
+    elseif action == "drag" then
+      code = code + 32
+    end
+  end
+  local row, col = ev.panel_row or ev.row, ev.panel_col or ev.col
+  if t.screen.mouse_encoding == "sgr" then
+    return string.format("\27[<%d;%d;%d%s", code, col, row, action == "up" and "m" or "M")
+  end
+  if t.screen.mouse_encoding == "utf8" then
+    return "\27[M" .. utf8.char(32 + code, 32 + col, 32 + row)
+  end
+  -- The legacy encoding is deliberately capped to its printable range. SGR
+  -- is what modern programs request when they need larger coordinates.
+  col, row = math.min(223, col), math.min(223, row)
+  local suffix = string.char(32 + code, 32 + col, 32 + row)
+  return "\27[M" .. suffix
+end
+
 function M.setup()
   if stopped or pasting then
     return
@@ -173,6 +237,24 @@ function M.setup()
     end
     t.scroll = 0
     t.job:write(text)
+  end)
+  mouse_events = bone.on("mouse", function(ev)
+    local id, t = mouse_position(ev)
+    if not id then return end
+    local bytes = mouse_code(t, ev)
+    if not bytes then
+      -- A terminal without mouse reporting still gets conventional wheel
+      -- scrolling while it has the pointer over it.
+      if ev.action == "wheel" then
+        shift_scroll(t, ev.button == "up" and 3 or -3)
+        return true
+      end
+      return
+    end
+    bone.ui.panel.focus(id)
+    t.scroll = 0
+    t.job:write(bytes)
+    return true
   end)
 end
 
@@ -300,6 +382,9 @@ function M.shutdown()
   end
   local handler = pasting
   pasting = nil
+  if handler then pcall(bone.off, handler) end
+  handler = mouse_events
+  mouse_events = nil
   if handler then pcall(bone.off, handler) end
   M.close_all()
 end
