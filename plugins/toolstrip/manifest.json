@@ -1,6 +1,6 @@
 {
   "title": "Toolstrip",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "description": "Show tool timelines consistently in the TUI and GUI; history uses equal-width segments",
   "min_bone_version": "3.0.3",
   "capabilities": [

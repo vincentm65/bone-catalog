@@ -581,7 +581,10 @@ local function bar_line(s, turn, width, item_index)
   local source, total, running = turn_segments(s, turn)
   if not source or #source == 0 then return nil end
   if width < 8 then return { { bone.text.truncate("·", width), "Dim" } } end
-  local right = " " .. bone.util.duration(total / 1000)
+  -- The time right-aligned in a column wide enough for any ("10m 05s"),
+  -- so every earlier turn's bar ends at the same column.
+  local time = bone.util.duration(total / 1000)
+  local right = " " .. string.rep(" ", math.max(0, 7 - bone.strwidth(time))) .. time
   local cells = math.max(1, width - 2 - bone.strwidth(right))
   local spans, list = draw_bar(source, running, cells, 3)
   view_hits[hit_key(item_index)] = { turn = turn, line = nil, segments = list }
@@ -596,8 +599,11 @@ local function folded_line(item, ctx)
   local turn = turn_for_item(s, item)
   if not turn then return nil end
   local text = ((item.text or ""):match("^%s*([^\n]*)") or ""):gsub("%s+", " ")
-  text = bone.text.truncate(text, math.max(8, math.floor(ctx.width * 0.30)))
-  local prefix = "› " .. text .. " "
+  -- The message padded to one width, so every folded row's bar starts at
+  -- the same column whatever its message's length.
+  local room = math.max(8, math.floor(ctx.width * 0.30))
+  text = bone.text.truncate(text, room)
+  local prefix = "› " .. text .. string.rep(" ", math.max(0, room - bone.strwidth(text))) .. " "
   local remaining = ctx.width - bone.strwidth(prefix)
   local bar = remaining >= 8 and bar_line(s, turn, remaining + 2, item.index) or nil
   if not bar then return { { { bone.text.truncate(prefix, ctx.width), "Dim" } } } end
