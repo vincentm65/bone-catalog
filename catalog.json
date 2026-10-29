@@ -835,7 +835,7 @@
     "name": "toolstrip",
     "title": "Toolstrip",
     "kind": "plugin",
-    "version": "1.1.8",
+    "version": "1.1.9",
     "description": "Show tool timelines consistently in the TUI and GUI; history uses equal-width segments",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -853,11 +853,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "f9a4721341f5c74269af53ec63c85c3cb14812ff4b0ed6364aee550ecb2c291e"
+        "sha256": "05c91a41814d2b3b81b388624c7df1307e01630632ef4444df783b98462564a4"
       },
       {
         "path": "tui.lua",
-        "sha256": "10a39a3e7c5aae9ef8a76ab6155feaed86c7646d1ad429a6af973fa33b5434e5"
+        "sha256": "e2784af381376bc0f2e8570f1ae6074e2322e406077106302c960f0993b8b2d2"
       },
       {
         "path": "ui.lua",

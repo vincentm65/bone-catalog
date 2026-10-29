@@ -223,7 +223,7 @@ end
 -- answer after its last call ("answer").
 local function add_model(out, start, finish, live, key, scroll, kind)
   local duration = math.max(0, (finish or start or 0) - (start or 0))
-  if duration > 0 or #out == 0 then
+  if duration > 0 or live or #out == 0 then
     out[#out + 1] = {
       kind = kind or "model", duration = duration, start = start, finish = finish, live = live,
       key = key, scroll_index = scroll,
@@ -425,7 +425,7 @@ local function render_active(ctx)
   end
   line[#line + 1] = "%="
   if right ~= "" then line[#line + 1] = { right, "ToolStripLabel" } end
-  if live then bone.ui.refresh_in(600) end
+  if live or cached.running then bone.ui.refresh_in(600) end
   return { line }
 end
 
@@ -540,7 +540,7 @@ turn_segments = function(s, turn)
   local stop = running and now or (clock and clock.finished) or last_at or start
   if stop < start then stop = start end
 
-  local out, at, previous = {}, start, nil
+  local out, at, previous, calling = {}, start, nil, false
   for i, call in ipairs(calls) do
     local ran = tonumber(call.started_at)
     local began = ran and ran - (tonumber(call.generation_ms) or 0) or at
@@ -560,12 +560,15 @@ turn_segments = function(s, turn)
     }
     at = math.max(at, finish)
     previous = call.index
+    calling = calling or not call.done
   end
   -- After the last call the model is thinking, or, once the turn is over,
-  -- it was writing its answer.
+  -- it was writing its answer. While it thinks the tail is drawn from its
+  -- first moment, however short: it is live, and grows between events.
   local tail = running and "model" or "answer"
+  local thinking = running and not calling
   if not running and stop < at then stop = at end
-  if stop - at >= MIN_GAP then
+  if thinking or stop - at >= MIN_GAP then
     add_model(out, at, stop, running, "model:" .. tostring(turn.index) .. ":tail",
       previous and previous + 1 or turn.first, tail)
   elseif #out == 0 then
