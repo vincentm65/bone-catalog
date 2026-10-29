@@ -28,6 +28,7 @@ local panel
 bone = {
   chat = { session = function() return session end },
   cmd = { create = function(name, fn) commands[name] = fn end },
+  keymap = { set = function(key, action) keys_set = { key = key, action = action } end },
   on = function(name, fn) events[name] = fn end,
   notify = function(text) error(text) end,
   defer = function(_, fn) timers[#timers + 1] = fn end,
@@ -71,7 +72,9 @@ dofile("plugins/git-diff/ui.lua")
 shell("git init; git config user.email test@example.com; git config user.name Test")
 write("tracked", "before\n"); shell("git add tracked")
 commands.diff({ args = "" })
-assert(panel.spec.dock == "right" and panel.spec.size == 0.65 and panel.spec.full_height)
+-- Two fifths of a window of unknown width, so the chat stays in sight.
+assert(panel.spec.dock == "right" and panel.spec.size == 0.4 and panel.spec.full_height)
+assert(keys_set.key == "ctrl+d" and keys_set.action == "/diff")
 finish(jobs[#jobs]); panel.spec.keys.enter(); assert(contains(text(), "before")) -- unborn HEAD
 shell("git commit -m initial")
 write("tracked", "staged\n"); shell("git add tracked")

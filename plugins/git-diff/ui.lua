@@ -294,7 +294,65 @@ local function on_key(key)
   return false
 end
 
+-- The desktop library's widgets, when it has them: the patch, rows, mode
+-- switch and key hints then look like the rest of the window. Without them
+-- (another library) the plain nodes below stand in.
+local has_widgets, widgets = pcall(require, "bone.nodes.widgets")
+local has_style, style = pcall(require, "bone.nodes.style")
+has_widgets = has_widgets and has_style and type(widgets.diff) == "function"
+local MODES = { "all", "unstaged", "staged" }
+
+local function styled_node()
+  local added, deleted = 0, 0
+  for _, file in ipairs(files) do
+    added, deleted = added + file.added, deleted + file.deleted
+  end
+  local current = 1
+  for i, m in ipairs(MODES) do if m == mode then current = i end end
+  local patch = active or #files == 0
+  local body = { id = body_id(), grow = 1, height = 0, direction = "column", overflow = "scroll" }
+  if patch then
+    local list = {}
+    for _, row in ipairs(active and filtered_rows() or rows) do
+      list[#list + 1] = row.sign and row or { text = row.text, hl = row.group }
+    end
+    body[#body + 1] = widgets.diff(list, { numbers = active ~= nil })
+  else
+    for i, entry in ipairs(nodes) do
+      local index, file, on = i, entry.file, i == selected
+      local mark = file and "" or (collapsed[entry.path] and "▸ " or "▾ ")
+      body[#body + 1] = widgets.press({
+        direction = "row", gap = style.space.lg, align = "center", radius = style.radius.sm,
+        padding = { style.space.xs, style.space.md, style.space.xs, style.space.md + (entry.depth or 0) * 14 },
+        bg = on and "Selection" or nil, focusable = false,
+        { text = mark .. entry.name:gsub("%c", " ") .. (file and "" or "/"), size = style.size.caption,
+          hl = file and "Normal" or "Dim", grow = 1, width = 0, wrap = false, text_overflow = "ellipsis" },
+        file and { text = "+" .. file.added .. " −" .. file.deleted, size = style.size.small, hl = "Dim",
+          font = "mono", wrap = false, shrink = 0 } or nil,
+      }, function() if panel then panel:focus() end choose(index) end, "option")
+    end
+  end
+  return {
+    direction = "column", grow = 1, gap = style.space.md, overflow = "hidden",
+    widgets.segmented({ "All tracked", "Unstaged", "Staged" }, current, function(i)
+      mode = MODES[i]
+      refresh(true)
+    end),
+    {
+      direction = "row", gap = style.space.md, align = "center", padding = { 0, style.space.xs },
+      { text = #files .. (#files == 1 and " file" or " files"), size = style.size.small, hl = "Dim", wrap = false },
+      { text = "+" .. added, size = style.size.small, hl = "DiffAdd", wrap = false },
+      { text = "−" .. deleted, size = style.size.small, hl = "DiffDelete", wrap = false },
+    },
+    active and widgets.link("‹ " .. active.path:gsub("%c", " "), back, { size = style.size.small, wrap = false,
+      text_overflow = "ellipsis" }) or nil,
+    body,
+    widgets.hints(active and "b files · r refresh · q close" or "enter open · s mode · r refresh · q close", { 0, 0 }),
+  }
+end
+
 local function gui_node(ctx)
+  if has_widgets then return styled_node() end
   ctx = ctx or {}
   local added, deleted = 0, 0
   for _, file in ipairs(files) do
@@ -337,7 +395,6 @@ local function gui_node(ctx)
     or "Enter open   s mode   r refresh   q close"
   return {
     direction = "column", grow = 1, gap = 6, overflow = "hidden",
-    { text = "Git diff", hl = "PanelTitle", bold = true },
     press({
       direction = "row", gap = 8, align = "center",
       { text = labels[mode], hl = "PopupTitle", bold = true, wrap = false },
@@ -359,9 +416,26 @@ local function gui_node(ctx)
   }
 end
 
+-- The sidebar's share of the window: room for about 110 columns of patch,
+-- between a quarter and two fifths, so the chat stays in sight.
+local function width()
+  local cols
+  local gui = desktop()
+  if gui and gui.window_info then
+    cols = (gui.window_info() or {}).columns
+  elseif bone.ui.geometry then
+    local ok, g = pcall(bone.ui.geometry)
+    for _, leaf in ipairs(ok and g and g.leaves or {}) do
+      cols = math.max(cols or 0, leaf.x + leaf.width)
+    end
+  end
+  if not cols or cols <= 0 then return 0.4 end
+  return math.max(0.25, math.min(0.4, 110 / cols))
+end
+
 local function open()
   panel = bone.ui.panel.open({
-    id = "git-diff", dock = "right", size = 0.65, full_height = true, focus = true,
+    id = "git-diff", dock = "right", size = width(), full_height = true, focus = true,
     render = function(ctx)
       if not cache or cache_width ~= ctx.width then
         cache, cache_width = render(ctx.width), ctx.width
@@ -406,6 +480,11 @@ bone.cmd.create("diff", function(args)
     open()
   end
 end, { desc = "toggle the right Git diff sidebar (/diff refresh to refresh)" })
+bone.keymap.set("ctrl+d", "/diff")
+
+bone.on("resize", function()
+  if panel and panel:is_open() then panel:update({ size = width() }) end
+end)
 
 bone.on("mouse", function(ev)
   if not panel or not panel:is_open() or ev.panel ~= "git-diff"

@@ -3,7 +3,11 @@ local tools, chats, events = {}, {}, {}
 local current, panel
 local highlights = {}
 bone = {
-  hl = { set = function(name, spec) highlights[name] = spec end },
+  hl = {
+    set = function(name, spec) highlights[name] = spec end,
+    names = function() return { "DiffAdd" } end,
+    get = function(name) return name == "DiffAdd" and { fg = "#60ae81", bg = "#1f3a2a" } or {} end,
+  },
   tool = { register = function(spec) tools[spec.name] = spec end },
   hook = function() end,
   chat = {
@@ -80,20 +84,21 @@ local lines = panel.spec.render()
 assert(panel.spec.dock == "bottom" and panel.spec.title == false)
 assert(lines[1][1][1] == "" and lines[2][1][1] == "Todo 0/1 — Parser fixes")
 assert(lines[3][1][1] == "▸ " and lines[3][2][1] == "new" and lines[3][2][2] == "TodoActive")
-assert(highlights.TodoCheck.fg == "green" and highlights.TodoDone.strikethrough)
+-- The check is the theme's green, without DiffAdd's band.
+assert(highlights.TodoCheck.fg == "#60ae81" and not highlights.TodoCheck.bg and highlights.TodoDone.strikethrough)
 assert(type(panel.spec.node) == "function")
 local node = panel.spec.node()
-assert(node[1].text == "Todo 0/1 — Parser fixes" and node[1].hl == "PanelTitle")
-assert(node[2][1].text == "▸ " and node[2][1].hl == "Accent")
-assert(node[2][2].text == "new" and node[2][2].hl == "TodoActive" and node[2][2].bold)
+-- Without the desktop library: plain rows, the title the panel's own.
+assert(node[1][1].text == "▸ " and node[1][1].hl == "Accent")
+assert(node[1][2].text == "new" and node[1][2].hl == "TodoActive" and node[1][2].bold)
 chats.A[2].arguments.items[2] = { text = "finished", status = "completed" }
 lines = panel.spec.render()
 assert(lines[4][1][1] == "✓ " and lines[4][1][2] == "TodoCheck")
 assert(lines[4][2][1] == "finished" and lines[4][2][2] == "TodoDone")
 assert(lines[4][3].hl == "Normal", "strikethrough must not extend through row padding")
 node = panel.spec.node()
-assert(node[3][1].text == "✓ " and node[3][1].hl == "TodoCheck")
-assert(node[3][2].text == "finished" and node[3][2].hl == "TodoDone" and node[3][2].strike)
+assert(node[2][1].text == "✓ " and node[2][1].hl == "TodoCheck")
+assert(node[2][2].text == "finished" and node[2][2].hl == "TodoDone" and node[2][2].strike)
 current = "B"; assert(#panel.spec.render() == 0 and panel.hidden)
 events["turn/finished"]({ session_id = "B" }); assert(panel.hidden)
 current = "A"; events["/todo"](); assert(not panel.hidden)

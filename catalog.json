@@ -250,8 +250,8 @@
     "name": "git-diff",
     "title": "Git Diff",
     "kind": "plugin",
-    "version": "1.1.4",
-    "description": "Read-only Git diffs in a wide right sidebar, in the terminal and the desktop app, with a clickable file tree",
+    "version": "1.1.5",
+    "description": "Read-only Git diffs in a right sidebar, in the terminal and the desktop app, with a clickable file tree",
     "min_bone_version": "0.1.0",
     "capabilities": [
       "command",
@@ -261,7 +261,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "ad58115000e22c8ee30ad7f4a4cf32c4330febb9c50342436890933b23cb33b4"
+        "sha256": "6c4495a3f847b79b9f5f751cc4cde953dc163fd06e832ebf1158c611cfffc41a"
       },
       {
         "path": "lua/git_diff.lua",
@@ -273,11 +273,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "83776bb453a2e1d7bd2a2a935630375b62e5e9fa690265c63e063d539cf3f091"
+        "sha256": "524d1bde9fc95d285e0e424828d330dc5ff433c989c874daa6da5f1188927cd7"
       },
       {
         "path": "ui.lua",
-        "sha256": "55b0c118fda934be2e1635f0cc4a6b3ae730601956e5e8df46766b5ba38d1de6"
+        "sha256": "c168b39654c4bfc74d2478ca39c5c37ab439863d074a5290949fe942f07a895f"
       }
     ]
   },
@@ -805,7 +805,7 @@
     "name": "todo",
     "title": "Todo",
     "kind": "plugin",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "description": "A checklist the model keeps for multi-step work, shown under that chat in the terminal and the desktop app",
     "min_bone_version": "0.1.0",
     "capabilities": [
@@ -815,7 +815,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "ea27958d089aac45122ad8fbae7f70676e4d4fbc9e5ef79455b7513dda3fde21"
+        "sha256": "22cce40820e78bca0b2ea1f49d339acccfcd176aca55a83e42b35d8468205a1b"
       },
       {
         "path": "core.lua",
@@ -823,11 +823,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "fdff60429206c0398315293d479db5207f713ba419173af8fb43b4eec55c1f23"
+        "sha256": "9c4b349e62773256ed9cbf2204c1146658e5840e729aa79b6af6d8a830768850"
       },
       {
         "path": "ui.lua",
-        "sha256": "03fec16debb314dbf67d96114e9376f39a5a8b4207d6c2c6b7a76a697678b5cf"
+        "sha256": "27059f7def1155c41cb046290c4e266f6b09af4b5c1c657ab9eeb7ae60ec4ae8"
       }
     ]
   },

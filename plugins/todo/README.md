@@ -12,14 +12,16 @@ survives any number of later tool calls. A call that is still running does
 not replace the previous list until it finishes. Sub-agents start empty, and
 a fork keeps its parent's list. The terminal and the desktop app both show
 that chat's list in a drawer across the bottom. In the terminal there is a
-blank row above the title and progress count; the desktop drawer shows the
-same title, count and marks. It hides when the list is empty or every item
-is completed. `/todo` shows an unfinished list again. The drawer is as tall
-as the list plus its spacer and heading, up to the panel cap of 10 rows
-(the desktop list scrolls inside that cap). Pointer clicks do not edit the
-list.
-Completed items have green checkmarks and muted, struck-through text;
-the active item is bold with an accent-colored arrow. Native strikethrough
+blank row above the title and progress count; the desktop drawer has the
+same title and count as its panel title over the desktop library's
+checklist (plain rows where that library has none), above the prompt. It
+hides when the list is empty or every item is completed. `/todo` shows an
+unfinished list again. The drawer is as tall as the list, up to the panel
+cap of 10 rows. Pointer clicks do not edit the list.
+Completed items have checkmarks in the theme's green (DiffAdd's) and muted,
+struck-through text; the active item is bold with an accent-colored arrow. A
+colorscheme or config that defines `TodoCheck`, `TodoDone` or `TodoActive`
+keeps its own. Native strikethrough
 in the terminal requires a Bone build supporting `bone.hl.set(..., { strikethrough = true })`
 and a terminal that supports SGR 9. The desktop app draws the same strike.
 The tool never makes the model keep working or queues another turn.

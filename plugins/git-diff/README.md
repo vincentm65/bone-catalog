@@ -1,7 +1,8 @@
 # Git Diff
 
-A read-only Git diff viewer in a full-height right sidebar (about two thirds
-of the window), in the terminal and the desktop app. Uses Bone's existing
+A read-only Git diff viewer in a full-height right sidebar (room for about 110
+columns of patch, between a quarter and two fifths of the window, so the chat
+stays in sight), in the terminal and the desktop app. Uses Bone's existing
 `DiffAdd` / `DiffDelete` background bands across the whole row, wrapped code
 beside a fixed line-number gutter, and a file tree whose counts sit on the
 right. The prompt and chat stay on the left. Small terminals and other docked
@@ -12,7 +13,7 @@ Install `git-diff` through `/catalog` (or copy this folder into
 No core plugin or new theme is needed. The initial view is a collapsible changed-file
 tree with per-file addition/deletion counts; opening a file shows only its patch.
 
-- `/diff`: open/focus the sidebar, or close it if already open.
+- `/diff` or `ctrl+d`: open/focus the sidebar, or close it if already open.
 - `/diff refresh`: open it if closed, otherwise refresh without moving the scroll.
 - `r`: refresh.
 - `s`: cycle **All tracked → Unstaged → Staged**.
