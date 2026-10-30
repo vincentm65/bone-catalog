@@ -697,6 +697,44 @@
     ]
   },
   {
+    "name": "summary",
+    "title": "Summary",
+    "kind": "plugin",
+    "version": "1.0.0",
+    "description": "Show a short summary before each answer",
+    "min_bone_version": "3.0.4",
+    "capabilities": [
+      "ui",
+      "model"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "bfe414acbbe0c9af9cf42ac8c2cf67ed1f64fc8c2f76fffb96b088b8b88218d2"
+      },
+      {
+        "path": "gui.lua",
+        "sha256": "92fdad74fc8268773d76ef41b4c50398ff4cd1e82cdfeb221631a90a11e5b543"
+      },
+      {
+        "path": "lua/summary.lua",
+        "sha256": "33eb2c57a06e88fee9eec3162ac71030402fa9f99f6922b15f6bfead6fcf1f21"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "2251d9e71877579d125980b6c56cf5c4782874d0a0723e84fbf60b2222a3f017"
+      },
+      {
+        "path": "tui.lua",
+        "sha256": "dec8f041b9130ff7a06d76e970cbb79ba12fe3bef1ffc0d24306d2660475a439"
+      },
+      {
+        "path": "ui.lua",
+        "sha256": "23bdc47969f15d9184da9984c37c076bf971a6cb891fd67c982d10ef771c04dd"
+      }
+    ]
+  },
+  {
     "name": "term",
     "title": "Terminal",
     "kind": "plugin",
