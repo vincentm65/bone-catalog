@@ -35,9 +35,10 @@ Cancelled children retain their slots until their turns finish.
 on the right. Every change is saved at once.
 
 - `n` creates an agent (a name, then its fields); `r` renames, `d` deletes.
-- Enter on an agent moves to its fields: description (advertised to the
-  model), system prompt, provider, model and allowed tools. Enter edits;
-  `x` clears a field so it inherits the default.
+- Up/down move through the agents and then the selected one's fields:
+  description (advertised to the model), system prompt, provider, model and
+  allowed tools. Enter (or a click) edits a field; `x` clears it so it inherits
+  the default.
 - The system prompt takes multiple lines (enter adds one, ctrl+s saves).
 - Provider is picked from your configured providers.
 - Tools: comma-separated names, `*` for all, `none` for no tools.
@@ -61,7 +62,7 @@ bone.config.subagents.reviewer = {
 ```
 
 - core half: yes
-- UI: yes, in the terminal and the desktop app (`/subagents` editor; click an agent or a field, or New / Rename / Delete / Inherit; owned sessions shown by Bone itself)
+- UI: yes, one view for the terminal and the desktop app (`/subagents` editor; click an agent or a field, or New / Rename / Delete; owned sessions shown by Bone itself)
 - needs a Bone 3 core with `bone.session.create` / `bone.session.run`
 - Per-agent/default model overrides and reliable cancellation cleanup require
   a core with request-hook `model` support and cancellation-safe `turn_end` hooks.

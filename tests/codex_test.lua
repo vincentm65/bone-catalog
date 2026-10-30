@@ -59,18 +59,21 @@ local quota = { plan_type = "plus", rate_limit = { primary_window = {
 bone.rpc.call = function(name, args, cb) assert(name == "codex.usage"); cb(quota) end
 assert(commands.usage == commands["codex-usage"])
 commands.usage()
-local text = {}
-local bars = {}
-for _, line in ipairs(page) do
-  local parts = {}
-  for _, span in ipairs(line) do parts[#parts + 1] = span[1] end
-  text[#text + 1] = table.concat(parts)
-  if #line == 4 then bars[#bars + 1] = line end
+-- The page is one element tree: its words, and its meters.
+local function read(tree)
+  local text, meters = {}, {}
+  local function walk(el)
+    if type(el) ~= "table" then return end
+    if el.kind == "meter" then meters[#meters + 1] = el end
+    for _, k in ipairs({ "text", "title", "label" }) do if type(el[k]) == "string" then text[#text + 1] = el[k] end end
+    for i = 1, table.maxn(el) do walk(el[i]) end
+  end
+  walk(tree)
+  return table.concat(text, "\n"), meters
 end
-assert(#bars == 2)
-assert(bars[1][2][1] == string.rep("█", 18) and bars[1][3][1] == string.rep("░", 6))
-assert(bars[1][2][2] == "Accent" and bars[2][2][2] == "WarningMsg")
-text = table.concat(text, "\n")
+local text, meters = read(page)
+assert(page.kind == "column" and #meters == 2)
+assert(meters[1].value == 0.75 and meters[1].tone == "accent" and meters[2].tone == "warning")
 assert(text:find("Plan: plus", 1, true))
 assert(text:find("5-hour window", 1, true) and not text:find("%% used"))
 assert(text:find("75% remaining", 1, true))
@@ -78,15 +81,8 @@ assert(text:find("7-day window", 1, true) and text:find("Resets:", 1, true))
 assert(text:find("Credits: 10", 1, true))
 quota.rate_limit.primary_window.used_percent = 120
 commands.usage()
-local found = false
-for _, line in ipairs(page) do
-  if #line == 4 and line[2][2] == "ErrorMsg" then
-    assert(line[2][1] == "" and line[3][1] == string.rep("░", 24))
-    assert(line[4][1] == "  0% remaining")
-    found = true
-  end
-end
-assert(found)
+text, meters = read(page)
+assert(meters[1].value == 0 and meters[1].tone == "error" and meters[1].label == "0% remaining")
 bone.rpc.call = function(name, args, cb) cb(nil, "login expired") end
 commands.usage()
 assert(notice[1] == "login expired" and notice[2] == "error")

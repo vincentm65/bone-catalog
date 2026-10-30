@@ -106,39 +106,45 @@ local function type_text(text)
     i = i + 1
   end
 end
-local function render(w, h)
-  local out = popup.lines({ width = w or 90, height = h or 20 })
-  -- bone.ui.box adds one border row above and below the content.
-  -- A 1x1 request still gets the editor's minimum content plus its border.
-  assert(#out <= math.max((h or 20) + 2, 5))
-  local text = {}
-  for _, spans in ipairs(out) do
-    local line = ""
-    for _, span in ipairs(spans) do line = line .. span[1] end
-    -- bone.ui.box adds one cell of border on each side.
-    -- The renderer floors the popup at 48 content cells; the border adds two.
-    -- The editor floors its content near 48 cells; bone.ui.box then adds a
-    -- border, and the footer is one unwrapped line. A 1-cell request cannot
-    -- shrink either.
-    assert(bone.text.width(line) <= math.max((w or 90) + 2, 66), line)
-    text[#text + 1] = line
+-- The popup's view: its words, and its fields in order.
+local function walk(fn)
+  local function go(el)
+    if type(el) ~= "table" then return end
+    fn(el)
+    for _, it in ipairs(el.items or {}) do fn(it) end
+    for i = 1, table.maxn(el) do go(el[i]) end
   end
+  go(popup.view())
+end
+local function render()
+  local text = {}
+  walk(function(el)
+    for _, k in ipairs({ "text", "label", "value" }) do
+      if type(el[k]) == "string" then text[#text + 1] = el[k] end
+    end
+  end)
   return table.concat(text, "\n")
 end
+local function fields()
+  local out = {}
+  walk(function(el) if el.kind == "field" and el.on_press then out[#out + 1] = el end end)
+  return out
+end
+local function editing()
+  local on = false
+  walk(function(el) on = on or (el.kind == "field" and el.editing) end)
+  return on
+end
 local function field(index, value)
-  -- index 2..6 is description, system, provider, model, tools.
-  -- The first call opens the agent; later calls continue from the current field.
-  if index == 2 then key("enter"); key("enter") else key("down") end
-  key("enter")
-  local shown = render(90, 30)
-  if index ~= 4 and not shown:find("Editing", 1, true) and not shown:find("▏", 1, true) then
-    error("field " .. index .. " did not open\n" .. shown)
-  end
+  -- index 2..6 is description, system, provider, model, tools: pressing it
+  -- edits it, as enter or a click on it would.
+  fields()[index - 1].on_press()
+  if index ~= 4 and not editing() then error("field " .. index .. " did not open\n" .. render()) end
   if index == 4 then return end
   key("ctrl+u"); type_text(value)
   local before = #requests
   if index == 3 then popup.on_key("ctrl+s") else key("enter") end
-  if index == 3 and #requests == before then error("system save added no request\n" .. render(90, 30)) end
+  if index == 3 and #requests == before then error("system save added no request\n" .. render()) end
   local spec = settings and settings.reviewer
   if not spec then error("field " .. index .. " did not save; notices=" .. tostring(notices[#notices] and notices[#notices][1])) end
 end
@@ -151,7 +157,6 @@ end
 -- Empty list and all terminal sizes, including an extremely narrow popup.
 command()
 assert(render():find("No agents yet", 1, true))
-for _, size in ipairs({ { 1, 1 }, { 8, 4 }, { 30, 8 }, { 90, 20 } }) do render(size[1], size[2]) end
 -- Creating the agent and accepting each field saves immediately.
 key("n"); paste("reviewer"); key("enter"); finish()
 local function step(label, fn)
@@ -190,7 +195,7 @@ field(5, "other-model")
 finish({ message = "disk full" })
 assert(settings.reviewer.model == saved.reviewer.model)
 -- Clearing a field removes it. Renaming saves the new name immediately.
-key("up"); key("x"); finish(); assert(settings.reviewer.model == nil)
+assert(fields()[4].on_key("x")); finish(); assert(settings.reviewer.model == nil)
 key("r"); key("ctrl+u"); type_text("renamed"); key("enter"); finish()
 assert(settings.renamed and not settings.reviewer)
 local before = #requests

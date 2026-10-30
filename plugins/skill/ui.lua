@@ -24,11 +24,12 @@ bone.cmd.create("skills", function()
     if #list == 0 then
       return bone.notify("no skills (bone.config.skill_dirs or bone.skill.register in core.lua)")
     end
-    local lines = {}
+    local page = { kind = "column" }
     for _, s in ipairs(list) do
-      lines[#lines + 1] = { { s.name, "Accent" }, { "  " .. s.description, "Normal" } }
+      page[#page + 1] = { kind = "row", { kind = "text", text = s.name, tone = "accent", strong = true },
+        { kind = "text", text = s.description } }
     end
-    bone.ui.pager(lines, { title = "Skills" })
+    bone.ui.pager(page, { title = "Skills" })
   end)
 end, { desc = "list skills (skills plugin)" })
 

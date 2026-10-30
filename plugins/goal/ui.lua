@@ -1,7 +1,7 @@
 -- /goal: start a goal, see it in a band under the chat, stop it. The core
 -- half runs the loop; this half asks it (goal.* RPCs) only about sessions
--- with a goal, and overrides nothing shared. The band is drawn in the
--- terminal (render) and the desktop app (node).
+-- with a goal, and overrides nothing shared. The band is one view, drawn by
+-- the terminal and the desktop app alike.
 local alive, panel = true, nil
 local goals = {} -- session_id -> the goal as last fetched
 
@@ -36,38 +36,18 @@ local function arm_clock()
   end
 end
 
-local function band(ctx)
+-- The band: the goal on one line, cut to fit beside how long it has run.
+local function band()
   local g = goals[current()]
   if not g or g.status ~= "running" then return nil end
   arm_clock()
-  local stats = { { "  turn " .. (g.turns + 1) .. "  " .. elapsed(g), "Dim" } }
-  if g.check_ok == false then stats[2] = { "  check ✗", "ErrorMsg" } end
-  local used = 2
-  for _, s in ipairs(stats) do used = used + bone.text.width(s[1]) end
-  local line = { { "◎ ", "Accent" }, { bone.text.truncate((g.text:gsub("%s+", " ")), math.max(8, ctx.width - used)), "Normal" } }
-  for _, s in ipairs(stats) do line[#line + 1] = s end
-  return { bone.text.clip(line, ctx.width) }
-end
-
--- The band's sizes are the desktop library's; the dock draws the card.
-local has_style, S = pcall(require, "bone.nodes.style")
-if not has_style then S = { size = {}, space = { md = 8 } } end
-
-local function goal_node()
-  local g = goals[current()]
-  if not g or g.status ~= "running" then return nil end
-  arm_clock()
-  local text = (g.text:gsub("%s+", " "))
-  local row = {
-    direction = "row", align = "center", gap = S.space.md, width = "100%",
-    { text = "◎", hl = "Accent", size = S.size.body, wrap = false },
-    { text = text, hl = "Normal", size = S.size.body, grow = 1, width = 0, wrap = false, text_overflow = "ellipsis" },
-    { text = "turn " .. (g.turns + 1) .. " · " .. elapsed(g), hl = "Dim", size = S.size.small, wrap = false },
+  return {
+    kind = "row",
+    { kind = "text", text = "◎", tone = "accent" },
+    { kind = "text", text = (g.text:gsub("%s+", " ")), truncate = true },
+    { kind = "text", text = "turn " .. (g.turns + 1) .. " · " .. elapsed(g), tone = "dim" },
+    g.check_ok == false and { kind = "text", text = "check ✗", tone = "error" } or nil,
   }
-  if g.check_ok == false then
-    row[#row + 1] = { text = "check ✗", hl = "ErrorMsg", size = S.size.small, wrap = false }
-  end
-  return row
 end
 
 local function sync()
@@ -77,7 +57,7 @@ local function sync()
   elseif panel and panel:is_open() then
     panel:show()
   else
-    local spec = { id = "goal", dock = "bottom", title = false, focusable = false, render = band, node = goal_node }
+    local spec = { id = "goal", dock = "bottom", title = false, focusable = false, view = band }
     -- One row. The terminal still measures the single clipped line when this
     -- is left unset; the desktop dock treats "auto" as a tall strip.
     if bone.has_capability and bone.has_capability("gui.nodes") then spec.size = 1 end

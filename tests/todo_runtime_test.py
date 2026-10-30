@@ -155,7 +155,7 @@ with tempfile.TemporaryDirectory(prefix="bone-todo-test-") as raw:
             results = [m for m in history if m["role"] == "tool"]
             assert len(results) == 1 and results[0]["call_id"] == "todo_1", results
             assert not results[0].get("is_error", False), results
-            assert results[0]["content"] == "[>] step for " + session, results
+            assert results[0]["content"] == "[>] step for " + session + "\n1 open; mark each completed as you finish it.", results
             assert history[-1]["role"] == "assistant"
             assert history[-1]["content"] == "turn done for " + session, history
             histories[session] = history

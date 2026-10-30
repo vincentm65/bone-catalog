@@ -260,12 +260,11 @@ local function fg_of(group)
   return h and h.fg
 end
 
--- Groups the colorscheme or config already set, before this plugin set any
--- (bone.hl.get resolves any name, so ask bone.hl.names): those are kept.
-local theirs = {}
-for _, name in ipairs(bone.hl.names and bone.hl.names() or {}) do theirs[name] = true end
+-- The dashboard's groups sit under the colorscheme: one that sets them
+-- itself (or the user's config) wins.
 local function define(name, spec)
-  if not theirs[name] then bone.hl.set(name, spec) end
+  spec.default = true
+  bone.hl.set(name, spec)
 end
 
 -- Heat levels 0-4: from the border color up to the accent when both are

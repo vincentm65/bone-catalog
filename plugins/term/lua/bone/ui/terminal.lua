@@ -292,7 +292,7 @@ function M._open(spec, opts)
   -- Do not cancel a live job then fail opening its still-existing panel.
   -- Explicit duplicate ids are errors, just like bone.ui.panel.open.
   assert(not bone.ui.panel.get(id), "panel " .. id .. " is already open")
-  bone.hl.set("TermCursor", { link = "Normal", reverse = true })
+  bone.hl.set("TermCursor", { link = "Normal", reverse = true, default = true })
   local session = bone.chat.session()
   local t = { scroll = 0 }
   t.job = bone.job.start(opts.cmd or { os.getenv("SHELL") or "/bin/sh" }, {

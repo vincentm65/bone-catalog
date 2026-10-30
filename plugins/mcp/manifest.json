@@ -1,1 +1,1 @@
-{"title": "MCP", "version": "1.2.1", "description": "Manage MCP servers: add, sign in (OAuth), reconnect and browse tools", "capabilities": ["mcp", "panel", "command"]}
+{"title": "MCP", "version": "1.3.0", "description": "Manage MCP servers: add, sign in (OAuth), reconnect and browse tools", "capabilities": ["mcp", "panel", "command"],"min_bone_version":"3.0.4"}

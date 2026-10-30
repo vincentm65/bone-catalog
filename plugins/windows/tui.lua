@@ -11,8 +11,10 @@ local drop = require("windows.drop")
 local MIN = 10 -- the fewest cells a resize leaves a window, either way
 local DEFAULT = { "top", { cols = { "left", "chat", "right" }, sep = "│" }, "divider", "above_prompt", "prompt", "statusline" }
 
-bone.hl.set("WinBarActive", { link = "StatusLine", reverse = true })
-bone.hl.set("WinDrop", { fg = "#3d7eff", bg = "#3d7eff" })
+-- Under the colorscheme: a scheme or config that sets them wins. A drop
+-- zone is blank cells in the accent's color.
+bone.hl.set("WinBarActive", { link = "StatusLine", reverse = true, default = true })
+bone.hl.set("WinDrop", { link = "Accent", reverse = true, default = true })
 
 local ok, terminal = pcall(require, "bone.ui.terminal")
 if not ok then terminal = nil end

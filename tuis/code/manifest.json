@@ -1,6 +1,6 @@
 {
   "title": "Code",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Dressed as Visual Studio Code: explorer, tabs, bottom panel and status bar",
   "min_bone_version": "3.0.3"
 }

@@ -13,7 +13,7 @@ if not binary:
     raise SystemExit("set BONE_BIN to a Bone 3 executable")
 config = Path(tempfile.mkdtemp(prefix="bone-todo-tmux-"))
 shutil.copytree(root / "plugins" / "todo", config / "plugins" / "todo")
-(config / "settings.json").write_text(json.dumps({"setup": {"skipped": True}}))
+(config / "settings.json").write_text(json.dumps({"setup": {"skipped": True}, "update": {"check": False}}))
 sockpath = str(config / "bone.sock")
 name = "bone-todo-test-" + str(os.getpid())
 serial, events, screens, client = 0, [], [], None

@@ -56,13 +56,14 @@ def command(value):
     keys("Enter")
 
 
-def field(label, value):
+def field(label, value, save="Enter"):
+    # Down to the next field, enter edits it, typing fills it.
     keys("Down", "Enter")
-    wait("› " + label + ": ▏")
+    wait(label + ": ▏")
     text(value)
     wait(label + ": " + value)
-    keys("Enter")
-    wait("Enter accept", absent=True)
+    keys(save)
+    wait("ctrl+u clear", absent=True)
 
 
 with tempfile.TemporaryDirectory(prefix="bone-subagent-tmux-") as raw:
@@ -76,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix="bone-subagent-tmux-") as raw:
         'bone.config.provider = "test"\n'
     )
     settings_path = config / "settings.json"
-    settings_path.write_text(json.dumps({"setup": {"skipped": True}}))
+    settings_path.write_text(json.dumps({"setup": {"skipped": True}, "update": {"check": False}}))
     launch = shlex.join([
         "env", "-u", "BONE_BASE_URL", "-u", "BONE_MODEL", "-u", "BONE_API_KEY",
         "-u", "BONE_SYSTEM_PROMPT", "-u", "BONE_REASONING_EFFORT",
@@ -87,18 +88,26 @@ with tempfile.TemporaryDirectory(prefix="bone-subagent-tmux-") as raw:
              "-c", str(project), launch)
         wait("Message bone")
         command("/subagents add smoke")
-        wait("Subagents · new agent")
-        wait("Name: smoke▏")
+        wait("New agent name: smoke▏")
         keys("Enter")
-        wait("Enter accept", absent=True)
+        wait("New agent name", absent=True)
         field("Description", "Smoke reviewer")
-        # Type the reversible newline escapes offered by the prompt editor.
-        field("System prompt", r"Review carefully.\nReport only actionable findings.")
-        field("Provider", "test")
+        # The system prompt takes several lines: enter adds one, ctrl+s saves.
+        keys("Down", "Enter")
+        wait("System prompt: ▏")
+        text("Review carefully.")
+        keys("Enter")
+        text("Report only actionable findings.")
+        keys("C-s")
+        wait("ctrl+u clear", absent=True)
+        # The provider is picked from the configured ones.
+        keys("Down", "Enter")
+        wait("provider for smoke")
+        text("test")
+        keys("Enter")
+        wait("provider for smoke", absent=True)
         field("Model", "smoke-model")
         field("Allowed tools", "shell, read_file")
-        keys("C-s")
-        wait("Subagents · smoke")
         expected = {
             "description": "Smoke reviewer",
             "system": "Review carefully.\nReport only actionable findings.",
@@ -110,37 +119,35 @@ with tempfile.TemporaryDirectory(prefix="bone-subagent-tmux-") as raw:
         assert saved["subagent"]["agents"] == {"smoke": expected}, saved
         assert saved["setup"]["skipped"] is True, saved
         keys("Escape")
-        wait("Subagents · named agents")
-        keys("Escape")
-        wait("Subagents ·", absent=True)
+        wait("n new · r rename", absent=True)
         command("/subagents smoke")
-        wait("Subagents · smoke")
-        wait(r"Review carefully.\nReport only actionable findings.")
+        wait("Review carefully.")
+        wait("Report only actionable findings.")
         wait("Model: smoke-model")
         keys("q")
-        wait("Subagents ·", absent=True)
-        # /config exposes the plugin's manifest settings as a Subagents tab.
+        wait("n new · r rename", absent=True)
+        # /config lists the plugin under Plugins; enter opens its settings page.
         command("/config")
         wait("Settings")
-        wait("Subagents")
-        # Built-in pages (e.g. Compaction) may precede this catalog plugin.
-        for _ in range(12):
-            if "Maximum nesting depth" in screen():
+        for _ in range(4):
+            if "Subagents" in screen():
                 break
             keys("Tab")
             time.sleep(0.1)
+        wait("Subagents")
+        keys("Enter")
         wait("Maximum nesting depth")
         wait("Maximum concurrent subagents")
         wait("Default provider")
         wait("Default model")
         wait("Default instructions")
         keys("Escape")
+        keys("Escape")
         wait("Maximum nesting depth", absent=True)
         # Unload/reload and reopen: saved prompts/provider/model survive.
         command("/plugins reload subagent")
         wait("subagent: tui and core reloaded")
         command("/subagents smoke")
-        wait("Subagents · smoke")
         wait("Provider: test")
         wait("Model: smoke-model")
         assert json.loads(settings_path.read_text())["subagent"]["agents"] == {"smoke": expected}

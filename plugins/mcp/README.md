@@ -25,13 +25,14 @@ command, last error, and every tool with its description.
 | `x` | sign out |
 | space | enable or disable (servers added here, in `~/.bone/mcp.json`) |
 | `d` | remove (same) |
-| pgup / pgdn | scroll the tools |
+| up / down | choose a server |
+| pgup / pgdn | scroll |
 
 `/mcp-add NAME COMMAND [ARGS...]` (or `NAME URL`) does the same as `a`.
 
-In the desktop app, click a server to select it and scroll its tools. **Add**,
-**Reconnect**, **Sign in**, **Sign out**, **Enable** / **Disable**, **Remove**
-and **Copy address** run the same actions as the keys.
+The terminal and the desktop app draw the same view. Click a server to select
+it; **Add**, **Reconnect**, **Sign in**, **Sign out**, **Enable** / **Disable**,
+**Remove** and **Copy address** run the same actions as the keys.
 
 ## Signing in
 

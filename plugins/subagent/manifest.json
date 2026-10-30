@@ -1,5 +1,5 @@
 {
-  "version": "2.3.1",
+  "version": "2.4.0",
   "description": "Delegate tasks to sub-agents that run in sessions of their own",
   "capabilities": ["tool"],
   "title": "Subagents",
@@ -37,5 +37,6 @@
       "key": "tools", "label": "Allowed tools", "type": "string", "default": "",
       "desc": "Comma-separated tool names. Blank or * allows all; none or [] allows none. Include subagent to permit nested delegation."
     }
-  ]
+  ],
+  "min_bone_version": "3.0.4"
 }

@@ -119,10 +119,11 @@ local function setup_groups(bg_group)
     local spec = copy(resolved(g))
     spec.link = nil
     spec.bg = bg or spec.bg
+    spec.default = true
     bone.hl.set("AskUser" .. g, spec)
   end
   local cursor = copy(resolved("AskUserNormal"))
-  cursor.reverse = true
+  cursor.reverse, cursor.default = true, true
   bone.hl.set("AskUserCursor", cursor)
 end
 

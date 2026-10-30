@@ -1,7 +1,7 @@
 # Markdown
 
 A standalone, Lua-only Bone 3 plugin. `/md` opens a large popup over the chat with
-searchable Markdown filenames and a themed preview. Nothing is sent to a model,
+searchable Markdown filenames, and reads the one you open. Nothing is sent to a model,
 and your chat and draft stay untouched. No custom runtime overrides or Rust
 changes are required.
 
@@ -19,19 +19,18 @@ python3 install.py md
 - `/md`: browse `.md` files recursively under the current session's working
   directory; a new chat uses Bone's launch directory.
 - `/md docs/usage.md`: select a relative path after discovery.
-- Type in the file pane to filter relative paths; every search word must match.
-  `backspace` edits the filter, and `ctrl+u` clears it.
-- Arrows, mouse wheel, page keys and `home`/`end` select files and preview them.
-- `enter` focuses the reader. `tab`/`shift+tab` switch panes.
-- In the reader, navigation keys scroll and `space` pages down.
+- Type to filter relative paths; every search word must match. `backspace`
+  edits the filter, and `ctrl+u` clears it. The first 500 matches are listed;
+  typing narrows the rest.
+- Up/down, page keys and `home`/`end` choose a file; `enter` (or a click on the
+  chosen one) reads it.
+- In the reader, up/down, page keys and the wheel scroll; `tab`, `b`, left or
+  **‹ Files** go back to the list.
 - `ctrl+r` rescans and reloads the selected file; `esc` closes the popup.
-- In the desktop app, click a file to open it, **Files** or **Preview** to switch
-  panes, and **Refresh** or **Close**. Typing still filters when the file pane is active.
 
-Reading positions are remembered while the popup remains open. Narrow terminals
-show only the active pane. The preview reuses Bone's Markdown renderer, including
-headings, emphasis, links, lists, quotes, fenced code and wrapping tables. Links
-are displayed, not executed.
+The same view is drawn by the terminal and the desktop app. The reader reuses
+Bone's Markdown renderer, including headings, emphasis, links, lists, quotes,
+fenced code and wrapping tables. Links are displayed, not executed.
 
 ## Requirements and limits
 

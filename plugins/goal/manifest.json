@@ -1,7 +1,7 @@
 {
   "title": "Goal",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Keep a chat working on an objective, turn after turn, until it is done: /goal <objective>. A status band shows it in the terminal and the desktop app.",
-  "min_bone_version": "3.0.3",
+  "min_bone_version": "3.0.4",
   "capabilities": ["command", "ui"]
 }

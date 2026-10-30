@@ -13,12 +13,10 @@ local groups = {
 }
 local selected_groups = {}
 
--- bone.hl.get resolves any name (to Normal when undefined), so ask
--- bone.hl.names what the colorscheme or config already defines.
-local defined = {}
-for _, name in ipairs(bone.hl.names()) do defined[name] = true end
+-- Defaults under the colorscheme: a scheme or config that sets them wins.
 local function define(name, spec)
-  if not defined[name] then bone.hl.set(name, spec) end
+  spec.default = true
+  bone.hl.set(name, spec)
 end
 
 -- The same colors as the GUI's strip (runtime/lua/bone/nodes/toolstrip.lua).

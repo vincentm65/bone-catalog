@@ -116,15 +116,28 @@ local function fixture(opts)
   f.help = dofile(ROOT .. "plugins/md/lua/md_browser.lua")
   function f:open(path) self.id = self.help.open(path); return self.id end
   function f:key(k, id) return self.popups[id or self.id].spec.on_key(k) end
-  function f:render(w, h, id)
-    local lines = self.popups[id or self.id].spec.lines({ width = w or 100, height = h or 24 })
-    local strings = {}
-    for _, line in ipairs(lines) do
-      local parts = {}
-      for _, span in ipairs(line) do parts[#parts + 1] = span[1] end
-      strings[#strings + 1] = table.concat(parts)
+  -- The popup's view as words; a Markdown body through bone.ui.markdown.
+  function f:render(_, _, id)
+    local out = {}
+    local function walk(el)
+      if type(el) ~= "table" then return end
+      if el.kind == "markdown" then
+        for _, line in ipairs(bone.ui.markdown(el.text, 88, "")) do
+          local parts = {}
+          for _, span in ipairs(line) do parts[#parts + 1] = span[1] end
+          out[#out + 1] = table.concat(parts)
+        end
+        return
+      end
+      for _, k in ipairs({ "text", "label", "value" }) do
+        if type(el[k]) == "string" then out[#out + 1] = el[k] end
+      end
+      for _, it in ipairs(el.items or {}) do out[#out + 1] = it.text end
+      if el.kind == "list" and #el.items == 0 and el.empty then out[#out + 1] = el.empty end
+      for i = 1, table.maxn(el) do walk(el[i]) end
     end
-    return table.concat(strings, "\n"), lines, strings
+    walk(self.popups[id or self.id].spec.view())
+    return table.concat(out, "\n")
   end
   function f:last(name)
     for i = #self.jobs, 1, -1 do if self.jobs[i].spec.name == name then return self.jobs[i] end end
@@ -175,14 +188,14 @@ end)
 
 test("file filter uses all words, literal punctuation, Unicode backspace and clear", function()
   local f = fixture(); f:open(); f:scan({ "z.md", "notes/é space.md", "other/é.md", "literal[.md" })
-  f:key("é"); contains(f:render(), "Files · 2")
-  f:key("space"); f:key("s"); contains(f:render(), "Files · 1")
+  f:key("é"); contains(f:render(), "Filter · 2 files")
+  f:key("space"); f:key("s"); contains(f:render(), "Filter · 1 file")
   eq(f:last("md read").argv[5], "./notes/é space.md")
   f:key("backspace"); f:key("backspace"); f:key("backspace")
-  contains(f:render(), "Files · 4", "whole Unicode codepoint removed")
-  f:key("["); contains(f:render(), "Files · 1")
+  contains(f:render(), "Filter · 4 files", "whole Unicode codepoint removed")
+  f:key("["); contains(f:render(), "Filter · 1 file")
   eq(f:last("md read").argv[5], "./literal[.md")
-  f:key("ctrl+u"); contains(f:render(), "Files · 4")
+  f:key("ctrl+u"); contains(f:render(), "Filter · 4 files")
   f:key("x"); contains(f:render(), "No matches.")
   eq(f:key("ctrl+z"), false, "unhandled key")
 end)
@@ -193,7 +206,7 @@ test("direct relative path opens reader and normalizes CRLF", function()
   eq(f:last("md read").argv[5], "./docs/a b.md")
   f:read("# Title\r\nhello\r\n")
   local text = f:render(70, 18)
-  contains(text, "docs/a b.md ◂"); contains(text, "# Title"); contains(text, "hello")
+  contains(text, "docs/a b.md"); contains(text, "# Title"); contains(text, "hello")
   eq(f.md_calls[1].text, "# Title\nhello\n"); eq(f.md_calls[1].prefix, "")
   eq(f:key("x"), false, "typing in reader does not filter")
 end)
@@ -211,71 +224,13 @@ end)
 test("missing direct path notifies but leaves file browser usable", function()
   local f = fixture(); f:open("missing.md"); f:scan({ "exists.md" })
   contains(f.notices[1].text, "Markdown file not found: missing.md")
-  contains(f:render(70, 18), "Files · 1 ◂")
+  contains(f:render(70, 18), "Filter · 1 file")
 end)
 
 test("session cwd fallback and default cwd", function()
   local f = fixture({ chat_session = false, api_session = { cwd = "/fallback" } })
   f:open(); eq(f:last("md scan").spec.cwd, "/fallback")
   f = fixture({ chat_session = false }); f:open(); eq(f:last("md scan").spec.cwd, ".")
-end)
-
-test("small geometry is clipped and normal boxed geometry never overflows", function()
-  local f = fixture(); f:open(); f:scan({ string.rep("long", 25) .. ".md" }); f:read(long_document())
-  for _, dims in ipairs({ { 1, 1 }, { 10, 5 }, { 23, 20 }, { 80, 9 }, { 24, 10 }, { 70, 18 }, { 100, 24 }, { 240, 40 } }) do
-    local _, lines = f:render(dims[1], dims[2])
-    assert(#lines <= dims[2], "too many rows for " .. dims[1] .. "x" .. dims[2])
-    for _, line in ipairs(lines) do
-      local n = 0
-      for _, span in ipairs(line) do n = n + width(span[1]) end
-      assert(n <= dims[1], "row too wide for " .. dims[1] .. "x" .. dims[2])
-    end
-  end
-end)
-
-test("Markdown cache reflows only on content or effective width changes", function()
-  local f = fixture(); f:open(); f:scan({ "a.md", "b.md" }); f:read(long_document())
-  f:render(100, 24); eq(#f.md_calls, 1)
-  f:render(100, 24); f:key("enter"); f:key("down"); f:render(100, 24); eq(#f.md_calls, 1)
-  f:render(70, 18); eq(#f.md_calls, 1, "split and single panes may have equal effective width")
-  f:render(68, 18); eq(#f.md_calls, 2)
-  f:render(68, 20); eq(#f.md_calls, 2, "height change doesn't reflow")
-  f:render(240, 24); eq(#f.md_calls, 3); eq(f.md_calls[3].width, 88)
-  f:render(250, 24); eq(#f.md_calls, 3, "width capped at 88")
-  f:key("tab"); f:key("down"); f:read("new content"); f:render(250, 24)
-  eq(#f.md_calls, 4); eq(f.md_calls[4].text, "new content")
-end)
-
-test("reader navigation home/end/page/wheel/space clamps scroll", function()
-  local f = fixture(); f:open("a.md"); f:scan({ "a.md" }); f:read(long_document())
-  contains(f:render(70, 18), "ROW01") -- ten document rows
-  f:key("pagedown"); contains(f:render(70, 18), "ROW11")
-  f:key("space"); contains(f:render(70, 18), "ROW21")
-  f:key("pageup"); f:key("wheelup"); contains(f:render(70, 18), "ROW10")
-  f:key("wheeldown"); contains(f:render(70, 18), "ROW11")
-  f:key("end"); contains(f:render(70, 18), "ROW71"); contains(f:render(70, 18), "80/80")
-  f:key("down"); contains(f:render(70, 18), "ROW71")
-  f:key("home"); f:key("up"); contains(f:render(70, 18), "ROW01")
-end)
-
-test("remembered file scroll survives rendering its asynchronous loading placeholder", function()
-  local f = fixture(); f:open(); f:scan({ "a.md", "b.md" }); f:read(long_document())
-  f:key("enter"); f:render(70, 18); f:key("pagedown"); f:key("pagedown")
-  contains(f:render(70, 18), "ROW21")
-  f:key("tab"); f:key("down"); f:read("B"); f:render(70, 18)
-  f:key("up"); f:key("enter")
-  contains(f:render(70, 18), "Loading document…")
-  f:read(long_document())
-  contains(f:render(70, 18), "ROW21", "returning to a file must restore its saved scroll")
-end)
-
-test("refresh remembers scroll through scan/read loading renders", function()
-  local f = fixture(); f:open("a.md"); f:scan({ "a.md" }); f:read(long_document())
-  f:render(70, 18); f:key("pagedown"); f:key("pagedown")
-  contains(f:render(70, 18), "ROW21")
-  f:key("ctrl+r"); contains(f:render(70, 18), "Scanning Markdown files…")
-  f:scan({ "a.md" }); contains(f:render(70, 18), "Loading document…")
-  f:read(long_document()); contains(f:render(70, 18), "ROW21", "refresh must preserve scroll")
 end)
 
 test("switching file cancels read; stale output/error/exit cannot overwrite new content", function()
@@ -359,17 +314,16 @@ end)
 
 test("empty Markdown and NUL-containing documents", function()
   local f = fixture(); f:open("empty.md"); f:scan({ "empty.md" }); f:last("md read"):exit()
-  contains(f:render(70, 18), "Empty Markdown file."); eq(f.md_calls[1].text, "")
+  contains(f:render(70, 18), "Empty Markdown file."); eq(#f.md_calls, 0)
   f:key("ctrl+r"); f:scan({ "empty.md" }); f:read("a\0b")
-  contains(f:render(70, 18), "Not a text Markdown file"); eq(#f.md_calls, 1)
+  contains(f:render(70, 18), "Not a text Markdown file"); eq(#f.md_calls, 0)
 end)
 
 test("read byte cap allows exactly 1 MiB and rejects larger chunked documents", function()
   local limit = 1024 * 1024
   local f = fixture(); f:open("large.md"); f:scan({ "large.md" })
   f:read(string.rep("x", limit))
-  -- Tiny render avoids expanding a MiB into mock Markdown rows.
-  f:render(10, 5); f:key("ctrl+r"); f:scan({ "large.md" })
+  f:key("ctrl+r"); f:scan({ "large.md" })
   local read = f:last("md read")
   read:stdout(string.rep("x", limit - 1)); read:stdout("xx"); read:stdout(string.rep("y", 100)); read:exit()
   contains(f:render(70, 18), "File exceeds the 1 MiB reader limit."); eq(#f.md_calls, 0)
@@ -386,8 +340,10 @@ test("scan file cap cancels at 20,000 names and reports truncated listing", func
   scan:stdout(table.concat(names)); eq(scan.cancellations, 1)
   scan:stdout("./extra.md\0"); scan:exit("cancelled")
   local text = f:render(130, 24)
-  contains(text, "Files · 20000"); contains(text, "Showing the first 20,000 files; scan limit reached.")
-  f:key("end"); eq(f:last("md read").argv[5], "./f20000.md")
+  contains(text, "Filter · 20000 files"); contains(text, "Showing the first 20,000 files; scan limit reached.")
+  -- 500 are listed at once; typing narrows to the rest.
+  contains(text, "19500 more")
+  f:key("end"); eq(f:last("md read").argv[5], "./f00500.md")
 end)
 
 test("plugin /md command is registered and forwards optional argument; shutdown closes popup", function()

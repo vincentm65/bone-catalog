@@ -1,61 +1,7 @@
--- Project Markdown browser; uses Bone popup, Markdown and job APIs.
+-- Project Markdown browser; uses Bone popup, Markdown and job APIs. One view
+-- for the terminal and the desktop app: the project's Markdown files (type to
+-- filter), then the one opened, read as Markdown.
 local M = {}
-
--- The desktop library's widgets and sizes. Without them (an older bone) the
--- same calls make bare nodes: the layout and presses stay, the look does not.
-local has_w, W = pcall(require, "bone.nodes.widgets")
-local has_s, S = pcall(require, "bone.nodes.style")
-if not (has_w and has_s and type(W.list) == "function" and bone.gui and bone.gui.scroll_item) then
-  S = { size = {}, radius = {}, space = { xs = 2, sm = 4, md = 8, lg = 12, xl = 16 } }
-  local function press(node, click, role)
-    node.on_click, node.cursor, node.role = click, "pointer", role or "button"
-    return node
-  end
-  local function choices(names, current, pick)
-    local row = { direction = "row", gap = 12 }
-    for i, name in ipairs(names) do
-      row[i] = press({ text = name, hl = i == current and "Normal" or "Dim", selected = i == current },
-        function() pick(i) end, "option")
-    end
-    return row
-  end
-  W = {
-    press = press,
-    title = function(text) return { text = text, bold = true } end,
-    note = function(text, _, hl) return { text = text, hl = hl or "Dim" } end,
-    pill = function(text, o) return { text = text, hl = (o or {}).hl or "Accent" } end,
-    divider = function() return { height = 1 } end,
-    hints = function(text) return { text = text, hl = "Dim" } end,
-    button = function(label, click, primary, _, o)
-      local node = press({ text = label, hl = primary and "Accent" or "Normal" }, click)
-      for k, v in pairs(o or {}) do node[k] = v end
-      return node
-    end,
-    checkbox = function(on) return { text = on and "☑" or "☐", hl = on and "Accent" or "Dim", role = "checkbox", selected = on } end,
-    link = function(text, click) return press({ text = text, hl = "Accent" }, click, "link") end,
-    icon_button = function(glyph, label, click) return press({ text = glyph, label = label }, click) end,
-    segmented = choices,
-    tabs = choices,
-    surface = function(o) return o or {} end,
-    entry = function(on, children, click)
-      local node = { direction = "column", bg = on and "Selection" or nil, selected = on }
-      for _, c in ipairs(children) do node[#node + 1] = c end
-      return click and press(node, click, "option") or node
-    end,
-    list = function(list_id, items, _, opts)
-      local col = { id = list_id, direction = "column", grow = 1, overflow = "scroll" }
-      for i, item in ipairs(items) do col[i] = item end
-      if not (opts and opts.footer) then return col end
-      return { direction = "column", grow = 1, col, opts.footer }
-    end,
-    field = function(label, value, o)
-      o = o or {}
-      local node = { text = label .. ": " .. value .. (o.editing and "▏" or "") }
-      return o.click and press(node, o.click) or node
-    end,
-  }
-end
-
 
 local markdown_close
 function M.open(path)
@@ -67,8 +13,7 @@ function M.open(path)
   if markdown_close then markdown_close() end
   local session = bone.chat.session() or bone.api.session() or {}
   local cwd = session.cwd or "."
-  local st = { files = {}, filtered = {}, query = "", sel = 1, pane = "files",
-    rows = 1, top = 0, total = 0, positions = {}, loading = true }
+  local st = { files = {}, filtered = {}, query = "", sel = 1, pane = "files", loading = true }
   local id, scan, read, closed, close_event
   local scan_version, read_version = 0, 0
   local MAX_BYTES, MAX_FILES = 1024 * 1024, 20000
@@ -86,9 +31,8 @@ function M.open(path)
   local function select_file()
     local file = st.filtered[st.sel]
     if file == st.file then return end
-    if st.file then st.positions[st.file] = st.top end
-    st.file, st.top = file, file and st.positions[file] or 0
-    st.text, st.lines, st.read_error = nil, nil, nil
+    st.file = file
+    st.text, st.read_error = nil, nil
     read_version = read_version + 1
     local version = read_version
     cancel(read)
@@ -114,6 +58,7 @@ function M.open(path)
           st.text = table.concat(chunks):gsub("\r\n", "\n")
           if st.text:find("%z") then st.text, st.read_error = nil, "Not a text Markdown file (contains NUL bytes)." end
         end
+        st.tree = nil
         if bone.ui.update and id then bone.ui.update(id, {}) end
       end,
     })
@@ -168,184 +113,105 @@ function M.open(path)
           for i, file in ipairs(st.filtered) do
             if file == wanted then st.sel, found = i, true; break end
           end
-          if found then select_file(); st.pane = "reader"
+          if found then select_file(); st.pane = "reader"; st.tree = nil
           else bone.notify("Markdown file not found: " .. wanted, "error") end
         end
+        st.tree = nil
         if bone.ui.update and id then bone.ui.update(id, {}) end
       end,
     })
   end
-  local function clip(spans, width, pad)
-    local out, left = {}, width
-    for _, span in ipairs(spans) do
-      if left <= 0 then break end
-      local text = bone.text.truncate(span[1]:gsub("[%z\1-\31\127]", " "), left)
-      out[#out + 1], left = { text, span[2] }, left - bone.text.width(text)
-    end
-    if pad and left > 0 then out[#out + 1] = { string.rep(" ", left), "Normal" } end
-    return out
+  local SHOWN = 500 -- files listed at once; filtering finds the rest
+  local function touch()
+    st.tree = nil
+    if bone.ui.update and id then bone.ui.update(id, {}) end
   end
-  local function render(ctx)
-    local w, h = math.max(1, ctx.width - 4), math.max(1, ctx.height - 2)
-    if w < 20 or h < 8 then
-      return { clip({ { "Markdown · enlarge terminal · esc close", "Dim" } }, ctx.width) }
+  local function open_file(i)
+    st.sel, st.pane = i, "reader"
+    select_file()
+    touch()
+  end
+  local function back()
+    st.pane = "files"
+    touch()
+  end
+  local function files_view()
+    local items = {}
+    for i = 1, math.min(#st.filtered, SHOWN) do
+      items[i] = { text = (st.filtered[i]:gsub("[%z\1-\31\127]", " ")) }
     end
-    local inner = w - 4
-    local split = inner >= 76
-    local left = split and math.min(32, math.floor(inner * 0.3)) or inner
-    local right = split and (inner - left - 3) or inner
-    st.rows = h - 6
-    local reader = {}
-    if st.file and st.text then
-      local md_width = math.min(right, 88)
-      if not st.lines or st.line_width ~= md_width then
-        st.lines, st.line_width = bone.ui.markdown(st.text, md_width, ""), md_width
-      end
-      reader = st.lines
-      if #reader == 0 then reader = { { { "Empty Markdown file.", "Dim" } } } end
-    else
-      local message = st.read_error or (st.file and "Loading document…" or "Select a Markdown file to read.")
-      reader = bone.text.wrap({ { message, st.read_error and "Error" or "Dim" } }, right)
-    end
-    st.total = #reader
-    if st.text then st.top = math.max(0, math.min(st.top, st.total - st.rows)) end
-    local visible_top = st.text and st.top or 0
-    local first, list = math.max(1, st.sel - st.rows + 1), {}
-    for i = first, math.min(#st.filtered, first + st.rows - 1) do
-      list[#list + 1] = { { (i == st.sel and "› " or "  ") .. st.filtered[i], i == st.sel and "Selection" or "Normal" } }
-    end
-    if #list == 0 then
-      list = { { { st.loading and "Scanning…" or (#st.files == 0 and "No Markdown files." or "No matches."), "Dim" } } }
-    end
-    local function join(a, b)
-      if not split then return clip(st.pane == "files" and a or b, inner) end
-      local out = clip(a, left, true)
-      out[#out + 1] = { " │ ", "PopupBorder" }
-      for _, span in ipairs(clip(b, right)) do out[#out + 1] = span end
-      return out
-    end
-    local body = {
-      join({ { "Files · " .. #st.filtered .. (st.pane == "files" and " ◂" or ""), "Accent" } },
-        { { (st.file or "Preview") .. (st.pane == "reader" and " ◂" or ""), "Accent" } }),
-      clip({ { st.loading and "Scanning Markdown files…" or "Filter: " .. (st.query == "" and "type in file pane…" or st.query), "Dim" } }, inner),
-      { { string.rep("─", inner), "PopupBorder" } },
+    local more = #st.filtered - #items
+    return {
+      kind = "column",
+      { kind = "text", text = cwd, tone = "dim", truncate = true },
+      st.scan_error and { kind = "text", text = st.scan_error, tone = "warning" } or nil,
+      -- Typing filters while the list shows; ↑↓ choose, enter reads.
+      { kind = "field", label = "Filter · " .. #st.filtered .. (#st.filtered == 1 and " file" or " files"),
+        value = st.query, editing = true, empty = "type to filter" },
+      { kind = "list", items = items, selected = math.min(st.sel, math.max(#items, 1)),
+        on_select = function(i) st.sel = i; select_file(); touch() end, on_press = open_file,
+        empty = st.loading and "Scanning…" or (#st.files == 0 and "No Markdown files." or "No matches.") },
+      more > 0 and { kind = "text", text = more .. " more; type to narrow the list", tone = "dim" } or nil,
+      { kind = "hints", text = "↑↓ choose · enter read · ctrl+r refresh · esc close" },
     }
-    for i = 1, st.rows do body[#body + 1] = join(list[i] or {}, reader[visible_top + i] or {}) end
-    local position = st.file and string.format("%d/%d · ", math.min(st.top + st.rows, st.total), st.total) or ""
-    body[#body + 1] = clip({ { st.scan_error or (position .. "↑↓ move/scroll · enter read · tab panes · ctrl+r refresh · esc close"), "Dim" } }, inner)
-    return bone.ui.box(body, { title = "Markdown · " .. cwd, width = w })
+  end
+  local function reader_view()
+    local body
+    if st.read_error then
+      body = { kind = "text", text = st.read_error, tone = "error" }
+    elseif not st.text then
+      body = { kind = "text", text = st.file and "Loading document…" or "Select a Markdown file to read.", tone = "dim" }
+    elseif st.text == "" then
+      body = { kind = "text", text = "Empty Markdown file.", tone = "dim" }
+    else
+      body = { kind = "markdown", text = st.text }
+    end
+    return {
+      kind = "column",
+      { kind = "button", label = "‹ Files", on_press = back },
+      { kind = "text", text = st.file or "", tone = "accent", truncate = true },
+      body,
+      { kind = "hints", text = "↑↓ scroll · tab files · ctrl+r refresh · esc close" },
+    }
+  end
+  -- Built again only when something changed: the terminal draws every frame.
+  local function view()
+    st.tree = st.tree or (st.pane == "files" and files_view() or reader_view())
+    return st.tree
   end
   local function on_key(k)
-    if k == "esc" then close()
-    elseif k == "tab" or k == "shift+tab" or k == "backtab" then
-      st.pane = st.pane == "files" and "reader" or "files"
-    elseif k == "enter" then st.pane = "reader"
-    elseif k == "ctrl+r" then
+    if k == "esc" then close(); return true end
+    if k == "ctrl+r" then
       local wanted = st.file
-      if wanted then st.positions[wanted] = st.top end
       st.file = nil
       read_version = read_version + 1
       cancel(read)
-      st.text, st.lines = nil, nil
+      st.text = nil
       discover(wanted)
-    elseif k == "up" or k == "down" or k == "wheelup" or k == "wheeldown"
-      or k == "pageup" or k == "pagedown" or k == "home" or k == "end"
-      or (st.pane == "reader" and k == "space") then
-      local by = (k == "up" or k == "wheelup" or k == "pageup") and -1 or 1
-      if k == "pageup" or k == "pagedown" or k == "space" then by = by * st.rows end
-      if st.pane == "files" then
-        st.sel = k == "home" and 1 or k == "end" and #st.filtered or st.sel + by
-        st.sel = math.max(1, math.min(st.sel, #st.filtered))
-        select_file()
-      else
-        st.top = k == "home" and 0 or k == "end" and st.total or st.top + by
-        st.top = math.max(0, math.min(st.top, st.total - st.rows))
-      end
-    elseif st.pane == "files" then
+    elseif st.pane == "reader" then
+      if k ~= "tab" and k ~= "shift+tab" and k ~= "backtab" and k ~= "b" and k ~= "left" then return false end
+      st.pane = "files"
+    elseif k == "up" or k == "down" or k == "home" or k == "end" or k == "pageup" or k == "pagedown" then
+      local by = (k == "up" and -1) or (k == "down" and 1) or (k == "pageup" and -10) or (k == "pagedown" and 10)
+        or (k == "home" and -#st.filtered) or #st.filtered
+      st.sel = math.max(1, math.min(st.sel + by, math.min(#st.filtered, SHOWN)))
+      select_file()
+    elseif k == "enter" or k == "tab" then
+      if st.filtered[st.sel] then st.pane = "reader"; select_file() end
+    else
       local query = bone.text.edit(st.query, k)
       if not query then return false end
       st.query, st.sel = query, 1
       filter()
-    else return false end
-    if bone.has_capability and bone.has_capability("gui.nodes") and bone.gui and bone.gui.scroll then
-      pcall(bone.gui.scroll, "md:reader", (st.top or 0) * 22)
     end
+    touch()
     return true
   end
-  local function touch()
-    if bone.ui.update and id then bone.ui.update(id, {}) end
-  end
-  local function markdown_node()
-    local items = {}
-    for i, file in ipairs(st.filtered) do
-      local dir, base = file:match("^(.*/)([^/]*)$")
-      items[#items + 1] = W.entry(i == st.sel, {
-        { spans = { { text = dir or "", hl = "Dim" }, { text = base or file, hl = "Normal" } },
-          size = S.size.caption, wrap = false, text_overflow = "ellipsis" },
-      }, function()
-        st.sel, st.pane = i, "reader"
-        select_file()
-        touch()
-      end)
-    end
-    if #items == 0 then
-      items[1] = W.note(st.loading and "Scanning…" or (#st.files == 0 and "No Markdown files." or "No matches."), { 4, 0 })
-    end
-    local preview = { id = "md:reader", direction = "column", gap = S.space.sm, grow = 1, height = 0, overflow = "scroll" }
-    if st.read_error then
-      preview[#preview + 1] = W.note(st.read_error, { 0, 0 }, "ErrorMsg")
-    elseif st.file and not st.text then
-      preview[#preview + 1] = W.note("Loading document…", { 0, 0 })
-    elseif st.text then
-      local mok, md = pcall(require, "bone.desktop.markdown")
-      local nodes = mok and md.nodes and md.nodes(st.text) or nil
-      if nodes and #nodes > 0 then
-        for _, node in ipairs(nodes) do preview[#preview + 1] = node end
-      elseif st.text == "" then
-        preview[#preview + 1] = W.note("Empty Markdown file.", { 0, 0 })
-      else
-        preview[#preview + 1] = { text = st.text, hl = "Normal", selectable = true }
-      end
-    else
-      preview[#preview + 1] = W.note("Select a Markdown file to read.", { 0, 0 })
-    end
-    local files = st.pane == "files"
-    return {
-      direction = "column", gap = S.space.sm, grow = 1,
-      {
-        direction = "row", align = "center", gap = S.space.md,
-        W.title("Markdown"),
-        { text = cwd, hl = "Dim", font = "mono", size = S.size.small, grow = 1, width = 0,
-          wrap = false, text_overflow = "ellipsis" },
-        W.icon_button("↻", "Refresh", function() on_key("ctrl+r"); touch() end),
-        W.icon_button("✕", "Close", close),
-      },
-      st.scan_error and W.note(st.scan_error, { 0, 0 }, "WarningMsg") or nil,
-      {
-        direction = "row", gap = S.space.lg, grow = 1, height = 0,
-        {
-          width = 280, shrink = 0, direction = "column",
-          -- The filter is where typing goes while the file pane has the keys.
-          W.field("Filter · " .. #st.filtered .. (#st.filtered == 1 and " file" or " files"), st.query,
-            { editing = files, on = files, empty = "type to filter",
-              click = function() st.pane = "files"; touch() end }),
-          W.list("md:files", items, #st.filtered > 0 and st.sel or nil),
-        },
-        {
-          direction = "column", grow = 1, width = 0,
-          st.file and { text = st.file, hl = files and "Dim" or "Accent", font = "mono", size = S.size.small,
-            wrap = false, text_overflow = "ellipsis", margin = { 0, 0, 6, 0 } } or nil,
-          preview,
-        },
-      },
-      W.hints("↑↓ move · enter read · tab panes · ctrl+r refresh · esc close", { 4, 0 }),
-    }
-  end
   -- The desktop window asks for room to read in (a node window is smaller
-  -- otherwise); the terminal one keeps fitting its lines.
+  -- otherwise); the terminal one keeps fitting its content.
   local gui = bone.has_capability and bone.has_capability("gui.nodes")
-  id = bone.ui.popup({ lines = render, on_key = on_key, node = markdown_node,
-    width = gui and 170 or nil, height = gui and 10000 or nil })
+  id = bone.ui.popup({ title = "Markdown", view = view, on_key = on_key,
+    width = gui and 170 or 100, height = gui and 10000 or nil })
   markdown_close = close
   close_event = bone.on("panel/closed", function(ev) if ev.id == id and ev.kind == "popup" then close() end end)
   discover(path)

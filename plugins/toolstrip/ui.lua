@@ -16,8 +16,8 @@ define("fold_turns", true, {
   on_change = function() bone.ui.refresh() end,
 })
 
--- Keep the shared highlight names available to both renderers. A user's
--- colorscheme wins because defaults are installed only when absent.
+-- Keep the shared highlight names available to both renderers, as
+-- defaults under the colorscheme: a scheme or config that sets them wins.
 local colors = {
   ToolStripModel = { link = "Dim" },
   ToolStripRead = { fg = "#3b3b3a" },
@@ -29,8 +29,7 @@ local colors = {
   ToolStripAnswer = { fg = "#cfcdc9" },
   ToolStripAgent = { fg = "#6b6a68" },
 }
-local defined = {}
-for _, name in ipairs(bone.hl.names()) do defined[name] = true end
 for name, spec in pairs(colors) do
-  if not defined[name] then bone.hl.set(name, spec) end
+  spec.default = true
+  bone.hl.set(name, spec)
 end

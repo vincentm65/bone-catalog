@@ -16,19 +16,15 @@ tree with per-file addition/deletion counts; opening a file shows only its patch
 - `/diff` or `ctrl+d`: open/focus the sidebar, or close it if already open.
 - `/diff refresh`: open it if closed, otherwise refresh without moving the scroll.
 - `r`: refresh.
-- `s`: cycle **All tracked → Unstaged → Staged**.
-- `q`: close.
-- Up/Down or `k`/`j`: select in the tree; scroll in a file diff.
-- Enter, Right, or Space: open a file or expand/collapse a directory.
-- Left or `b`: return to the file tree.
-- Click a file to open it; click a directory to expand/collapse it. In the
-  desktop app the same rows take the pointer (a hand cursor); clicking also
-  focuses the sidebar so the keys above work.
-- Click the mode heading to cycle modes; click “‹ Files” to return to the tree.
-  The desktop hint row (“Enter open…”) is that same back hit.
-- Page Up/Down, Home/End, mouse wheel: panel scrolling. In the desktop app,
-  once the sidebar has the keyboard, those keys scroll the tree or the patch;
-  the wheel and the scrollbar scroll it too.
+- `s`: cycle **All tracked → Unstaged → Staged**, or pick one from the tabs
+  (left/right on them, or a click).
+- `q` or `ctrl+d`: close.
+- Up/Down or `k`/`j`: move through the tabs and the tree; past the end, scroll
+  a file's patch.
+- Enter or Space: open a file or expand/collapse a directory. A click selects
+  and opens the same way and gives the sidebar the keyboard.
+- Left, `b` or **‹ Files**: return to the file tree.
+- Page Up/Down, Home/End, mouse wheel: scroll.
 - `Esc`: return focus to the prompt, leaving the sidebar open.
 
 The desktop sidebar shows the same title, counts and patch. Nothing in either

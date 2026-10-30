@@ -1,1 +1,1 @@
-{"title":"Todo","version":"1.2.3","description":"A checklist the model keeps for multi-step work, shown under that chat in the terminal and the desktop app","capabilities":["tool","ui"]}
+{"title":"Todo","version":"1.3.0","description":"A checklist the model keeps for multi-step work, shown under that chat in the terminal and the desktop app","capabilities":["tool","ui"],"min_bone_version":"3.0.4"}

@@ -23,10 +23,11 @@ the core and the machine running the terminal or desktop app if those are separa
 
 - `/fork`: centered, rounded family browser. Session rows show their children
   and selectable user-message points. Children with a known cutoff appear just
-  before that user point; their edge is labeled **before #N**. Up/down, wheel,
-  PageUp/PageDown and Home/End navigate; right expands, left collapses/goes to the parent;
-  Escape or `q` closes. In the desktop app, click a session row to expand or collapse it
-  and the action button to open or branch. Enter on a session opens it. Enter on a user point
+  before that user point; their edge is labeled **before #N**. Up/down (or
+  `k`/`j`) select; right expands, left collapses or goes to the parent; Escape
+  or `q` closes. A click selects a row, and a click on the selected row expands
+  or collapses a session (or branches at a user point); the action button opens
+  or branches too. Enter on a session opens it. Enter on a user point
   creates a branch **before** that message, opens it, and restores that
   message's text and image references into the draft. Nothing is sent.
 - `/fork N`: the same operation before the current session's **Nth user

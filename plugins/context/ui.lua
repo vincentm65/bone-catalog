@@ -8,9 +8,9 @@ local alive, window, serial = true, nil, 0
 local data, failure, loading, scroll, max_scroll, page = nil, nil, false, 0, 0, 1
 local mode = "current"
 
--- Each category's color: the foreground of a theme group, so it follows
--- colorschemes. Only the foreground: groups such as DiffAdd carry a
--- background that would box every swatch, bar and label in grey.
+-- Each category's color: a theme group's, linked so it follows the
+-- colorscheme. Without its background: groups such as DiffAdd carry one
+-- that would box every swatch, bar and label in grey.
 local KINDS = {
   { "system", "System", "ContextSystem", "ToolPath" },
   { "summary", "Summary", "ContextSummary", "MdQuote" },
@@ -24,26 +24,11 @@ local KINDS = {
 }
 local KIND = {}
 for _, k in ipairs(KINDS) do KIND[k[1]] = { short = k[2], hl = k[3] } end
-local function foreground(name)
-  for _ = 1, 10 do
-    local g = bone.hl.get(name) or {}
-    if g.fg or not g.link then return g.fg end
-    name = g.link
-  end
+-- Each category's group follows its theme group live, under the
+-- colorscheme so a scheme can color the categories itself.
+for _, k in ipairs(KINDS) do
+  bone.hl.set(k[3], { link = k[4], bg = "none", default = true })
 end
--- Run on each frame so a colorscheme change is picked up; a group is set
--- only when its color changes, since setting colors redraws the chat.
-local applied = {}
-local function colors()
-  for _, k in ipairs(KINDS) do
-    local fg = foreground(k[4]) or false
-    if applied[k[3]] ~= fg then
-      applied[k[3]] = fg
-      bone.hl.set(k[3], fg and { fg = fg } or { link = "Normal" })
-    end
-  end
-end
-colors()
 
 local function current() return (bone.api.session() or {}).session_id end
 local function width(s) return bone.text.width(s) end
@@ -422,7 +407,6 @@ local function open(request)
   local cached, cached_width, cached_data, cached_status, cached_mode
   window = bone.ui.popup({ anchor = "screen", row = 0, col = 0, width = 10000, height = 10000,
     lines = function(ctx)
-      colors()
       local w, height = ctx.width, ctx.height
       local status = tostring(loading) .. tostring(failure) .. tostring(bone.settings.get("context.window_tokens"))
       if not cached or cached_width ~= w or cached_data ~= data or cached_status ~= status or cached_mode ~= mode then

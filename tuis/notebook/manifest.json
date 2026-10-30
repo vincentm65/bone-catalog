@@ -1,6 +1,6 @@
 {
   "title": "Notebook",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A session as a computational notebook: numbered cells and an execution log",
   "min_bone_version": "3.0.3"
 }

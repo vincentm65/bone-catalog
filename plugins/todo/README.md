@@ -11,14 +11,13 @@ call in the chat's own history, so it never appears in another chat and it
 survives any number of later tool calls. A call that is still running does
 not replace the previous list until it finishes. Sub-agents start empty, and
 a fork keeps its parent's list. The terminal and the desktop app both show
-that chat's list in a drawer across the bottom. In the terminal there is a
-blank row above the title and progress count; the desktop drawer has the
-same title and count as its panel title over the desktop library's
-checklist (plain rows where that library has none), above the prompt. It
+that chat's list in a drawer across the bottom, one checklist view drawn by
+each: in the terminal a blank row above the title and progress count, in the
+desktop app a card with the same title, above the prompt. It
 hides when the list is empty or every item is completed. `/todo` shows an
 unfinished list again. The drawer is as tall as the list, up to the panel
 cap of 10 rows. Pointer clicks do not edit the list.
-Completed items have checkmarks in the theme's green (DiffAdd's) and muted,
+Completed items have checkmarks in the theme's green (its Success color) and muted,
 struck-through text; the active item is bold with an accent-colored arrow. A
 colorscheme or config that defines `TodoCheck`, `TodoDone` or `TodoActive`
 keeps its own. Native strikethrough

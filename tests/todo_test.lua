@@ -1,13 +1,7 @@
 -- Run from the catalog root: luajit tests/todo_test.lua
 local tools, chats, events = {}, {}, {}
 local current, panel
-local highlights = {}
 bone = {
-  hl = {
-    set = function(name, spec) highlights[name] = spec end,
-    names = function() return { "DiffAdd" } end,
-    get = function(name) return name == "DiffAdd" and { fg = "#60ae81", bg = "#1f3a2a" } or {} end,
-  },
   tool = { register = function(spec) tools[spec.name] = spec end },
   hook = function() end,
   chat = {
@@ -33,10 +27,11 @@ bone = {
   on = function(name, fn) events[name] = fn end,
   defer = function(_, fn) fn() end,
   ui = { panel = { open = function(spec)
-    panel = { spec = spec, hidden = false }
+    panel = { spec = spec, hidden = false, title = spec.title }
     function panel:is_open() return true end
     function panel:show() self.hidden = false end
     function panel:hide() self.hidden = true end
+    function panel:update(u) if u.title ~= nil then self.title = u.title end end
     return panel
   end } },
 }
@@ -80,36 +75,25 @@ assert(panel.hidden, "a completed list must stay hidden on chat/shown")
 chats.A = { call({ { text = "old", status = "pending" } }), call({ { text = "new", status = "in_progress" } }), call({}, { is_error = true }) }
 chats.A[2].arguments.title = "Parser fixes"
 current = "A"; events["tool/finished"]()
-local lines = panel.spec.render()
-assert(panel.spec.dock == "bottom" and panel.spec.title == false)
-assert(lines[1][1][1] == "" and lines[2][1][1] == "Todo 0/1 — Parser fixes")
-assert(lines[3][1][1] == "▸ " and lines[3][2][1] == "new" and lines[3][2][2] == "TodoActive")
--- The check is the theme's green, without DiffAdd's band.
-assert(highlights.TodoCheck.fg == "#60ae81" and not highlights.TodoCheck.bg and highlights.TodoDone.strikethrough)
-assert(type(panel.spec.node) == "function")
-local node = panel.spec.node()
--- Without the desktop library: plain rows, the title the panel's own.
-assert(node[1][1].text == "▸ " and node[1][1].hl == "Accent")
-assert(node[1][2].text == "new" and node[1][2].hl == "TodoActive" and node[1][2].bold)
+-- One view for both frontends: the list as a checklist, the title the panel's.
+local view = panel.spec.view()
+assert(panel.spec.dock == "bottom" and not panel.spec.render and not panel.spec.node)
+assert(panel.title == "Todo 0/1 — Parser fixes")
+assert(view.kind == "checklist" and view.items[1].text == "new" and view.items[1].state == "active")
 chats.A[2].arguments.items[2] = { text = "finished", status = "completed" }
-lines = panel.spec.render()
-assert(lines[4][1][1] == "✓ " and lines[4][1][2] == "TodoCheck")
-assert(lines[4][2][1] == "finished" and lines[4][2][2] == "TodoDone")
-assert(lines[4][3].hl == "Normal", "strikethrough must not extend through row padding")
-node = panel.spec.node()
-assert(node[2][1].text == "✓ " and node[2][1].hl == "TodoCheck")
-assert(node[2][2].text == "finished" and node[2][2].hl == "TodoDone" and node[2][2].strike)
-current = "B"; assert(#panel.spec.render() == 0 and panel.hidden)
+view = panel.spec.view()
+assert(view.items[2].text == "finished" and view.items[2].state == "done")
+current = "B"; assert(panel.spec.view() == nil and panel.hidden)
 events["turn/finished"]({ session_id = "B" }); assert(panel.hidden)
 current = "A"; events["/todo"](); assert(not panel.hidden)
--- Completion never resurrects the older unfinished list, including on render/switch.
+-- Completion never resurrects the older unfinished list, including on draw/switch.
 chats.A[2].arguments.items[1].status = "completed"
-assert(#panel.spec.render() == 0 and panel.hidden)
+assert(panel.spec.view() == nil and panel.hidden)
 events["tool/finished"](); assert(panel.hidden)
 events["/todo"](); assert(panel.hidden)
 chats.A[#chats.A + 1] = call({ { text = "next", status = "pending" } })
 events["tool/finished"](); assert(not panel.hidden)
-assert(panel.spec.render()[2][1][1] == "Todo 0/1")
+assert(panel.title == "Todo 0/1" and panel.spec.view().items[1].state == "todo")
 chats.A[#chats.A + 1] = call({})
 events["tool/finished"](); assert(panel.hidden)
 
@@ -118,14 +102,13 @@ chats.A[#chats.A + 1] = call({ { text = "long-lived", status = "in_progress" } }
 events["tool/finished"](); assert(not panel.hidden)
 for _ = 1, 8 do chats.A[#chats.A + 1] = { done = true, name = "other", arguments = {} } end
 events["tool/finished"]()
-assert(not panel.hidden and panel.spec.render()[2][1][1] == "Todo 0/1", "list lost after later tool calls")
+assert(not panel.hidden and panel.title == "Todo 0/1", "list lost after later tool calls")
 -- A running call does not replace the previous list until it finishes.
 chats.A[#chats.A + 1] = running({ { text = "not yet", status = "pending" } })
 events["tool/finished"]()
-assert(panel.spec.render()[2][1][1] == "Todo 0/1", "running call shown")
-assert(panel.spec.render()[3][2][1] == "long-lived", "running call shown")
+assert(panel.spec.view().items[1].text == "long-lived", "running call shown")
 chats.A[#chats.A].done = true
 events["tool/finished"]()
-assert(panel.spec.render()[3][2][1] == "not yet", "finished call not shown")
+assert(panel.spec.view().items[1].text == "not yet", "finished call not shown")
 
-print("todo: validation, per-chat isolation, title, spacing, completion hide, reopen, history window and running calls passed")
+print("todo: validation, per-chat isolation, title, completion hide, reopen, history window and running calls passed")

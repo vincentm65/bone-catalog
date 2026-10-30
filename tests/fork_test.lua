@@ -120,6 +120,17 @@ bone.request = function(name, args, cb) assert(name == "session/list"); queue[#q
 local function flush() local fn = table.remove(queue, 1); assert(fn); fn() end
 local function run(arg) command({ args = arg }) end
 local function shown_child() id = shown.target; shown.fn() end
+-- The popup's view: its tree list, moved and pressed as the cursor would.
+local w
+local function list()
+  for _, el in ipairs(w.view()) do if type(el) == "table" and el.kind == "list" then return el end end
+end
+local function key(k)
+  local l = list()
+  if k == "down" then l.on_select(l.selected + 1)
+  elseif k == "home" then l.on_select(1)
+  else assert(l.on_key(k, l.selected)) end
+end
 dofile("plugins/fork/ui.lua")
 run("2"); flush(); flush()
 assert(prompt == "" and id == nil)
@@ -129,10 +140,10 @@ id = "a"; run("2"); flush(); flush()
 prompt, images = "new user draft", { { id = "new-image" } }
 shown_child(); assert(prompt == "new user draft" and images[1].id == "new-image")
 assert(notices[#notices]:find("kept your edits", 1, true))
-id = "a"; run(""); local w = wins[nextwin]
+id = "a"; run(""); w = wins[nextwin]
 flush(); flush()
-local n = #queue; w.lines({ width = 84, height = 22 }); assert(#queue == n)
-w.keys.down(); w.keys.enter() -- first user point: prefix is empty
+local n = #queue; w.view(); assert(#queue == n)
+key("down"); key("enter") -- first user point: prefix is empty
 assert(#queue == 1); w.keys.esc(); local before = opens; flush(); assert(opens == before)
 run(""); w = wins[nextwin]; w.keys.esc(); flush(); assert(#queue == 0)
 -- Known cutoffs are adjacent to their user point, not after every user row.
@@ -141,9 +152,19 @@ state.edges = {
   second = { parent = "a", before_turn = 2 },
   legacy = { parent = "a", legacy = true },
 }
+-- Each row as words: a session with its edge and badges, a point by number.
 local function rendered()
-  local lines, out = w.lines({ width = 200, height = 22 }), {}
-  for _, line in ipairs(lines) do out[#out + 1] = line[1][1] end
+  local out = {}
+  for _, it in ipairs(list().items) do
+    local line
+    if it.text:match("^#") then
+      line = "↳ " .. it.text:sub(2)
+    else
+      line = it.text:gsub("^[▸▾] ", "") .. (it.detail and ("  ← " .. it.detail) or "")
+    end
+    for _, b in ipairs(it.badges or {}) do line = line .. " [" .. b.text .. "]" end
+    out[#out + 1] = line
+  end
   return table.concat(out, "\n")
 end
 run(""); w = wins[nextwin]; flush(); flush()
@@ -157,9 +178,9 @@ w.keys.esc()
 state.edges = { a = { parent = "missing", before_turn = 2 } }
 run(""); w = wins[nextwin]; flush(); flush(); text = rendered()
 assert(text:find("missing [missing]", 1, true) and text:find("Source", 1, true), text)
-w.keys.home(); w.keys.enter()
+key("home"); key("enter")
 assert(notices[#notices]:find("missing") and opens == before)
-w.keys.down(); w.keys.enter(); assert(opens == before + 1) -- source still opens
+key("down"); key("enter"); assert(opens == before + 1) -- source still opens
 id = "a"
 -- A malformed legacy cycle terminates and displays each session only once.
 state.edges = { a = { parent = "loop", legacy = true }, loop = { parent = "a", legacy = true } }
@@ -169,4 +190,4 @@ local _, loop_count = text:gsub("loop  ←", "")
 assert(source_count == 1 and loop_count == 1, text)
 w.keys.esc()
 run("copy"); shutdown(); flush(); assert(#queue == 0 and opens == before + 1)
-print("tui: fork-point order, missing/cyclic ancestors, delayed prefill, no render RPC, closed/unload guards OK")
+print("view: fork-point order, missing/cyclic ancestors, delayed prefill, no render RPC, closed/unload guards OK")
