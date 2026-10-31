@@ -28,7 +28,6 @@ TITLES = {
     "shell": "Shell",
     "skill": "Skills",
     "subagent": "Subagents",
-    "summary": "Summary",
     "term": "Terminal",
     "themes": "Themes",
     "todo": "Todo",
