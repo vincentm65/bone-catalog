@@ -130,6 +130,8 @@ local sample = diff.parse('diff --git a/src/a.lua b/src/a.lua\n--- a/src/a.lua\n
 local fs = tree.files(sample)
 assert(#fs == 2 and fs[2].path == "src/a.lua" and fs[2].added == 1 and fs[2].deleted == 1)
 assert(#tree.nodes(fs, {}) == 3 and #tree.nodes(fs, { src = true }) == 2)
+local gone = tree.files(diff.parse("diff --git a/b/foo b/b/foo\n--- a/b/foo\n+++ /dev/null\n"))
+assert(gone[1].path == "b/foo")
 local quoted = tree.files(diff.parse('diff --git "a/sp ace" "b/sp ace"\n+++ "b/sp ace"\n'))
 assert(quoted[1].path == "sp ace")
 commands.diff({ args = "refresh" })

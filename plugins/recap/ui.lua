@@ -13,13 +13,14 @@ bone.plugin.on_shutdown(function()
   if bone.ui.views.recap then bone.ui.views.recap = previous_recap end
 end)
 
-local seq = 0
-local function request()
-  local session = bone.chat.session()
+local seqs = {}
+local function request(sid)
+  local session = bone.chat.session(sid and { session = sid } or nil)
   if not session or not session.session_id or session.running then
     return bone.notify("recap: wait for the turn to finish", "error")
   end
-  bone.chat.messages(function(messages, err)
+  sid = session.session_id
+  bone.chat.messages(sid, function(messages, err)
     if err then return bone.notify("recap: " .. tostring(err), "error") end
     if not messages or #messages < 2 then return bone.notify("recap: nothing to summarize") end
     local prompt = {
@@ -35,20 +36,22 @@ local function request()
       if model_err then return bone.notify("recap: " .. tostring(model_err), "error") end
       local text = result and (result.content or ""):gsub("^%s+", ""):gsub("%s+$", "")
       if text == "" then return bone.notify("recap: the model returned an empty summary", "error") end
-      bone.chat.add("recap", { text = text })
+      bone.chat.add("recap", { text = text }, { session = sid })
     end)
   end)
 end
 
 bone.cmd.create("recap", request, { desc = "show a brief conversation recap" })
-bone.on("turn/started", function()
-  seq = seq + 1
+bone.on("turn/started", function(ev)
+  local sid = ev and ev.session_id
+  if sid then seqs[sid] = (seqs[sid] or 0) + 1 end
 end)
 bone.on("turn/finished", function(ev)
   local status = ev and ev.outcome and (ev.outcome.status or ev.outcome)
   if bone.settings.get("recap.auto") ~= true or status ~= "completed" then return end
-  local mine = seq
+  local sid = ev and ev.session_id
+  local mine = sid and seqs[sid]
   bone.defer(tonumber(bone.settings.get("recap.idle_ms")) or 900000, function()
-    if mine == seq then request() end
+    if not sid or seqs[sid] == mine then request(sid) end
   end)
 end)

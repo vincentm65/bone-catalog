@@ -580,8 +580,7 @@ end
 local function bar_line(s, turn, width, item_index)
   width = math.max(1, tonumber(width) or 1)
   local source, total, running = turn_segments(s, turn)
-  if not source or #source == 0 then return nil end
-  if width < 8 then return { { bone.text.truncate("·", width), "Dim" } } end
+  if not source or #source == 0 or width < 8 then return nil end
   -- The time right-aligned in a column wide enough for any ("10m 05s"),
   -- so every earlier turn's bar ends at the same column.
   local time = bone.util.duration(total / 1000)
