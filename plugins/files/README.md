@@ -16,7 +16,17 @@ and a caret you can place with a click; the tree narrows to a column on the righ
 showing the open file, and the panel widens by a tenth. `esc` in the file gives the
 keys to the tree (the file stays open), `tab` gives them back, and `esc` in the tree
 closes the file. The search groups its results under their file and marks the term.
-**In a terminal** the panel shows one pane at a time, drawn by the shared elements,
+**In a terminal** the panel draws its own lines (`files.tlook`), in the
+colorscheme's colors: breadcrumbs, the file beside the tree when the terminal is wide
+enough (90 columns and more; one of them when it is not), tabs and the file bar,
+syntax colors, the caret's line, a selection drawn as one, find's matches, the
+bracket pair, Git's change bars in color, and quick open, a name to give and the
+menus as cards over the panel. The mouse places the caret, drags a selection, presses
+rows, tabs and crumbs, and opens a row's menu with the right button; the wheel
+scrolls. Every color is a group linked to one of the scheme's (`FilesTSelect`,
+`FilesTLine`, `FilesTMatch`, `FilesTAdded`…), so a scheme or `bone.hl.set` restyles
+it. The `tui_look` setting set to `elements` draws it with the shared elements
+instead — which a TUI library can restyle — one pane at a time,
 and `esc` from the file goes back to the tree; the file stays open in its tab
 (`tab` or `ctrl+tab` brings it back). Quick open, the filter, find, a name to give a
 file and the open files are rows of their own there, and the change marks ride

@@ -25,6 +25,10 @@ if GUI then
   if ok then look = mod else GUI = false end
 end
 
+-- A terminal draws the panel as its own lines (files.tlook) unless the
+-- tui_look setting asks for the shared elements.
+local tlook = nil
+
 local ID = "files"
 local HIT_LIMIT = 400     -- the most search hits kept
 local ROW_LIMIT = 1500    -- the most rows a folder listing draws
@@ -76,7 +80,12 @@ local SETTINGS = {
   autorefresh = setting("autorefresh", true) and true or false,
   follow = setting("follow_agent", false) and true or false,
   link_files = setting("link_files", true) and true or false,
+  tui_look = tostring(setting("tui_look", "drawn")),
 }
+if not GUI and SETTINGS.tui_look ~= "elements" then
+  local ok, mod = pcall(require, "files.tlook")
+  if ok then tlook = mod end
+end
 
 --- A single quote around a path or a term, for the shell.
 local function quoted(value)
@@ -262,6 +271,7 @@ local note, enter_search, reveal_cursor, open_file, close_doc, chrome
 --- Draw the sidebar from the current state next time it is asked for a view.
 redraw = function()
   shown = nil
+  act.gen = (act.gen or 0) + 1
   if act.save_soon then act.save_soon() end
   -- The desktop builds its view again on a key or a click by itself; what
   -- lands later (a search, git status, a read) has to say so.
@@ -271,7 +281,7 @@ end
 --- What a panel update carries: its size, and in a terminal its title (the
 --- desktop draws its own header).
 chrome = function()
-  return { size = size_for(), title = (not GUI) and title_for() or nil }
+  return { size = size_for(), title = (not GUI and not tlook) and title_for() or nil }
 end
 
 --- Put the cursor the frontends keep back under the pane's own first row.
@@ -2301,8 +2311,74 @@ end
 -- Where the last press landed, in the window: the editor turns a drag into a
 -- selection from it (a node hears the press in its own pixels, the drag in
 -- the window's).
+--- The wheel over the panel: what is under it scrolls, the caret stays.
+function act.wheel(by)
+  if pane == EDIT and doc == "edit" and (editor.shown == "buffer" or editor.shown == "split") then
+    editor.ttop = math.max(1, math.min((editor.ttop or 1) + by, #editor.lines))
+    editor.tscrolled = true
+  elseif pane == EDIT or pane == PREVIEW then
+    act.scroll_reading(by)
+    return
+  elseif pane == SEARCH then
+    listing.htop = math.max(1, (listing.htop or 1) + by)
+    listing.tscrolled = true
+  elseif pane == CHANGED then
+    listing.ctop = math.max(1, (listing.ctop or 1) + by)
+    listing.tscrolled = true
+  else
+    listing.ttop = math.max(1, (listing.ttop or 1) + by)
+    listing.tscrolled = true
+  end
+  redraw()
+end
+
+-- The terminal's mouse over the drawn panel: a press does what is under it
+-- (a row, a tab, a crumb), in the editor it puts the caret and a drag makes
+-- a selection; the right button over a row is its menu.
+local tdrag = nil
+local function tui_mouse(ev)
+  if not tlook or ev.panel ~= ID or not (panel and panel:is_open()) then return nil end
+  local line, col = tonumber(ev.panel_line), tonumber(ev.col)
+  if not line or not col then return nil end
+  if ev.action == "down" then
+    if not keys_here then panel:focus() end
+    if ev.button == "right" then
+      local i = tlook.tree_at(line, col)
+      if i then act.tree_menu(i, line + 1, col) return true end
+      if doc == "edit" and tlook.editor_at(line, col, editor) then act.editor_menu(line + 1, col) return true end
+      return true
+    end
+    if menu then menu = nil redraw() end
+    if tlook.press(line, col) then tdrag = nil return true end
+    local li, byte = tlook.editor_at(line, col, editor)
+    if li and doc == "edit" then
+      set_pane(EDIT)
+      buffer.place(editor, li, byte)
+      tdrag = { line = li, col = byte }
+      redraw()
+    end
+    return true
+  elseif ev.action == "drag" and tdrag and doc == "edit" then
+    local li, byte = tlook.editor_at(line, col, editor)
+    if li then
+      editor.anchor = { line = tdrag.line, col = tdrag.col }
+      editor.line, editor.col = li, byte
+      redraw()
+    end
+    return true
+  elseif ev.action == "up" then
+    tdrag = nil
+    return true
+  end
+  return true
+end
+
 bone.on("mouse", function(ev)
   if not ev then return end
+  if tlook then
+    local took = tui_mouse(ev)
+    if took ~= nil then return took end
+  end
   if ev.action == "down" then
     act.button_down = true
     if ev.px then act.press_at = { ev.px, ev.py } end
@@ -2517,6 +2593,9 @@ local function common_key(k)
   return false
 end
 
+-- The keys that scroll what is read (a preview, a page) in a terminal.
+local READ_KEYS = { up = -1, down = 1, pageup = -20, pagedown = 20, home = -1000000, ["end"] = 1000000 }
+
 -- What the editor's keys move the caret by: { rows, cols } or a buffer move.
 local EDIT_MOVES = {
   up = { -1, 0 }, down = { 1, 0 }, left = { 0, -1 }, right = { 0, 1 },
@@ -2561,6 +2640,7 @@ local function edit_key(k)
   if lower == "ctrl+k" then act.editor_to_chat() return true end
   if lower == "alt+z" and GUI then act.toggle_wrap() return true end
   if editor.shown ~= "buffer" and editor.shown ~= "split" then
+    if tlook and READ_KEYS[k] then act.scroll_reading(READ_KEYS[k]) return true end
     -- Reading rather than typing: only the ways back, and saving.
     if k == "ctrl+g" then
       editor.shown = "buffer"
@@ -2726,8 +2806,21 @@ local function search_key(k)
   return true
 end
 
+--- Scroll what is read rather than edited (a preview, a page) by `by` lines.
+function act.scroll_reading(by)
+  if pane == PREVIEW then
+    preview.ttop = math.max(1, (preview.ttop or 1) + by)
+  elseif doc == "edit" and editor.shown == "changes" then
+    editor.dtop = math.max(1, (editor.dtop or 1) + by)
+  elseif doc == "edit" then
+    editor.ptop = math.max(1, (editor.ptop or 1) + by)
+  end
+  redraw()
+end
+
 local function preview_key(k)
   if common_key(k) then return true end
+  if tlook and READ_KEYS[k] and preview.kind ~= "model" then act.scroll_reading(READ_KEYS[k]) return true end
   if k == "q" then
     close_panel()
     return true
@@ -3050,7 +3143,11 @@ local function on_key(k)
     end
     return true
   end
-  if GUI then
+  if tlook and (k == "wheelup" or k == "wheeldown") then
+    act.wheel(k == "wheelup" and -3 or 3)
+    return true
+  end
+  if GUI or tlook then
     local moved = desktop_move(k)
     if moved ~= nil then
       redraw()
@@ -3171,7 +3268,7 @@ size_for = function()
   local want = SETTINGS.width
   -- The desktop puts the open file beside the tree, so it widens while one
   -- is open; a terminal shows the editor alone, a little wider than a tree.
-  if GUI then
+  if GUI or tlook then
     if doc then want = want + 0.1 end
   elseif pane == EDIT then
     want = want + 0.05
@@ -3247,8 +3344,8 @@ local function take_keys()
   end)
 end
 
-if look then
-  look.setup({
+local bridge = {
+    generation = function() return act.gen or 0 end,
     state = function()
       return {
         pane = pane, tab = TAB_AT[side] or 1, doc = doc, doc_focused = pane == EDIT or pane == PREVIEW,
@@ -3420,8 +3517,9 @@ if look then
       redraw()
     end,
     close_panel = function() close_panel() end,
-  })
-end
+}
+if look then look.setup(bridge) end
+if tlook then tlook.setup(bridge) end
 
 open = function()
   if bone.ui.panel.get(ID) then bone.ui.panel.close(ID) end
@@ -3449,6 +3547,8 @@ open = function()
   }
   if look then
     spec.node = function(ctx) return look.view(ctx) end
+  elseif tlook then
+    spec.render = function(ctx) return tlook.render(ctx) end
   else
     spec.title, spec.view = title_for(), view
   end

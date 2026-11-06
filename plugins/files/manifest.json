@@ -1,6 +1,6 @@
 {
   "title": "Files",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "A file explorer, a file viewer and a text editor in one right-docked sidebar, in the terminal and the desktop app: a folder tree that marks what the agent changed, Git's own markers, search through the folder, and an editor that will not write over a file someone else changed",
   "capabilities": [
     "command",
@@ -62,6 +62,17 @@
       "type": "boolean",
       "default": true,
       "desc": "Under each reply in the desktop app, the files it names as chips that open them in the panel; and a line asking the agent to write paths as path:line"
+    },
+    {
+      "key": "tui_look",
+      "label": "Terminal look",
+      "type": "string",
+      "choices": [
+        "drawn",
+        "elements"
+      ],
+      "default": "drawn",
+      "desc": "drawn: the panel's own lines, in the colorscheme's colors (the file beside the tree, a selection, the mouse); elements: the shared elements, which a TUI library can restyle"
     }
   ]
 }
