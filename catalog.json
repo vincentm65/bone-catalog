@@ -220,7 +220,7 @@
     "name": "files",
     "title": "Files",
     "kind": "plugin",
-    "version": "3.3.0",
+    "version": "3.4.0",
     "description": "A file explorer, a file viewer and a text editor in one right-docked sidebar, in the terminal and the desktop app: a folder tree that marks what the agent changed, Git's own markers, search through the folder, and an editor that will not write over a file someone else changed",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -233,7 +233,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "b94a8c96f608e09d87c28899301d91068ef6bff1451e2c6724414f1ef84ad672"
+        "sha256": "9f93c6806c17e441e72e64346ce1ab483aa5b3651d38edd9a5f424c2f6d55a2f"
       },
       {
         "path": "core.lua",
@@ -317,11 +317,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "d821d324f8c771bf5cb9c43b364a727059bcbc4e3b23f617fa512a4465f74c6c"
+        "sha256": "6e0fe58a92c7a3428aabe6f5d58b4b441a689bf19db4b5137303e23424b8b1d5"
       },
       {
         "path": "ui.lua",
-        "sha256": "c4e41d5eaba8bdba7b8cc4b1d8fb0c04a4c67f55b1c2eb6d9339f6136a370b18"
+        "sha256": "e62fb5cfe1cde6fe9930ac6df9b4f81645f98c8012be5d272b6e2eaa0dc5c5d6"
       }
     ]
   },

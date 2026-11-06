@@ -2338,8 +2338,14 @@ end
 local tdrag = nil
 local function tui_mouse(ev)
   if not tlook or ev.panel ~= ID or not (panel and panel:is_open()) then return nil end
+  -- A docked panel is no leaf of the layout: its column is the screen's less
+  -- where the panel starts.
   local line, col = tonumber(ev.panel_line), tonumber(ev.col)
-  if not line or not col then return nil end
+  if not col and ev.x then
+    local info = panel:info() or {}
+    if info.col then col = ev.x - info.col + 1 end
+  end
+  if not line or not col or col < 1 then return nil end
   if ev.action == "down" then
     if not keys_here then panel:focus() end
     if ev.button == "right" then
@@ -2348,11 +2354,30 @@ local function tui_mouse(ev)
       if doc == "edit" and tlook.editor_at(line, col, editor) then act.editor_menu(line + 1, col) return true end
       return true
     end
-    if menu then menu = nil redraw() end
+    -- Over a card (quick open, a name, a menu) a press is the card's; off
+    -- it, the card goes.
+    if quick_on or ask or menu then
+      if not tlook.press(line, col) then
+        if menu then menu = nil
+        elseif quick_on then act.quick_close()
+        elseif ask then act.cancel_ask() end
+      end
+      redraw()
+      return true
+    end
     if tlook.press(line, col) then tdrag = nil return true end
     local li, byte = tlook.editor_at(line, col, editor)
     if li and doc == "edit" then
       set_pane(EDIT)
+      -- Twice on one place, quickly: the word there.
+      local now = (bone.now and bone.now() or (os.time() * 1000)) / 1000
+      if act.tlast and act.tlast.line == li and math.abs(act.tlast.col - byte) <= 1 and now - act.tlast.at < 0.4 then
+        buffer.select_word(editor, li, byte)
+        act.tlast, tdrag = nil, nil
+        redraw()
+        return true
+      end
+      act.tlast = { line = li, col = byte, at = now }
       buffer.place(editor, li, byte)
       tdrag = { line = li, col = byte }
       redraw()
@@ -2375,6 +2400,10 @@ end
 
 bone.on("mouse", function(ev)
   if not ev then return end
+  if not GUI and SETTINGS.link_files and ev.action == "down" and ev.button == "left" and ev.index and not ev.panel then
+    local took = act.chat_press(ev)
+    if took then return true end
+  end
   if tlook then
     local took = tui_mouse(ev)
     if took ~= nil then return took end
@@ -2936,6 +2965,7 @@ local function tree_key(k)
     return true
   end
   if k == "p" then act.quick_open() return true end
+  if k == "L" then act.pick_named() return true end
   if k == "a" then act.new_file() return true end
   if k == "A" then act.new_folder() return true end
   if k == "R" or k == "f2" then act.rename() return true end
@@ -3636,6 +3666,10 @@ end
 --- /files [path] · /files search <term>: the sidebar.
 bone.cmd.create("files", function(c)
   local rest = tostring((c and c.args) or ""):match("^%s*(.-)%s*$")
+  if rest == "links" then
+    act.pick_named()
+    return
+  end
   local term = rest:match("^search%s+(.+)$")
   if term then
     if not (panel and panel:is_open()) then open() else take_keys_soon() end
@@ -3664,6 +3698,9 @@ end, { desc = "the files sidebar: a folder tree, a search, a viewer and an edito
     local token = tostring((ctx and ctx.token) or "")
     if first_argument(ctx) and (token == "" or ("search"):sub(1, #token) == token) then
       table.insert(out, 1, { value = "search", desc = "search the folder's text" })
+    end
+    if first_argument(ctx) and (token == "" or ("links"):sub(1, #token) == token) then
+      table.insert(out, 1, { value = "links", desc = "the files the last reply named, to open one" })
     end
     return out
   end })
@@ -3828,7 +3865,7 @@ function act.refs_in(text)
   if refs_seen[text] then return refs_seen[text] end
   local cwd = home()
   local out, seen = {}, {}
-  local function add(raw, line, end_line)
+  local function add(raw, line, end_line, label_text)
     if not raw or raw == "" or #raw > 300 or raw:match("^%a[%w+.-]*://") and not raw:match("^file://") then return end
     raw = raw:gsub("[%.,;:!?%)%]]+$", "")
     -- A word with no slash and no extension is not a path (`main`, `true`).
@@ -3854,6 +3891,10 @@ function act.refs_in(text)
     local held = seen[path]
     if held then
       if line and not held.line then held.line, held.end_line = tonumber(line), tonumber(end_line) end
+      -- Every way the reply writes it, for a terminal to find in its lines.
+      held.texts[#held.texts + 1] = raw
+      if line then held.texts[#held.texts + 1] = raw .. ":" .. line .. ((end_line and end_line ~= "") and ("-" .. end_line) or "") end
+      if label_text then held.texts[#held.texts + 1] = label_text end
       return
     end
     if #out >= 10 then return end
@@ -3864,15 +3905,18 @@ function act.refs_in(text)
         if o.label == label and o.path ~= path then label = (raw:match("([^/]+/[^/]+)$") or raw) break end
       end
     end
-    local ref = { path = path, label = label, line = tonumber(line), end_line = tonumber(end_line), dir = is_dir }
+    local ref = { path = path, label = label, line = tonumber(line), end_line = tonumber(end_line), dir = is_dir,
+      texts = { raw } }
+    if line then ref.texts[2] = raw .. ":" .. line .. ((end_line and end_line ~= "") and ("-" .. end_line) or "") end
+    if label_text then ref.texts[#ref.texts + 1] = label_text end
     seen[path] = ref
     out[#out + 1] = ref
   end
   -- Markdown links: [text](path:42) and [text](path#L42-L50).
-  for target in text:gmatch("%]%(([^%)%s]+)%)") do
+  for label_text, target in text:gmatch("%[([^%]\n]*)%]%(([^%)%s]+)%)") do
     local p, a, b = target:match("^(.-)#L(%d+)%-?L?(%d*)$")
     if not p then p, a, b = target:match("^(.-):(%d+)%-?(%d*)$") end
-    add(p or target, a, b ~= "" and b or nil)
+    add(p or target, a, b ~= "" and b or nil, label_text ~= "" and label_text or nil)
   end
   -- In code: `src/app.lua:42`, `util.py`.
   for inner in text:gmatch("`([^`\n]+)`") do
@@ -3941,9 +3985,133 @@ local function link_chat()
   views._files_wrapper = wrapped
   views.assistant = wrapped
 end
+-- In a terminal the paths in a reply are drawn as links (FilesTLink) and a
+-- press on one opens it: the lines a reply is drawn as are the view's own, so
+-- where each path sits is known when they are made.
+bone.hl.set("FilesTLink", { link = "ToolPath", underline = true, default = true })
+local chat_links = {} -- an item's key -> { [line] = { { from, to, ref } } }
+
+local function cells(s) return bone.text.width(s) end
+
+--- `lines` (a view's) with the texts of `refs` cut out as links; the places
+--- of the links, by line.
+local function linked(lines, refs)
+  local wanted = {}
+  for _, r in ipairs(refs) do
+    for _, t in ipairs(r.texts or {}) do
+      if t and #t >= 3 then wanted[#wanted + 1] = { text = t, ref = r } end
+    end
+  end
+  -- The longest first, so src/app.lua:4-6 is found before src/app.lua.
+  table.sort(wanted, function(a, b) return #a.text > #b.text end)
+  local places = {}
+  for li, line in ipairs(lines) do
+    if type(line) == "table" then
+      local out, col = {}, 0
+      for _, sp in ipairs(line) do
+        local t, g = (type(sp) == "table") and sp[1] or tostring(sp), (type(sp) == "table") and sp[2] or nil
+        if type(t) ~= "string" then
+          out[#out + 1] = sp
+        else
+          local at = 1
+          while at <= #t do
+            local best_a, best_b, best_ref
+            for _, w in ipairs(wanted) do
+              local a, b = t:find(w.text, at, true)
+              if a and (not best_a or a < best_a) then best_a, best_b, best_ref = a, b, w.ref end
+            end
+            if not best_a then break end
+            if best_a > at then
+              local before = t:sub(at, best_a - 1)
+              out[#out + 1] = { before, g }
+              col = col + cells(before)
+            end
+            local piece = t:sub(best_a, best_b)
+            out[#out + 1] = { piece, "FilesTLink" }
+            local w = cells(piece)
+            places[li] = places[li] or {}
+            places[li][#places[li] + 1] = { from = col, to = col + w, ref = best_ref }
+            col = col + w
+            at = best_b + 1
+          end
+          if at <= #t then
+            local rest = t:sub(at)
+            out[#out + 1] = { rest, g }
+            col = col + cells(rest)
+          end
+        end
+      end
+      lines[li] = out
+    end
+  end
+  return lines, places
+end
+
+local function link_chat_tui()
+  local views = bone.ui.views
+  if not views or not views.assistant then return end
+  if views.assistant ~= views._files_wrapper then views._files_original = views.assistant end
+  local base = views._files_original
+  if not base then return end
+  local wrapped = function(item, ctx)
+    local out = base(item, ctx)
+    if type(out) ~= "table" or item.streaming or type(item.text) ~= "string" or item.text == "" then return out end
+    local ok, refs = pcall(act.refs_in, item.text)
+    if not ok or #refs == 0 then return out end
+    local lines, places = linked(out, refs)
+    if item.key then chat_links[item.key] = places end
+    return lines
+  end
+  views._files_wrapper = wrapped
+  views.assistant = wrapped
+  -- Replies drawn before this was here are drawn again, with their links.
+  pcall(bone.chat.redraw)
+end
+
+--- A press on a link in the chat: the path under it, opened.
+function act.chat_press(ev)
+  if not (ev.index and ev.line and ev.col) then return nil end
+  local item = bone.chat.item(ev.index)
+  local places = item and item.key and chat_links[item.key]
+  local here = places and places[ev.line]
+  if not here then return nil end
+  local x = ev.col - 1
+  for _, p in ipairs(here) do
+    if x >= p.from and x < p.to then
+      act.open_ref(p.ref)
+      return true
+    end
+  end
+  return nil
+end
+
+--- The files the last reply named, to choose one from.
+function act.pick_named()
+  local items = bone.chat.items({ kind = "assistant", last = 1 }) or {}
+  local item = items[#items]
+  local refs = (item and type(item.text) == "string") and act.refs_in(item.text) or {}
+  if #refs == 0 then
+    bone.notify("The last reply names no file that is here.", "info")
+    return
+  end
+  bone.ui.select(refs, {
+    prompt = "Files in the last reply",
+    format = function(r)
+      return relative(r.path) .. (r.line and (":" .. r.line .. ((r.end_line and r.end_line ~= r.line) and ("-" .. r.end_line) or "")) or "")
+        .. (r.dir and "/" or "")
+    end,
+    on_choice = function(r) if r then act.open_ref(r) end end,
+  })
+end
+
 if SETTINGS.link_files then
-  link_chat()
-  bone.on("ready", function() link_chat() end)
+  if GUI then
+    link_chat()
+    bone.on("ready", function() link_chat() end)
+  else
+    link_chat_tui()
+    bone.on("ready", function() link_chat_tui() end)
+  end
 end
 
 -- ---- the events ------------------------------------------------------------
@@ -3994,4 +4162,5 @@ bone.plugin.on_shutdown(function()
   stop_job("search")
   panel = nil
 end)
+
 

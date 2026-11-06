@@ -21,9 +21,9 @@ colorscheme's colors: breadcrumbs, the file beside the tree when the terminal is
 enough (90 columns and more; one of them when it is not), tabs and the file bar,
 syntax colors, the caret's line, a selection drawn as one, find's matches, the
 bracket pair, Git's change bars in color, and quick open, a name to give and the
-menus as cards over the panel. The mouse places the caret, drags a selection, presses
-rows, tabs and crumbs, and opens a row's menu with the right button; the wheel
-scrolls. Every color is a group linked to one of the scheme's (`FilesTSelect`,
+menus as cards over the panel. The mouse places the caret, drags a selection, takes a word
+with a double press, presses rows, tabs and crumbs, opens a row's menu with the right
+button, and closes a card with a press beside it; the wheel scrolls. Every color is a group linked to one of the scheme's (`FilesTSelect`,
 `FilesTLine`, `FilesTMatch`, `FilesTAdded`…), so a scheme or `bone.hl.set` restyles
 it. The `tui_look` setting set to `elements` draws it with the shared elements
 instead — which a TUI library can restyle — one pane at a time,
@@ -122,8 +122,11 @@ the files it names, as chips — `app.lua :4-6`, `util.py`, a folder — and pre
 opens it in the panel (the panel too, when it is closed) at its line, the lines it
 names lit. A path counts when it is there: in the chat's folder, else in the one the
 panel shows, written `path`, `path:42`, `path:12-40`, `path#L42` or as a Markdown
-link. So that the agent writes them that way, the core half adds a line to its
-system prompt. The `link_files` setting turns both off.
+link. In a terminal the paths a reply names are drawn as links
+(`FilesTLink`, the scheme's path color underlined) and a press on one does the
+same. `/files links` (or `L` in the tree) lists the files the last reply named, to
+open one, in either. So that the agent writes them that way, the core half adds a
+line to its system prompt. The `link_files` setting turns these off.
 
 **GIFs, videos and 3D models.** A GIF plays in the panel, at its own frame times,
 with the picture's zoom and checkerboard (`space` stops and starts it): the plugin
