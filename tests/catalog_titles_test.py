@@ -14,6 +14,7 @@ TITLES = {
     "claude-code": "Claude Code",
     "codex": "Codex",
     "context": "Context",
+    "files": "Files",
     "fork": "Fork",
     "goal": "Goal",
     "grok": "Grok",

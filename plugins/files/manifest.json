@@ -1,0 +1,67 @@
+{
+  "title": "Files",
+  "version": "3.2.0",
+  "description": "A file explorer, a file viewer and a text editor in one right-docked sidebar, in the terminal and the desktop app: a folder tree that marks what the agent changed, Git's own markers, search through the folder, and an editor that will not write over a file someone else changed",
+  "capabilities": [
+    "command",
+    "ui",
+    "hook",
+    "rpc",
+    "system"
+  ],
+  "min_bone_version": "3.0.4",
+  "settings": [
+    {
+      "key": "width",
+      "label": "Panel width (% of the window)",
+      "type": "integer",
+      "default": 50,
+      "min": 20,
+      "max": 80,
+      "desc": "The sidebar's share of the window; the editor takes a little more"
+    },
+    {
+      "key": "preview_limit",
+      "label": "Preview size limit (KB)",
+      "type": "integer",
+      "default": 256,
+      "min": 8,
+      "desc": "How much of a file the preview reads; a bigger file is shown in part"
+    },
+    {
+      "key": "mark_changes",
+      "label": "Mark the files the agent changed",
+      "type": "boolean",
+      "default": true,
+      "desc": "Badge the files this session wrote, in the tree and in the Changed tab you can press"
+    },
+    {
+      "key": "show_git",
+      "label": "Show Git's markers",
+      "type": "boolean",
+      "default": true,
+      "desc": "Mark the tree with what git status thinks of each file (M, ?, A, …). The patch itself stays /diff's job"
+    },
+    {
+      "key": "autorefresh",
+      "label": "Keep up with the agent",
+      "type": "boolean",
+      "default": true,
+      "desc": "After each tool call, re-read what the core changed and say when a file you are looking at moved under you"
+    },
+    {
+      "key": "follow_agent",
+      "label": "Follow the agent",
+      "type": "boolean",
+      "default": false,
+      "desc": "Open each file the agent writes as it writes it (F in the tree, or the Follow button, switches it for now)"
+    },
+    {
+      "key": "link_files",
+      "label": "Open files named in the chat",
+      "type": "boolean",
+      "default": true,
+      "desc": "Under each reply in the desktop app, the files it names as chips that open them in the panel; and a line asking the agent to write paths as path:line"
+    }
+  ]
+}

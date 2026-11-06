@@ -217,6 +217,111 @@
     ]
   },
   {
+    "name": "files",
+    "title": "Files",
+    "kind": "plugin",
+    "version": "3.2.0",
+    "description": "A file explorer, a file viewer and a text editor in one right-docked sidebar, in the terminal and the desktop app: a folder tree that marks what the agent changed, Git's own markers, search through the folder, and an editor that will not write over a file someone else changed",
+    "min_bone_version": "3.0.4",
+    "capabilities": [
+      "command",
+      "ui",
+      "hook",
+      "rpc",
+      "system"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "93dd6ba7b4f5b01a4897063757317f5071e287f4f27daf9a13210ced322bd93a"
+      },
+      {
+        "path": "core.lua",
+        "sha256": "82d59c6d0569df59c0bf60c8d2b97dcb0fcb4d502a87f499ef5bc31ccc193ee7"
+      },
+      {
+        "path": "lua/files/buffer.lua",
+        "sha256": "189afb61163e046b3f10a59fd26aab8341031ad9aa6159f911b397707566e1c2"
+      },
+      {
+        "path": "lua/files/clip.lua",
+        "sha256": "0529188b002379c20355c91e726ccb527a79fd0863231e98c10c8989f93ff55e"
+      },
+      {
+        "path": "lua/files/diff.lua",
+        "sha256": "02a77ff8509ba1c0cebfd0e30d2b55ff341998b37389e2243a4f9bbcd59b25d8"
+      },
+      {
+        "path": "lua/files/ffmpeg.lua",
+        "sha256": "2f24ce5baf452ecb93d911fd632468cbe2aa7024b1bac0e75600872ed23a623f"
+      },
+      {
+        "path": "lua/files/fileops.lua",
+        "sha256": "1e7e86ec12880a8db6c9b218d1f16bd725f1f9393ae16770454c29569159f00f"
+      },
+      {
+        "path": "lua/files/gif.lua",
+        "sha256": "161c4e504e8f55677ab8b9f741eda4859b87963eea30afab887470833f5e1c9f"
+      },
+      {
+        "path": "lua/files/gutter.lua",
+        "sha256": "d6d9512836e35681c6252c80b32db39a16b15de375f8ca3cb7af5608ed26c590"
+      },
+      {
+        "path": "lua/files/html.lua",
+        "sha256": "0e70dd90e6af06b1c541a6b6d69355d687bb5814c10a4af8400b09350057b530"
+      },
+      {
+        "path": "lua/files/image.lua",
+        "sha256": "d93f909afe6fe31df0dc278f74b5f41bcc6556a4128348fcf1300ddbcadc3a4e"
+      },
+      {
+        "path": "lua/files/kinds.lua",
+        "sha256": "75b0a3178f947eba35cd88235382c47d97a200da842240f9ac8a1304abdee553"
+      },
+      {
+        "path": "lua/files/look.lua",
+        "sha256": "7fc5b717f9f95329f2268521ea16d098ab89750acd21a17573f94136945fafe4"
+      },
+      {
+        "path": "lua/files/media.lua",
+        "sha256": "0197938c35da3869d602611bb3692634fdd44b05f2f1b17f3f7ab8054d950b0a"
+      },
+      {
+        "path": "lua/files/mesh.lua",
+        "sha256": "ad1a496eb334c64ecd84fde7eed8f144d8c01e280b388ecf527c7eb6f9a7a62a"
+      },
+      {
+        "path": "lua/files/pdf.lua",
+        "sha256": "f7e5ccb5f617793ea705a43ba887694d915d20f5ce2476a00bc7ff68e1ac483b"
+      },
+      {
+        "path": "lua/files/platform.lua",
+        "sha256": "6ff8897dc73acd10f23be6f22c92f45b033fc470dd2e1dfa663d0e4f45b67978"
+      },
+      {
+        "path": "lua/files/quick.lua",
+        "sha256": "0f4a9b1eab1353800e759e5ec1d8664ab7486dc2dbc3c133ea69093b6e9cdec1"
+      },
+      {
+        "path": "lua/files/syntax.lua",
+        "sha256": "b3f82ea74bd67266fc883fb530f04c9a78c2d3abbfc0ec05a3825a40440d4dec"
+      },
+      {
+        "path": "lua/files/text.lua",
+        "sha256": "714f75a90ecd084f54ce4f9d2151ccb4aae81f80bec448fe7706635f9945be2e"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "8058f7f24506998f897888bfa3f04c0961d23c9c0507dda17dec36c001e5d6d6"
+      },
+      {
+        "path": "ui.lua",
+        "sha256": "e7b25b498ef90105787f1412aae848bf01c5327d7864a3ee382ebf4f1bbde825"
+      }
+    ]
+  },
+  {
     "name": "fork",
     "title": "Fork",
     "kind": "plugin",
@@ -269,7 +374,7 @@
       },
       {
         "path": "lua/git_diff_tree.lua",
-        "sha256": "c899b0ec80e3028dce5180342f1d07b8c989fc77c957eb9c2a7d2860f3e37944"
+        "sha256": "7bf8024687012b30b7d469f693a7fd2b8e1528b33b3888253bf3d60ea4e15b1a"
       },
       {
         "path": "manifest.json",
@@ -572,7 +677,7 @@
       },
       {
         "path": "ui.lua",
-        "sha256": "f8bbeeef3af1d37435ea5124b61c43008cd872bd7e0fb2fcb543c03f06b24d56"
+        "sha256": "89e4c2fd51dbe949dd6cc72c0ca951a73b6d8d8ab898cceabdc16b9cfd969e37"
       }
     ]
   },
@@ -857,7 +962,7 @@
       },
       {
         "path": "tui.lua",
-        "sha256": "3473dd29714e0a687f26773f673cf5b62224fb5fa5725af9a8fc3f545bfb9834"
+        "sha256": "a37cdda61f5a454b7dcf23d49d1f738114f9ddeb18e3aeb654d4f885cd77d060"
       },
       {
         "path": "ui.lua",
