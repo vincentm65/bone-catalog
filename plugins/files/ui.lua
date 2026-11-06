@@ -15,6 +15,7 @@ local quick = require("files.quick")
 local gutter = require("files.gutter")
 local fileops = require("files.fileops")
 local media = require("files.media")
+local extedit = require("files.extedit")
 
 -- The desktop draws the panel with its own look (files.look); a terminal
 -- draws the shared elements below.
@@ -81,6 +82,9 @@ local SETTINGS = {
   follow = setting("follow_agent", false) and true or false,
   link_files = setting("link_files", true) and true or false,
   tui_look = tostring(setting("tui_look", "drawn")),
+  -- built-in | nvim | vim | custom (editor_command, with {file} and {line})
+  editor = tostring(setting("editor", "built-in")),
+  editor_command = tostring(setting("editor_command", "")),
 }
 if not GUI and SETTINGS.tui_look ~= "elements" then
   local ok, mod = pcall(require, "files.tlook")
@@ -973,6 +977,52 @@ load_preview = function(row)
     body = body, note = preview.note, raw = preview.raw }
 end
 
+-- ---- another editor ----------------------------------------------------------
+
+--- Open `path` in the editor the `editor` setting names (Neovim, Vim, a
+--- command of your own), in a terminal panel beside this one: true when it
+--- did. With the built-in editor chosen, or when it cannot run, false (the
+--- caller opens the built-in one; a word says why).
+function act.external_open(path, line)
+  local kind = SETTINGS.editor
+  if kind == "built-in" or kind == "" then return false end
+  if kind == "custom" and SETTINGS.editor_command:match("^%s*$") then
+    note("No editor_command set · using the built-in editor")
+    return false
+  end
+  local ok, why = extedit.open(kind, SETTINGS.editor_command, path, line, function()
+    -- The editor has closed: the tree, Git's marks and the sizes again.
+    act.ext_on = false
+    if listing.note and listing.note:find("^Editing ") then listing.note = nil end
+    listing.read[parent(path)] = nil
+    preview_cache[path] = nil
+    if panel and panel:is_open() then
+      build_rows()
+      fetch_git()
+      fetch_marks()
+      panel:update(chrome())
+      -- The keys come back here, not to the prompt.
+      panel:focus()
+    end
+    redraw()
+  end)
+  if not ok then
+    note("Could not open it in " .. (extedit.program(kind, SETTINGS.editor_command) or "the editor") .. ": " .. tostring(why)
+      .. " · using the built-in editor")
+    return false
+  end
+  act.ext_on = true
+  quick.opened(path)
+  for n, row in ipairs(listing.rows) do
+    if row.path == path then listing.selected, listing.selected_key = n, path break end
+  end
+  note("Editing " .. name_of(path) .. " in " .. (extedit.program(kind, SETTINGS.editor_command) or "the editor")
+    .. " · ctrl+] gives the keys back")
+  if panel and panel:is_open() then panel:update(chrome()) end
+  redraw()
+  return true
+end
+
 -- ---- the tabs ---------------------------------------------------------------
 
 --- The tab that holds `path`, or nil.
@@ -1089,6 +1139,7 @@ open_file = function(path, line)
     local head = file and file:read(8192) or ""
     if file then file:close() end
     if file and not text.is_binary(head) then
+      if act.external_open(path, line) then return end
       open_editor(path, line)
       return
     end
@@ -2242,6 +2293,9 @@ function act.tree_menu(i, top, left)
   local function line() items[#items + 1] = { separator = true } end
   if row.type == "file" then
     add("Open", "enter", function() open_file(row.path) end)
+    if SETTINGS.editor ~= "built-in" and SETTINGS.editor ~= "" then
+      add("Open in the built-in editor", "E", function() open_editor(row.path) end)
+    end
     add("Open with the desktop's app", "o", function() open_externally() end)
     add("Add to chat", "ctrl+k", function() act.to_chat(row.path) end)
   else
@@ -2890,7 +2944,7 @@ local function preview_key(k)
   if k == "e" then
     local content = text.read(preview.path)
     if content and not text.is_binary(content) then
-      open_editor(preview.path)
+      if not act.external_open(preview.path) then open_editor(preview.path) end
     else
       bone.notify("There is no text there to edit.", "info")
     end
@@ -3018,10 +3072,16 @@ local function tree_key(k)
     redraw()
     return true
   end
+  if k == "E" then
+    -- The built-in editor, whatever the setting says.
+    local row = listing.rows[listing.selected]
+    if row and row.type == "file" then open_editor(row.path) end
+    return true
+  end
   if k == "e" then
     local row = listing.rows[listing.selected]
     if row and row.type == "file" then
-      open_editor(row.path)
+      if not act.external_open(row.path) then open_editor(row.path) end
     elseif row and row.type == "dir" then
       bone.notify("That is a folder.", "info")
     end
@@ -3298,6 +3358,8 @@ size_for = function()
   local want = SETTINGS.width
   -- The desktop puts the open file beside the tree, so it widens while one
   -- is open; a terminal shows the editor alone, a little wider than a tree.
+  -- Beside another editor's panel, only the tree is here: narrow.
+  if act.ext_on and not doc then return math.max(0.2, math.min(0.3, want * 0.55)) end
   if GUI or tlook then
     if doc then want = want + 0.1 end
   elseif pane == EDIT then
@@ -3714,7 +3776,7 @@ bone.cmd.create("editor", function(c)
   local path, line = rest:match("^(.-)%s+(%d+)$")
   if not path then path, line = rest, nil end
   if not (panel and panel:is_open()) then open() else take_keys_soon() end
-  open_editor(absolute(path), line)
+  if not act.external_open(absolute(path), line) then open_editor(absolute(path), line) end
 end, { desc = "edit a file in the sidebar, at a line if you give one",
   aliases = { "edit" }, complete = complete_paths })
 

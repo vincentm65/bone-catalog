@@ -62,6 +62,16 @@ through the system clipboard (`wl-copy`, `xclip` or `xsel`): `ctrl+c` `ctrl+x`
 bone's build of 6 November 2026 on; in an older one `ctrl+c` and `ctrl+x` never reach
 the panel, and `ctrl+insert`, `shift+delete` and the right-click menu do the same
 anywhere.
+**Neovim, Vim or your own.** With the `editor` setting on `nvim`, `vim` or
+`custom`, a text file opens in that program instead, in a terminal panel beside the
+tree (the desktop's own terminal; in a terminal, the term plugin's), at the line asked
+for, with your own config. A second file goes to the same Neovim or Vim (`:hide e`, so
+unsaved work stays in its buffer). `ctrl+]` gives the keys back to the prompt; a click
+on the tree opens the next file there. When the program ends its panel closes, the tree
+and Git's marks are read again, and the keys come back to the tree. `E` (or *Open in the
+built-in editor* on the right-click menu) still opens the built-in one; it is also used
+when the program is not on the PATH or there is no terminal to run it in.
+
 Enter keeps the line's indentation, one step more after a line that opens a block,
 and puts a closing bracket on a line of its own; a closing bracket typed on a line of
 only indentation steps it back. The indentation is the file's own (a tab, two or four
@@ -236,7 +246,7 @@ your version over theirs, `ctrl+r` reads theirs instead.
 | Pane | Its keys |
 |---|---|
 | Everywhere | `ctrl+p` go to a file · `ctrl+tab` `ctrl+shift+tab` the open files · `ctrl+w` close the one shown · `ctrl+k` add it to the message |
-| Files | `↑` `↓` through the tabs and the tree (past the end, scroll) · `enter` open or close a folder, or open a file (text in the editor) · `e` edit · `o` open with the desktop's app · `v` the preview, read fresh |
+| Files | `↑` `↓` through the tabs and the tree (past the end, scroll) · `enter` open or close a folder, or open a file (text in the editor) · `e` edit (in the `editor` setting's program) · `E` the built-in editor · `o` open with the desktop's app · `v` the preview, read fresh |
 | Files | `p` go to a file · `f` filter · `a` new file · `A` new folder · `R` `f2` rename · `D` duplicate · `delete` to the Trash · `y` `Y` copy the path · `F` follow the agent |
 | Files (desktop) | `→` opens a folder or steps into it, `←` closes it or steps out to the one above · `home` `end` `pageup` `pagedown` · `tab` the open file · `esc` closes the open file (twice if unsaved) · `ctrl+s` saves it |
 | Files | `s` or `/` search · `c` the Changed tab · `r` read the folder, the marks and Git again · `backspace` `←` close the deepest open folder, or go to the folder above · `ctrl+h` hidden · `q` close the sidebar · `esc` hand the keyboard to the prompt — the panel's top row then carries a dim `keys: prompt` badge, and a click, `tab` or `focus_next` give them back |
@@ -275,6 +285,8 @@ offers `search`) and `/editor`'s is a line number. A name matches in its own cas
 | `show_git` | on | Git's markers in the tree and the Changed tab |
 | `autorefresh` | on | asking the core, after each tool call, what changed |
 | `follow_agent` | off | open each file the agent writes as it writes it (`F` switches it for now) |
+| `editor` | built-in | the text editor: `built-in`, `nvim`, `vim`, or `custom` |
+| `editor_command` | — | the `custom` editor's line, `{file}` and `{line}` filled in (e.g. `hx {file}:{line}`, `micro +{line} {file}`) |
 
 They are on the Files page of `/config`; the plugin reads them at load.
 
@@ -316,6 +328,8 @@ are mapped nowhere.
 - Ghostscript (`gs`), for a PDF's pages in the desktop app (its text is shown without it)
 - ffmpeg and ffprobe, for videos (offered when missing: installed, or fetched for the panel)
 - mpv, Celluloid or VLC to open a video with sound (else the desktop's own app)
+- Neovim or Vim, for the `editor` setting, and a terminal panel for it to run in
+  (the desktop app has one; in a terminal, the term plugin)
 
 **Where it runs.** Linux is where it is used and tried. macOS takes its own tools —
 `open`, `pbcopy`, the Trash through `trash` or the Finder, BSD `stat` and `shasum` —
