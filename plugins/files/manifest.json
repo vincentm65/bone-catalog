@@ -1,6 +1,6 @@
 {
   "title": "Files",
-  "version": "3.5.0",
+  "version": "3.5.1",
   "description": "A file explorer, a file viewer and a text editor in one right-docked sidebar, in the terminal and the desktop app: a folder tree that marks what the agent changed, Git's own markers, search through the folder, and an editor that will not write over a file someone else changed",
   "capabilities": [
     "command",
@@ -31,7 +31,7 @@
         "custom"
       ],
       "default": "built-in",
-      "desc": "Where a text file opens: the panel's own editor, or Neovim, Vim or the command below in a terminal panel beside it (E in the tree is always the built-in one)"
+      "desc": "In a terminal, where a text file opens: the panel's own editor, or Neovim, Vim or the command below in a terminal panel beside it (E in the tree is always the built-in one). The desktop app always uses its own editor"
     },
     {
       "key": "editor_command",

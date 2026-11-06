@@ -1,7 +1,8 @@
--- Editing in Neovim, Vim or another editor of your own: the program runs in a
--- terminal panel beside the files panel (the desktop's built-in terminal, or
--- the term plugin's in a terminal), at the line asked for. A second file goes
--- to the same Neovim or Vim (`:e`); when the program ends its panel closes.
+-- Editing in Neovim, Vim or another editor of your own, in a terminal (the
+-- desktop app keeps the built-in editor): the program runs in the term
+-- plugin's terminal panel beside the files panel, at the line asked for. A
+-- second file goes to the same Neovim or Vim (`:hide e`); when the program
+-- ends its panel closes.
 
 local P = require("files.platform")
 
@@ -9,17 +10,10 @@ local M = {}
 
 M.PANEL = "files-editor"
 
---- The terminal module this frontend has: the desktop's own, or the term
---- plugin's in a terminal. nil when there is none.
+--- The term plugin's terminal module; nil without the term plugin.
 function M.terminal()
-  -- bone.terminal is the desktop's (set up there only); a terminal has the
-  -- term plugin's bone.ui.terminal.
-  local order = bone.has_capability("gui.window_nodes") and { "bone.terminal", "bone.ui.terminal" }
-    or { "bone.ui.terminal" }
-  for _, name in ipairs(order) do
-    local ok, t = pcall(require, name)
-    if ok and type(t) == "table" and type(t.open) == "function" then return t end
-  end
+  local ok, t = pcall(require, "bone.ui.terminal")
+  if ok and type(t) == "table" and type(t.open) == "function" then return t end
   return nil
 end
 

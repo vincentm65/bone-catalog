@@ -220,7 +220,7 @@
     "name": "files",
     "title": "Files",
     "kind": "plugin",
-    "version": "3.5.0",
+    "version": "3.5.1",
     "description": "A file explorer, a file viewer and a text editor in one right-docked sidebar, in the terminal and the desktop app: a folder tree that marks what the agent changed, Git's own markers, search through the folder, and an editor that will not write over a file someone else changed",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -233,7 +233,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "b060083183ac5141dbe8d6450c021b69eab0c0cca204665caae8bd77712ce68d"
+        "sha256": "518cce6d557035e0f0ceb8d5aef65634bdc7f96577a34d69d273300b6351e1fc"
       },
       {
         "path": "core.lua",
@@ -253,7 +253,7 @@
       },
       {
         "path": "lua/files/extedit.lua",
-        "sha256": "2d9941fd5e236bc5256e2cec7e868e42412e1016808950163bea1bf2f2af8e3f"
+        "sha256": "f5edd1a654d483e2a08120ea26608516e2f55415d116d177adf85d4b221378a1"
       },
       {
         "path": "lua/files/ffmpeg.lua",
@@ -321,11 +321,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "0457c955664881a57361216005d36e58cca0f4bcb16326f0624729fb18a2651f"
+        "sha256": "87726be4fbda280a71c39f12ce09a51bac54bb43b8c2fa07b172fbcfaaf4580f"
       },
       {
         "path": "ui.lua",
-        "sha256": "aa4135f3bf41245bb02533564e66ee05c57bdc9a69b290233effc48a4fd20914"
+        "sha256": "1722ebe045b14b842f832a7c5ced00fae080c18c0e1815cd942d63c3b793ca21"
       }
     ]
   },

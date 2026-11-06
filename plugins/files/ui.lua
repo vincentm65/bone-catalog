@@ -985,7 +985,8 @@ end
 --- caller opens the built-in one; a word says why).
 function act.external_open(path, line)
   local kind = SETTINGS.editor
-  if kind == "built-in" or kind == "" then return false end
+  -- A terminal's setting: the desktop app keeps its own editor.
+  if GUI or kind == "built-in" or kind == "" then return false end
   if kind == "custom" and SETTINGS.editor_command:match("^%s*$") then
     note("No editor_command set · using the built-in editor")
     return false
@@ -2293,7 +2294,7 @@ function act.tree_menu(i, top, left)
   local function line() items[#items + 1] = { separator = true } end
   if row.type == "file" then
     add("Open", "enter", function() open_file(row.path) end)
-    if SETTINGS.editor ~= "built-in" and SETTINGS.editor ~= "" then
+    if not GUI and SETTINGS.editor ~= "built-in" and SETTINGS.editor ~= "" then
       add("Open in the built-in editor", "E", function() open_editor(row.path) end)
     end
     add("Open with the desktop's app", "o", function() open_externally() end)
