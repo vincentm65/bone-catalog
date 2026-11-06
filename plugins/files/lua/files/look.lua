@@ -283,7 +283,7 @@ local function segmented(names, current, pick, o)
       grow = o.fill and 1 or 0, padding = { 3, o.pad or 10 }, radius = 6,
       bg = on and C.soft or nil, shadow = on and { blur = 3, dy = 1, color = "#00000040" } or nil,
       role = "option", selected = on,
-      { text = name, size = o.size or SIZE.small, bold = on, color = on and nil or C.dim,
+      { text = name, size = o.size or SIZE.small, bold = on, color = (not on) and C.dim or nil,
         hl = on and "Normal" or nil, wrap = false },
     }
     if o.counts and o.counts[i] and o.counts[i] > 0 then
@@ -985,7 +985,7 @@ local function editor_lines(s, width)
       local bg = (flash and flash[i]) and C.flash or (cur and not s1) and C.current or nil
       return { direction = "row", height = height, bg = bg, transition = 400, align = "start",
         { text = tostring(i), font = "mono", size = SIZE.small, width = gutter - 10, height = LINE, shrink = 0,
-          text_align = "right", color = cur and nil or C.gutter, hl = cur and "Normal" or nil, padding = { 0, 2, 0, 0 } },
+          text_align = "right", color = (not cur) and C.gutter or nil, hl = cur and "Normal" or nil, padding = { 0, 2, 0, 0 } },
         bar,
         text_col,
       }
@@ -1092,7 +1092,7 @@ local function tab_strip(s)
       shrink = 0, bg = on and C.soft or nil, shadow = on and { blur = 3, dy = 1, color = "#00000035" } or nil,
       role = "option", selected = on, tooltip = s.relative(path),
       file_icon(name),
-      { text = name, size = SIZE.small, bold = on, hl = on and "Normal" or nil, color = on and nil or C.dim, wrap = false },
+      { text = name, size = SIZE.small, bold = on, hl = on and "Normal" or nil, color = (not on) and C.dim or nil, wrap = false },
       dirty and on and { width = 7, height = 7, radius = 4, bg = C.dim, shrink = 0 } or nil,
       close }
     press(tab, function() app.tab_click(i) end, name)
@@ -1446,7 +1446,7 @@ local function picture(p, width, height, anim)
       pcall(bone.gui.invalidate, 0)
     end
   end
-  node.on_double_click = function() app.act.zoom_set(type(p.zoom) == "number" and nil or 1) end
+  node.on_double_click = function() if type(p.zoom) == "number" then app.act.zoom_set(nil) else app.act.zoom_set(1) end end
   return { grow = 1, direction = "column", align = "center", justify = "center", node }
 end
 
@@ -1729,7 +1729,7 @@ local function html_block(b, o)
     end
     return col
   elseif b.kind == "quote" then
-    local inner = html_blocks(b.blocks, { base = base, page = o.page, width = width - 24, color = b.plain and nil or C.dim,
+    local inner = html_blocks(b.blocks, { base = base, page = o.page, width = width - 24, color = (not b.plain) and C.dim or nil,
       depth = o.depth, tight = true })
     local content = { direction = "column", grow = 1, width = 0 }
     for _, n in ipairs(inner) do content[#content + 1] = n end

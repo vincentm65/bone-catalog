@@ -1217,7 +1217,8 @@ activate = function(index)
       redraw()
       return
     end
-    listing.open[row.path] = listing.open[row.path] and nil or true
+    -- (not `open and nil or true`: that is always true, so a click never closed one)
+    if listing.open[row.path] then listing.open[row.path] = nil else listing.open[row.path] = true end
     build_rows()
   else
     open_file(row.path)
