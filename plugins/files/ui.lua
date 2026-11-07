@@ -2880,6 +2880,9 @@ local function search_key(k)
   local edited = bone.text.edit(listing.query, k)
   if not edited then return false end
   listing.query, listing.hit_selected = edited, 1
+  -- The desktop's field shows what the keys made of it (a backspace while the
+  -- panel has the keys comes here, not to the field).
+  if GUI then pcall(bone.gui.set_input_text, "files:search", edited) end
   if edited == "" then
     stop_job("search")
     hit_rows, listing.search_state = {}, "off"
@@ -3036,8 +3039,10 @@ local function tree_key(k)
     return true
   end
   if k == "f" then
+    -- The desktop finds a name in one place: Go to file.
     if GUI then
-      bone.defer(0, function() pcall(bone.gui.focus, "files:filter") end)
+      act.quick_open()
+      return true
     else
       listing.filter_typing = true
     end

@@ -8,14 +8,18 @@ text or code file puts you straight in the editor; a picture, a PDF or a binary
 file opens in the preview. No windows: it all happens in the panel, which takes
 half the window (the `width` setting says otherwise).
 
-**In the desktop app** the panel draws its own look (`files.look`): breadcrumbs of
-the folder (press one to go there), a tree with drawn chevrons and file-type icons,
+**In the desktop app** the panel draws its own look (`files.look`), on one flat
+surface with hairlines between its parts: the folder's last two breadcrumbs (press one
+to go there; `…` goes up and shows the whole path), a tree with drawn chevrons and file-type icons,
 and Git's letters and this session's edits as small marks at the right. An open file
 takes the room on the left, with line numbers, the current line lit, syntax colors
 and a caret you can place with a click; the tree narrows to a column on the right,
 showing the open file, and the panel widens by a tenth. `esc` in the file gives the
 keys to the tree (the file stays open), `tab` gives them back, and `esc` in the tree
 closes the file. The search groups its results under their file and marks the term.
+The file bar keeps to the name: where the caret is shows once it has moved, *Edit ·
+Changes* once there are changes (Markdown and HTML always have their *Preview* and
+*Split*), and the keys are behind the `?` in the header rather than under every pane.
 **In a terminal** the panel draws its own lines (`files.tlook`), in the
 colorscheme's colors: breadcrumbs, the file beside the tree when the terminal is wide
 enough (90 columns and more; one of them when it is not), tabs and the file bar,
@@ -36,11 +40,12 @@ beside the line numbers: `+` added, `~` changed, `_` lines taken out above.
 finds any file under the folder by a few letters of its path, in order: a match in
 the name, at the start of a word or in one run ranks higher, the files you opened
 last come first (they are kept across restarts), and `name:42` opens it at line 42.
-The list comes from ripgrep, so what `.gitignore` keeps out stays out. The tree's own
-filter (`f`, the field under it) shows the files and folders anywhere under the
+The list comes from ripgrep, so what `.gitignore` keeps out stays out. In a terminal the tree's own
+filter (`f`) shows the files and folders anywhere under the
 folder whose names hold the letters, under the folders that hold them (quick open's
 list; the folders read so far while it is read); what `.gitignore` keeps out is still listed, dimmed. In the desktop
-app the folder the top row sits in stays pinned over the list while you scroll.
+app the folder the top row sits in stays pinned over the list while you scroll, and
+`f` opens Go to file: a name is found in one place there, and the contents in Search.
 
 **After a reload.** The panel keeps what it holds as it changes (`bone.state`): the
 folder, the folders open in it, the tabs with their carets, and the text of a tab with
@@ -247,7 +252,7 @@ your version over theirs, `ctrl+r` reads theirs instead.
 |---|---|
 | Everywhere | `ctrl+p` go to a file · `ctrl+tab` `ctrl+shift+tab` the open files · `ctrl+w` close the one shown · `ctrl+k` add it to the message |
 | Files | `↑` `↓` through the tabs and the tree (past the end, scroll) · `enter` open or close a folder, or open a file (text in the editor) · `e` edit (in a terminal, in the `editor` setting's program) · `E` the built-in editor · `o` open with the desktop's app · `v` the preview, read fresh |
-| Files | `p` go to a file · `f` filter · `a` new file · `A` new folder · `R` `f2` rename · `D` duplicate · `delete` to the Trash · `y` `Y` copy the path · `F` follow the agent |
+| Files | `p` go to a file · `f` filter (in the desktop app, go to a file) · `a` new file · `A` new folder · `R` `f2` rename · `D` duplicate · `delete` to the Trash · `y` `Y` copy the path · `F` follow the agent |
 | Files (desktop) | `→` opens a folder or steps into it, `←` closes it or steps out to the one above · `home` `end` `pageup` `pagedown` · `tab` the open file · `esc` closes the open file (twice if unsaved) · `ctrl+s` saves it |
 | Files | `s` or `/` search · `c` the Changed tab · `r` read the folder, the marks and Git again · `backspace` `←` close the deepest open folder, or go to the folder above · `ctrl+h` hidden · `q` close the sidebar · `esc` hand the keyboard to the prompt — the panel's top row then carries a dim `keys: prompt` badge, and a click, `tab` or `focus_next` give them back |
 | Search | typing edits the term · `backspace` a letter (and leaves it when empty) · `↑` `↓` the hits · `enter` opens a hit at its line · `esc` back |

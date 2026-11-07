@@ -261,7 +261,11 @@ local function clock(t)
 end
 
 --- The keys of a pane, quiet, in one line under it.
-local function hints(list)
+-- The keys are a press of "?" in the header away, not a strip under every pane.
+local keys_shown = false
+
+local function hints(list, always)
+  if not (keys_shown or always) then return nil end
   local row = { direction = "row", gap = 12, align = "center", padding = { 6, 4, 0, 4 }, flex_wrap = true, row_gap = 4 }
   for _, h in ipairs(list) do
     row[#row + 1] = { direction = "row", gap = 5, align = "center",
@@ -275,13 +279,15 @@ end
 --- A switch between a few views in one rounded track.
 local function segmented(names, current, pick, o)
   o = o or {}
-  local row = { direction = "row", gap = 2, padding = 2, radius = 8, bg = C.chip, align = "center",
-    align_self = o.align or "stretch" }
+  -- Flat: the names alone, the chosen one in the text's own color, no track.
+  local flat = o.flat
+  local row = { direction = "row", gap = flat and 14 or 2, padding = flat and { 0, 2 } or 2, radius = 8,
+    bg = (not flat) and C.chip or nil, align = "center", align_self = o.align or "stretch" }
   for i, name in ipairs(names) do
     local on = i == current
     local seg = { direction = "row", gap = 5, align = "center", justify = "center",
-      grow = o.fill and 1 or 0, padding = { 3, o.pad or 10 }, radius = 6,
-      bg = on and C.soft or nil, shadow = on and { blur = 3, dy = 1, color = "#00000040" } or nil,
+      grow = (o.fill and not flat) and 1 or 0, padding = flat and { 4, 0 } or { 3, o.pad or 10 }, radius = 6,
+      bg = (on and not flat) and C.soft or nil, shadow = (on and not flat) and { blur = 3, dy = 1, color = "#00000040" } or nil,
       role = "option", selected = on,
       { text = name, size = o.size or SIZE.small, bold = on, color = (not on) and C.dim or nil,
         hl = on and "Normal" or nil, wrap = false },
@@ -289,7 +295,9 @@ local function segmented(names, current, pick, o)
     if o.counts and o.counts[i] and o.counts[i] > 0 then
       seg[#seg + 1] = { text = tostring(o.counts[i]), size = SIZE.micro, color = C.faint, wrap = false }
     end
-    row[#row + 1] = press(seg, function() if not on then pick(i) end end, name)
+    press(seg, function() if not on then pick(i) end end, name)
+    if flat then seg.hover = { color = "Normal" } end
+    row[#row + 1] = seg
   end
   return row
 end
@@ -318,10 +326,12 @@ local function header(s)
   local row = { direction = "row", align = "center", gap = 4, height = 34, padding = { 0, 6, 0, 10 }, shrink = 0 }
   local trail = crumbs(s.listing.root, s.home)
   -- A deep folder keeps its last few steps: the start is a press away.
-  local first = math.max(1, #trail - 4)
+  local first = math.max(1, #trail - 1)
   if first > 1 then
-    row[#row + 1] = press({ text = "…", size = SIZE.crumb, color = C.dim, padding = { 2, 4 }, radius = 5 },
+    local up = press({ text = "…", size = SIZE.crumb, color = C.dim, padding = { 2, 4 }, radius = 5 },
       function() app.crumb(trail[first - 1].path) end, "up")
+    up.tooltip = s.listing.root .. "  ·  up a folder"
+    row[#row + 1] = up
     row[#row + 1] = { text = "›", size = SIZE.crumb, color = C.faint }
   end
   for i = first, #trail do
@@ -359,6 +369,12 @@ local function header(s)
     tooltip = on and "Following the agent: each file it writes opens here (F)" or "Follow the agent: open each file it writes (F)",
     eye(on and C.accent or C.dim), { text = "Follow", size = SIZE.small, color = on and C.accent or C.dim, wrap = false } },
     function() app.act.toggle_follow() end, "Follow the agent")
+  local q = icon_button({ text = "?", size = SIZE.small, bold = keys_shown, color = keys_shown and C.accent or C.faint },
+    keys_shown and "Hide the keys" or "Show the keys", function()
+      keys_shown = not keys_shown
+      pcall(bone.gui.invalidate, 0)
+    end)
+  row[#row + 1] = q
   row[#row + 1] = icon_button(cross(), "Close the files panel", function() app.close_panel() end)
   return row
 end
@@ -630,7 +646,7 @@ local function side_column(s, width, narrow)
   local col = { direction = "column", gap = 8, padding = { 4, 8, 8, 8 }, shrink = 0 }
   if narrow then col.width = width else col.grow = 1 end
   col[#col + 1] = segmented(TABS, s.tab, function(i) app.tab(i) end,
-    { fill = true, counts = { 0, 0, app.changed_count() }, size = narrow and SIZE.small or SIZE.small })
+    { flat = true, align = "start", counts = { 0, 0, app.changed_count() }, size = SIZE.small })
   s.side_width = width
   if s.tab == 2 then
     col[#col + 1] = search(s, narrow, focused)
@@ -638,18 +654,6 @@ local function side_column(s, width, narrow)
     col[#col + 1] = changed(s, narrow, focused)
   else
     col[#col + 1] = tree(s, narrow, focused)
-    -- The filter sits under the tree, as a navigator's does.
-    col[#col + 1] = { direction = "row", align = "center", gap = 7, height = 28, padding = { 0, 9 }, radius = 7,
-      shrink = 0, bg = C.chip, border = 1, border_color = s.listing.filter ~= "" and C.accent or C.line,
-      funnel(s.listing.filter ~= "" and C.accent or nil),
-      { id = "files:filter", grow = 1, width = 0, size = SIZE.small,
-        text_input = { value = s.listing.filter, placeholder = "Filter", on_change = function(t) app.filter_typed(t) end },
-        on_key = function(k) return app.filter_key(k) end },
-      s.listing.filter ~= "" and icon_button(cross(C.faint), "Clear the filter", function()
-        app.filter_typed("")
-        pcall(bone.gui.set_input_text, "files:filter", "")
-      end) or nil,
-    }
   end
   if focused then
     local keys
@@ -658,7 +662,7 @@ local function side_column(s, width, narrow)
     elseif narrow then
       keys = { { "↑↓", "move" }, { "←→", "fold" }, { "tab", "editor" }, { "esc", "close file" } }
     else
-      keys = { { "↑↓", "move" }, { "←→", "fold" }, { "enter", "open" }, { "ctrl+p", "go to file" }, { "f", "filter" },
+      keys = { { "↑↓", "move" }, { "←→", "fold" }, { "enter", "open" }, { "ctrl+p", "go to file" },
         { "/", "search" }, { "a", "new" }, { "R", "rename" }, { "right click", "more" } }
     end
     col[#col + 1] = hints(keys)
@@ -1154,21 +1158,27 @@ local function doc_bar(s)
       row[#row + 1] = { text = e.status, size = SIZE.micro, color = C.faint, wrap = false,
         text_overflow = "ellipsis", shrink = 1, max_width = 260 }
     end
-    local where = "Ln " .. e.line .. ", Col " .. (e.col + 1)
-    if e.anchor and not (e.anchor.line == e.line and e.anchor.col == e.col) then
-      local lines = math.abs(e.line - e.anchor.line) + 1
-      where = where .. (lines > 1 and (" · " .. lines .. " lines") or " · selected")
+    -- Where the caret is, once it has moved from the top.
+    local selecting = e.anchor and not (e.anchor.line == e.line and e.anchor.col == e.col)
+    if selecting or e.line ~= 1 or e.col ~= 0 then
+      local where = "Ln " .. e.line .. ", Col " .. (e.col + 1)
+      if selecting then
+        local lines = math.abs(e.line - e.anchor.line) + 1
+        where = where .. (lines > 1 and (" · " .. lines .. " lines") or " · selected")
+      end
+      row[#row + 1] = press({ text = where, size = SIZE.micro, color = C.faint, wrap = false, shrink = 0, font = "mono",
+        padding = { 2, 5 }, radius = 5 }, function() app.act.go_open() end, "Go to line (ctrl+l)")
     end
-    row[#row + 1] = press({ text = where, size = SIZE.micro, color = C.faint, wrap = false, shrink = 0, font = "mono",
-      padding = { 2, 5 }, radius = 5 }, function() app.act.go_open() end, "Go to line (ctrl+l)")
     local wraps = e.wrap
     if wraps == nil then wraps = wraps_by_default(e.path) end
-    row[#row + 1] = press({ text = "Wrap", size = SIZE.micro, color = wraps and C.accent or C.dim, wrap = false, shrink = 0,
-      padding = { 3, 8 }, radius = 6, bg = wraps and C.selected or C.chip,
+    local wrap_node = press({ text = "Wrap", size = SIZE.micro, color = wraps and C.accent or C.faint, wrap = false, shrink = 0,
+      padding = { 3, 6 }, radius = 6,
       tooltip = wraps and "Long lines wrap (alt+z)" or "Long lines run on (alt+z)" },
       function() app.act.toggle_wrap() end, "Wrap long lines")
-    row[#row + 1] = small_button({ bubble(C.dim), { text = "Add to chat", size = SIZE.micro, color = C.dim, wrap = false } },
-      function() app.act.editor_to_chat() end, "Name the file (or the selected lines) in the message (ctrl+k)")
+    wrap_node.hover = { bg = C.hover, color = wraps and C.accent or "Normal" }
+    row[#row + 1] = wrap_node
+    row[#row + 1] = icon_button(bubble(C.faint), "Name the file (or the selected lines) in the message (ctrl+k)",
+      function() app.act.editor_to_chat() end)
     local names, modes = { "Edit", "Changes" }, { "buffer", "changes" }
     local lower_name = (leaf or rel):lower()
     local is_html = lower_name:match("%.html?$") or lower_name:match("%.xhtml$")
@@ -1183,7 +1193,10 @@ local function doc_bar(s)
     end
     local current = 1
     for i, m in ipairs(modes) do if e.shown == m then current = i end end
-    row[#row + 1] = segmented(names, current, function(i) app.mode(modes[i]) end, { size = SIZE.micro, pad = 8 })
+    -- Edit and Changes only when there is something to compare (or a page to read).
+    if #names > 2 or b.sign or b.mark or e.dirty or current ~= 1 then
+      row[#row + 1] = segmented(names, current, function(i) app.mode(modes[i]) end, { size = SIZE.micro, pad = 8 })
+    end
   else
     local p = s.preview
     if (p.kind == "image" or p.kind == "gif") and p.width and p.height then
@@ -2234,10 +2247,9 @@ local function doc_column(s, width, height)
       "warning", s.preview.stale ~= "gone" and { { "Read again", function() app.reread() end } } or nil)
     used = used + 40
   end
-  local surface = { direction = "column", grow = 1, bg = "Normal", radius = 10, border = 1, border_color = C.line,
-    overflow = "hidden" }
+  local surface = { direction = "column", grow = 1, overflow = "hidden" }
   local focused = s.doc_focused and s.keys_here ~= false
-  local hint_h = focused and 24 or 0
+  local hint_h = (focused and keys_shown) and 24 or 0
   s.room_h = height - used - hint_h - 40
   if s.doc == "edit" then
     if e.shown == "changes" then
@@ -2360,7 +2372,7 @@ local function quick_card(s, W, H)
   end
   col[#col + 1] = { height = 1, bg = C.line, shrink = 0 }
   col[#col + 1] = { padding = { 0, 8, 6, 8 }, shrink = 0,
-    hints({ { "↑↓", "choose" }, { "enter", "open" }, { "name:42", "at a line" }, { "esc", "close" } }) }
+    hints({ { "↑↓", "choose" }, { "enter", "open" }, { "name:42", "at a line" }, { "esc", "close" } }, true) }
   return { scrim(function() app.act.quick_close() end), col }
 end
 
@@ -2487,14 +2499,14 @@ function M.view(ctx)
   local W, H = tonumber(ctx and ctx.width) or 800, tonumber(ctx and ctx.height) or 600
   local root = { direction = "column", grow = 1, gap = 0 }
   root[#root + 1] = header(s)
-  root[#root + 1] = { height = 1, bg = C.line, shrink = 0, margin = { 0, 10, 0, 10 } }
+  root[#root + 1] = { height = 1, bg = C.line, shrink = 0 }
   local body = { direction = "row", grow = 1, gap = 0 }
   -- Room under the header, for what has to fit (a menu, a picture).
   s.room_h = H - 120
   if s.doc then
     local side = math.min(SIDE, math.floor(W * 0.34))
     body[#body + 1] = doc_column(s, W - side - 1, H - 36)
-    body[#body + 1] = { width = 1, bg = C.line, shrink = 0, margin = { 10, 0, 10, 0 } }
+    body[#body + 1] = { width = 1, bg = C.line, shrink = 0 }
     s.room_h = H - 120
     body[#body + 1] = side_column(s, side, true)
   else
