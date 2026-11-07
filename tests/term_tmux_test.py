@@ -103,7 +103,12 @@ end, { context = "panel" })
 bone.cmd.create("term-test-require", function()
   assert(package.loaded["bone.ui.terminal"] == nil, "dependency must evict the module cache")
   assert(require("bone.ui.terminal") == term)
-  assert(term.job("term1") == jobs[#jobs], "cache eviction lost the live job")
+  -- /term's shells are the multiplexer's (jobs named term:<n>).
+  local live = false
+  for _, j in ipairs(bone.job.list()) do
+    if j.running and tostring(j.name or ""):match("^term") then live = true end
+  end
+  assert(live, "cache eviction lost the live job")
   bone.notify("TERM_REQUIRE_OK")
 end)
 bone.cmd.create("term-test-retire", function(c)
@@ -126,8 +131,9 @@ bone.cmd.create("term-test-report", function(c)
       keys = keys + 1
     end
   end
-  for _, job in ipairs(jobs) do
-    if job:running() then running = running + 1 end
+  -- Every terminal program: the module's panels and the multiplexer's panes.
+  for _, j in ipairs(bone.job.list()) do
+    if j.running and tostring(j.name or ""):match("^term") then running = running + 1 end
   end
   local f = assert(io.open(''' + json.dumps(str(report_file)) + ''', "w"))
   f:write(c.args .. " keys=" .. keys .. " panels=" .. #bone.ui.panel.list() .. " running=" .. running)

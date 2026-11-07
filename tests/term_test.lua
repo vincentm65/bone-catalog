@@ -83,7 +83,8 @@ local function mouse(ev)
 end
 -- A dependency may require the module before term loads. It must stay inert,
 -- then activate when term's own tui.lua runs (and register paste as term).
--- The desktop half (gui.lua) intentionally registers nothing.
+-- tui.lua also sets up the multiplexer (term.mux): /term and ctrl+] are its,
+-- with a paste and a mouse handler of its own; the module API is the same.
 owner = "windows"
 local preloaded = require("bone.ui.terminal")
 assert(preloaded.open() == nil and #jobs == 0 and next_event == 0)
@@ -95,10 +96,11 @@ assert(commands.term.opts.desc ~= "")
 for _, key in ipairs({ "ctrl+]", "ctrl+5" }) do
   assert(keys[key].owner == "term" and keys[key].opts.desc ~= "")
 end
-assert(next_event == 2 and events[1].owner == "term" and events[2].owner == "term")
-term.setup(); assert(next_event == 2)
+assert(next_event == 4 and events[1].owner == "term" and events[2].owner == "term"
+  and events[3].owner == "term" and events[4].owner == "term")
+term.setup(); assert(next_event == 4)
 local old_paste = events[1].fn
-command("close"); assert(notices[#notices] == "no terminal is open")
+assert(term.close() == false, "no terminal is open")
 local encode = term.encode
 assert(encode("ctrl+c") == "\3" and encode("ctrl+@") == "\0")
 assert(encode("ctrl+]") == "\29" and encode("alt+x") == "\27x")
@@ -110,7 +112,7 @@ assert(encode("ctrl+shift+left") == "\27[1;6D")
 assert(encode("f1") == "\27OP" and encode("alt+f5") == "\27[15;3~")
 assert(encode("shift+tab") == "\27[Z" and encode("ctrl+backspace") == "\8")
 assert(encode("é") == "é" and encode("super") == nil)
-local p = keys["ctrl+]"].fn()
+local p = term.toggle()
 local j = jobs[1]
 assert(p.id == "term1" and p.spec.dock == "bottom" and p.spec.size == 0.4)
 assert(type(j.cmd) == "table" and j.opts.cwd == "/project space")
@@ -134,7 +136,7 @@ term.passthrough["alt+w"] = true
 assert(p.spec.on_key("alt+w") == false)
 assert(p.spec.on_key("ctrl+]") and focused == nil and #j.writes == writes)
 paste("ignored"); assert(#j.writes == writes)
-assert(keys["ctrl+5"].fn() == p and focused == p.id)
+assert(term.toggle() == p and focused == p.id)
 paste("two\nlines"); assert(j.writes[#j.writes] == "\27[200~two\nlines\27[201~")
 writes = #j.writes
 paste("private popup text", "popup"); paste("prompt text", "main")
@@ -145,10 +147,10 @@ assert(term.toggle() == p and not p.spec.hidden)
 -- Explicit duplicate ids must not cancel an existing job.
 assert(not pcall(term.open, { id = p.id }))
 assert(j.cancelled == 0 and term.job(p.id) == j)
-assert(command(" close ") and j.cancelled == 1 and term.job(p.id) == nil)
+assert(term.close() and j.cancelled == 1 and term.job(p.id) == nil)
 assert(p.spec.on_key("x") == false and #p.spec.render({ width = 30, height = 8 }) == 0)
 -- A closed panel's callbacks must not touch the next terminal with its id.
-local p2 = command(" printf output ")
+local p2 = term.open(nil, { cmd = "printf output" })
 local j2 = jobs[2]
 assert(p2.id == p.id and j2.cmd == "printf output")
 p.spec.on_close(p); j.opts.on_exit({ code = 2, cmd = "stale" })
@@ -166,7 +168,7 @@ assert(jobs[4].cancelled == 1 and term.job("term2") == nil)
 -- Unloading a dependency that first required term can evict its cache entry.
 package.loaded["bone.ui.terminal"] = nil
 assert(require("bone.ui.terminal") == term and term.setup == old_setup)
-assert(term.job(p2.id) == j2 and next_event == 2)
+assert(term.job(p2.id) == j2 and next_event == 4)
 -- A windows-like wrapper keeps the same table/open trampoline across reload.
 local original_open, wrapper_calls = term.open, 0
 term.open = function(spec, opts) wrapper_calls = wrapper_calls + 1; return original_open(spec, opts) end
@@ -174,7 +176,7 @@ owner = "windows"
 local foreign = term.open({ id = "foreign", on_close = function() error("user close error") end })
 local foreign_job = jobs[5]
 assert(foreign.owner == "windows" and foreign_job.owner == "windows")
-assert(next_event == 2) -- handlers were not lazily registered as windows.
+assert(next_event == 4) -- handlers were not lazily registered as windows.
 local old_shutdown = shutdowns[1]
 old_shutdown()
 assert(next(panels) == nil and next(events) == nil and term.job(foreign.id) == nil)
@@ -189,7 +191,7 @@ local reloaded = load()
 assert(reloaded == term and term.passthrough["alt+w"])
 local fresh = term.open({ id = "foreign" })
 assert(wrapper_calls >= 3 and panels.foreign == fresh)
-assert(next_event == 4 and events[3].owner == "term" and events[4].owner == "term")
+assert(next_event == 8 and events[5].owner == "term" and events[8].owner == "term")
 -- Old-generation callbacks and shutdown cannot cancel a new same-id terminal.
 old_shutdown(); old_setup(); old_paste({ text = "late" }); foreign.spec.on_close(foreign)
 assert(panels.foreign == fresh and jobs[#jobs].cancelled == 0)
@@ -205,11 +207,11 @@ local ja = term.job(a.id)
 local b = term.open({ id = "b", on_close = function() error("bad close") end })
 local jb = term.job(b.id)
 term.close_all()
-assert(next(panels) == nil and ja.cancelled == 1 and jb.cancelled == 1 and events[5])
+assert(next(panels) == nil and ja.cancelled == 1 and jb.cancelled == 1 and events[9])
 assert(term.toggle().id == "term1")
 -- Keep the final visible screen when Bone evicts a finished job. Cursor
 -- decoration must not mutate the retained screen or leak into blurred renders.
-local retained = command("printf history")
+local retained = term.open(nil, { cmd = "printf history" })
 local retained_job = term.job(retained.id)
 function retained_job:screen(size)
   if self.evicted then return nil end

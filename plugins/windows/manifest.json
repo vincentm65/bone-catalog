@@ -1,7 +1,7 @@
 {
-  "version": "1.5.2",
+  "version": "1.7.0",
   "title": "Windows",
-  "description": "Tiled chat windows, in the terminal and the desktop app: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
+  "description": "Tiled chat windows and tabs of layouts, in the terminal and the desktop app: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
   "capabilities": [
     "ui",
     "command"

@@ -54,7 +54,12 @@ end
 window.attach_panel = attach
 local passthrough = terminal and terminal.passthrough[tree.PREFIX]
 if terminal then terminal.passthrough[tree.PREFIX] = true end
-W.keys.t = function() if terminal then terminal.open() end end
+-- The term plugin's tabs and splits when it is loaded, else one terminal.
+W.keys.t = function()
+  local ok, mux = pcall(require, "term.mux")
+  if ok and type(mux) == "table" and mux.is_active and mux.is_active() then return mux.open() end
+  if terminal then terminal.open() end
+end
 W.sub.term = W.keys.t
 W.bind()
 
@@ -116,14 +121,20 @@ local function close(id)
   }
 end
 
+-- A window's title: no fill. The focused one has its name in the text's own
+-- color, an accent mark and an accent rule under it; the others are quiet.
 local function bar(id)
   local l = W.label(id) or { name = "" }
   local mine = id == W.here()
+  local x = close(id)
+  local closer = { direction = "row", align = "center", opacity = mine and 0.75 or 0, hover = { opacity = 1 },
+    transition = 90, shrink = 0, x }
   return {
     id = "wm:bar:" .. id,
-    direction = "row", align = "center", gap = style.space.md, height = BAR,
-    padding = { 0, style.space.sm, 0, style.space.lg },
-    bg = mine and "Selection" or nil, cursor = drag and drag.id == id and "grabbing" or "grab",
+    direction = "row", align = "center", gap = style.space.sm, height = BAR,
+    padding = { 0, style.space.xs or 2, 0, style.space.md },
+    cursor = drag and drag.id == id and "grabbing" or "grab",
+    hover = { bg = style.hover() },
     on_press = function() held, drag = id, nil; W.focus(id) end,
     on_drag = function(pos)
       if held ~= id or W.zoomed or not W.wins[id] then return end
@@ -142,11 +153,18 @@ local function bar(id)
     end,
     on_double_click = W.zoom,
     on_secondary = W.pick,
-    mark(l),
+    mark(l) or (mine and { width = 6, height = 6, radius = 3, bg = style.alpha("Accent", "ff"), shrink = 0 }) or nil,
     { text = l.name, hl = mine and "Normal" or "Dim", bold = mine, size = style.size.caption,
-      grow = 1, wrap = false, overflow = "hidden" },
-    close(id),
+      grow = 1, wrap = false, overflow = "hidden", text_overflow = "ellipsis" },
+    closer,
   }
+end
+
+--- The rule under a title: the accent on the focused window, a hairline elsewhere.
+local function rule(id)
+  local mine = id == W.here()
+  return { height = 1, shrink = 0, bg = mine and style.alpha("Accent", "ff") or (style.alpha("PromptBorder", "ff") or style.hover()),
+    opacity = mine and 0.55 or 0.6 }
 end
 
 local function draw(node, parent, ctx, width, height)
@@ -157,8 +175,9 @@ local function draw(node, parent, ctx, width, height)
     out = {
       id = "wm:" .. id, direction = "column", overflow = "hidden",
       bar(id),
+      rule(id),
       W.wins[id].panel and window.panel(W.wins[id].panel, {
-        width = width, height = math.max(0, height - BAR), cell = ctx.cell,
+        width = width, height = math.max(0, height - BAR - 1), cell = ctx.cell,
       }) or window.column(ctx, {
         chat = W.wins[id].chat, width = width, on_focus = function() W.focus(id) end,
       }),
@@ -182,16 +201,56 @@ local function draw(node, parent, ctx, width, height)
   return out
 end
 
+-- The tabs over the windows, once there are two: each a layout. The shown
+-- one is bright, underlined in the accent; a click shows one, a middle click
+-- closes it, + opens one.
+local TABS = 30
+local function tab_bar()
+  local row = { direction = "row", align = "end", gap = style.space.xs or 2, height = TABS, shrink = 0,
+    padding = { 0, style.space.md, 0, style.space.sm } }
+  for i = 1, #W.tabs do
+    local l = W.tab_label(i) or { name = "" }
+    local on = i == W.tab_index()
+    local label = i .. "  " .. (l.name ~= "" and l.name or "new chat") .. (l.count > 1 and ("  ·" .. l.count) or "")
+    local tab = {
+      direction = "column", shrink = 0, cursor = "pointer", radius = style.radius.md, max_width = 240,
+      hover = not on and { bg = style.hover() } or nil, role = "option", selected = on, label = "Tab " .. i,
+      { direction = "row", align = "center", gap = style.space.sm, height = TABS - 3, padding = { 0, style.space.md, 0, style.space.md },
+        (l.running and has_widgets and widgets.spinner and widgets.spinner(10)) or (l.unread and { text = "•", hl = "Accent", size = style.size.caption }) or nil,
+        { text = label, hl = on and "Normal" or "Dim", bold = on, size = style.size.caption, wrap = false,
+          text_overflow = "ellipsis", shrink = 1 } },
+      { height = 2, radius = 1, bg = on and style.alpha("Accent", "ff") or nil, margin = { 0, style.space.sm, 0, style.space.sm } },
+    }
+    tab.on_click = function() W.tab_go(i) end
+    tab.on_middle = function() W.tab_go(i) W.tab_close() end
+    row[#row + 1] = tab
+  end
+  row[#row + 1] = {
+    text = "+", hl = "Dim", size = style.size.small, padding = { 3, 8, 3, 8 }, radius = style.radius.md,
+    cursor = "pointer", role = "button", label = "A new tab (" .. tree.PREFIX .. " c)", tooltip = "A new tab (" .. tree.PREFIX .. " c)",
+    hover = { bg = style.hover() }, margin = { 0, 0, 4, 0 },
+    on_click = function() W.tab_new() end,
+  }
+  return {
+    direction = "column", shrink = 0,
+    row,
+    { height = 1, bg = style.alpha("PromptBorder", "ff") or style.hover(), opacity = 0.6 },
+  }
+end
+
 local plain = window.area
 local function tiled(ctx)
   if not W.root or W.count() <= 1 or W.zoomed or (held and not W.wins[held]) then
     held, drag = nil, nil
   end
   if drag and drag.zone and not W.wins[drag.zone.id] then drag.zone = nil end
-  if not W.root or (W.count() == 1 and not W.wins[W.root.win].panel) then return plain(ctx) end
+  local tabbed = W.root and #W.tabs > 1
+  if not W.root or (W.count() == 1 and not W.wins[W.root.win].panel and not tabbed) then return plain(ctx) end
   local shown = W.zoomed and W.leaf(W.zoomed) or W.root
-  local tree = draw(shown, nil, ctx, ctx.width, ctx.height)
-  local out = { id = "wm:area", grow = 1, direction = "column", tree }
+  local tree = draw(shown, nil, ctx, ctx.width, ctx.height - (tabbed and (TABS + 1) or 0))
+  local out = { id = "wm:area", grow = 1, direction = "column" }
+  if tabbed then out[#out + 1] = tab_bar() end
+  out[#out + 1] = tree
   local z, origin = drag and drag.zone, bone.gui.rect("wm:area")
   if z and origin and not W.zoomed then
     local r = z.rect

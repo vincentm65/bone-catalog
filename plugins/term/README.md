@@ -4,31 +4,51 @@ Interactive local shells and commands in pseudo-terminal panels (Unix). Nothing
 is sent to a model. Requires Bone **3.0.3** or newer; install this directory as
 `~/.bone/plugins/term` and load it with `/plugins load term`.
 
-The terminal UI uses this plugin's panel renderer. The desktop app already
-has the same `/term` command, ctrl+] / ctrl+5 keys and panel terminals, so
-this plugin does not replace them there.
+`/term` and **ctrl+]** open one terminal panel with **tabs and split panes**, in
+the terminal UI and the desktop app alike (there it takes over bone's own `/term`
+and ctrl+], and gives them back when unloaded). Each pane is its own shell.
 
 ## Commands and keys
 
-- `/term` (alias `/terminal`): open `$SHELL`, falling back to `/bin/sh`.
-- `/term command`: run a shell command. Its output stays visible after it exits.
-- `/term close`: close the focused terminal, or the last terminal if the prompt
-  has focus. Closing stops its program; an interactive shell exiting closes its
-  panel automatically.
-- **ctrl+]** or **ctrl+5**: open/focus the last terminal from the prompt; inside
-  the terminal, return to the prompt. ctrl+5 is the legacy-terminal encoding of
-  ctrl+]. **esc** is sent to the program (for editors and other interactive apps).
-- **wheel**, **pageup / pagedown**, and **home / end**: scroll terminal history.
-  Typing or pasting returns to live output. Programs that enable xterm mouse
-  reporting receive clicks, drags, and wheel events. Paste honors bracketed paste.
+- `/term` (alias `/terminal`): a new tab with `$SHELL` (else `/bin/sh`).
+- `/term command`: a new tab running a command. Its output stays after it exits,
+  marked with the exit code; **enter** closes it.
+- `/term close`: close the panel and every program in it.
+- **ctrl+]** or **ctrl+5**: from the prompt, open or focus the terminal; inside
+  it, back to the prompt. **esc** goes to the program (editors need it).
 
-New terminals dock at the bottom, occupying 40% of the available space. Their
-working directory defaults to the current chat's directory. After Bone expires
-a finished job from its bounded cache, the last visible screen remains; older
-scrollback is no longer available.
+While the terminal has the keyboard, with no prefix:
+
+| Key | Does |
+| --- | --- |
+| alt+t | a new tab, in the focused pane's folder |
+| alt+1 … alt+9 · alt+[ alt+] | that tab · the tab before, after |
+| alt+\ · alt+/ | split right · split below (alt+- too, in a terminal) |
+| alt+arrows | move to the pane in that direction |
+| alt+shift+arrows | move the divider |
+| alt+z | zoom the pane to the whole tab, and back |
+| alt+x | close the pane (alt+w stays the windows plugin's) |
+| wheel, shift+pageup/pagedown, ctrl+home/end | scroll back; typing returns to live output |
+
+The mouse: a click focuses a pane, a divider drags, a tab is a click away
+(middle click closes it, **+** opens one; × on a tab in the desktop app). A
+program that asks for the mouse (vim, htop) gets clicks and the wheel. Paste
+goes to the focused pane, bracketed when the program asks.
+
+With the **windows** plugin loaded, the terminal is a window of its own beside
+the chats (in both frontends): moved, resized, zoomed and closed like any other,
+and `alt+w t` opens it there. Without it, the panel docks at the bottom.
+
+A tab is named after what runs in front of it (`nvim`, `htop`), or the shell's
+folder; `·3` says it has three panes and `⤢` that one is zoomed. A new pane or
+tab starts in the folder the focused shell is in. The panel docks at the bottom
+(40%); every color is a group linked to the scheme's (`TermBorder`,
+`TermBorderActive`, `TermTab`, `TermTabActive`, `TermCursor`).
 
 ## Lua API and Windows integration
 
+Other plugins still open terminals of their own (one program per panel) through
+the module below; in the desktop app that is bone's `require("bone.terminal")`.
 The compatibility module remains `require("bone.ui.terminal")`:
 
 ```lua

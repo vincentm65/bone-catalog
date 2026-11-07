@@ -813,8 +813,8 @@
     "name": "term",
     "title": "Terminal",
     "kind": "plugin",
-    "version": "1.0.3",
-    "description": "Interactive shells and command output in terminal panels, with keyboard focus and scrollback",
+    "version": "1.2.0",
+    "description": "Terminal tabs and split panes in one panel, in the terminal and the desktop app, with mouse, scrollback and paste",
     "min_bone_version": "3.0.3",
     "capabilities": [
       "command",
@@ -824,23 +824,27 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "b562831f970062979fe5ccc66e0a8c611c08aa84eb20b00eab5c6ca0bf495ef2"
+        "sha256": "b06470fd1ceab2fdd11273910ba29a6ac9c06d55c831b6690218bd920d202322"
       },
       {
         "path": "gui.lua",
-        "sha256": "9b6d4f17e5da6272226e0f44eb0c0e4c310b4a8c68777d3dda496c27d8419ea3"
+        "sha256": "a9debcca4c4d83b07b3d2c27c5d70ee9816690a305e572efae9518ba72e61814"
       },
       {
         "path": "lua/bone/ui/terminal.lua",
         "sha256": "1c195654f678c981f0d8af32e680834350ca31b5cd494507c8a67c541b97c0a7"
       },
       {
+        "path": "lua/term/mux.lua",
+        "sha256": "e876e022fc422e6873e1fae2af7f2b2cd07fcdd7481cf98ddca2a70faa48b47e"
+      },
+      {
         "path": "manifest.json",
-        "sha256": "c9eb7a30a9c49bd8cf6cb0b1e91812596f44f3b27984cc1d05851cd464a04bc3"
+        "sha256": "a09a5ad054c76239508245fe8f9a35435fa1ca152cffac05aec62dc24f716baa"
       },
       {
         "path": "tui.lua",
-        "sha256": "5ea5b3f83ab74de10246c5eeafb91e970caa8bfd6f95250fad6ad6b01ee0f8f3"
+        "sha256": "0c0bd9fed6498d57485943d44d1f1054420281cc9b9999f44a0401c14be24ad3"
       }
     ]
   },
@@ -1039,8 +1043,8 @@
     "name": "windows",
     "title": "Windows",
     "kind": "plugin",
-    "version": "1.5.2",
-    "description": "Tiled chat windows, in the terminal and the desktop app: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
+    "version": "1.7.0",
+    "description": "Tiled chat windows and tabs of layouts, in the terminal and the desktop app: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
     "min_bone_version": "3.0.3",
     "capabilities": [
       "ui",
@@ -1049,11 +1053,11 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "28336d8074cdaab413aa0ca73c07b1cb42684c1f0c2fad159f0984ac5aad3695"
+        "sha256": "91f5f542d25d406e90800ca737777c791314cbc52ab166f11a59b8d76e05c116"
       },
       {
         "path": "gui.lua",
-        "sha256": "39ca68b6b22f38f23f2a1d697c5df5f80e664599d983b658cf08eec0e6c6c9c6"
+        "sha256": "a9cc93862bfe494efd1ebba4cfcd6fa73746aac6ec1c6ad3a75a3d086683f798"
       },
       {
         "path": "lua/windows/drop.lua",
@@ -1061,15 +1065,15 @@
       },
       {
         "path": "lua/windows/tree.lua",
-        "sha256": "fcd8fe3720159dc9e9956a47dc6c15fef24c2d66466beca23c428fcb7b55e1de"
+        "sha256": "e2cc56671809dbc78cdec9557612eecf90c86ee421569c0f46a0b346fa3f3a3d"
       },
       {
         "path": "manifest.json",
-        "sha256": "92b5dcd97d2e8e88fd6a014c7164201e6af4829b4900a56072e0c1c4e3c3cdd6"
+        "sha256": "b125bcfd23c2e95bf08f4f6b23c69f1dae5e4618a5ed228444a166aa43a109b1"
       },
       {
         "path": "tui.lua",
-        "sha256": "cb182c30fa5955ba6417523aa06d6db6a6e2f7ab164c48a951e8f79d5ca7ea3e"
+        "sha256": "033d58f1f8f4c0a9212a9978d34b481f72d4e49d0744f878bb71be9f4438aa01"
       }
     ]
   },

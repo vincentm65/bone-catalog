@@ -21,6 +21,10 @@ M.PREFIX = PREFIX
 
 function M.new(fe)
   local W = { wins = {}, root = nil, chatwin = nil, active = nil, zoomed = false, unread = {} }
+  -- Tabs: each a whole layout. The shown tab lives in W (root, wins, chatwin,
+  -- active, zoomed, last); the others keep theirs in their own table.
+  local tabs, cur = { {} }, 1
+  W.tabs = tabs
   local st = fe.state
   local wins, unread = W.wins, W.unread
   local seq, switching, started = 0, false, false
@@ -114,10 +118,25 @@ function M.new(fe)
     return { dir = node.dir, w = node.w, kids = kids }
   end
 
+  local stash, load -- below: a tab's layout in and out of W
+
   function W.save()
     if not W.root then return end
     sync()
-    st.tree = W.count() > 1 and encode(W.root) or nil
+    if #tabs == 1 then
+      st.tree, st.tabs, st.tab = W.count() > 1 and encode(W.root) or nil, nil, nil
+      return
+    end
+    -- Every tab, each encoded while it is the one in W.
+    local out, at = {}, nil
+    local here = cur
+    for i = 1, #tabs do
+      if i ~= here then stash(tabs[here]) load(tabs[i]) end
+      local e = encode(W.root)
+      if e then out[#out + 1] = e if i == here then at = #out end end
+      if i ~= here then stash(tabs[i]) load(tabs[here]) end
+    end
+    st.tree, st.tabs, st.tab = nil, out, at or 1
   end
 
   local function apply()
@@ -133,6 +152,19 @@ function M.new(fe)
     W.save()
   end
   W.apply = apply
+
+  -- Take the shown layout out of W into tab `t`, and put tab `t`'s in.
+  stash = function(t)
+    t.root, t.chatwin, t.active, t.zoomed, t.last = W.root, W.chatwin, W.active, W.zoomed, W.last
+    t.wins = {}
+    for id, w in pairs(wins) do t.wins[id] = w end
+    for id in pairs(t.wins) do wins[id] = nil end
+  end
+  load = function(t)
+    W.root, W.chatwin, W.active, W.zoomed, W.last = t.root, t.chatwin, t.active, t.zoomed or false, t.last
+    for id, w in pairs(t.wins or {}) do wins[id] = w end
+    t.root, t.wins, t.chatwin, t.active, t.zoomed, t.last = nil, nil, nil, nil, nil, nil
+  end
 
   -- ---- geometry ------------------------------------------------------------
 
@@ -304,6 +336,8 @@ function M.new(fe)
     id = id or W.here()
     if not wins[id] then return end
     local _, parent, i = W.leaf(id)
+    -- The last window of a tab closes the tab (when there is another).
+    if not parent and #tabs > 1 then return W.tab_close() end
     if not parent and not wins[id].panel then return end
     sync()
     local was = id == W.here()
@@ -398,9 +432,166 @@ function M.new(fe)
       unread = sid and unread[sid] or false }
   end
 
+  -- ---- tabs ----------------------------------------------------------------
+
+  function W.tab_index() return cur end
+
+  -- Hide the shown tab's panels (a terminal in a tab not shown is out of sight).
+  local function hide_panels()
+    changing(function()
+      for _, w in pairs(wins) do
+        if w.panel and bone.ui.panel.get(w.panel) and not w.hidden then
+          w.hidden = true
+          pcall(bone.ui.panel.update, w.panel, { hidden = true })
+        end
+      end
+      if W.panel_win(bone.ui.panel.focused()) then bone.ui.panel.focus(nil) end
+    end)
+  end
+
+  -- focus() first copies the chat on screen into W.chatwin's window: that is
+  -- still the tab left behind's chat, so the tab's own mark waits until after.
+  local function show_tab(i)
+    local cw = W.chatwin
+    local id = W.active and wins[W.active] and W.active or cw or first_win(W.root)
+    W.active, W.chatwin = nil, nil
+    if id then focus(id) else apply() end
+    if not W.chatwin then W.chatwin = cw end
+  end
+
+  --- Show tab `i`.
+  function W.tab_go(i)
+    if not W.root or not tabs[i] or i == cur then return end
+    sync()
+    hide_panels()
+    stash(tabs[cur])
+    cur = i
+    load(tabs[cur])
+    show_tab(i)
+  end
+
+  --- A new tab after the shown one, with a new chat.
+  function W.tab_new()
+    if not W.root then return end
+    sync()
+    hide_panels()
+    stash(tabs[cur])
+    table.insert(tabs, cur + 1, {})
+    cur = cur + 1
+    W.zoomed, W.last = false, nil
+    local id = new_win(nil, nil, nil)
+    W.root = { win = id, w = 1 }
+    W.chatwin, W.active = nil, nil -- see show_tab
+    focus(id)
+  end
+
+  --- Close the shown tab and every window in it (its terminals stop).
+  function W.tab_close()
+    if not W.root or #tabs < 2 then return end
+    sync()
+    local gone = {}
+    for id in pairs(wins) do gone[#gone + 1] = id end
+    W.root = nil -- closing content must not rebuild this tab
+    changing(function() for _, id in ipairs(gone) do forget(id) end end)
+    table.remove(tabs, cur)
+    if cur > #tabs then cur = #tabs end
+    load(tabs[cur])
+    show_tab(cur)
+  end
+
+  function W.tab_next(by)
+    if #tabs > 1 then W.tab_go((cur - 1 + (by or 1)) % #tabs + 1) end
+  end
+
+  --- The tab holding window-field `key` == `value` when it is not the shown
+  --- one: its index and the window's id.
+  local function elsewhere(key, value)
+    if value == nil then return end
+    for i, t in ipairs(tabs) do
+      if i ~= cur then
+        for id, w in pairs(t.wins or {}) do
+          if w[key] == value then return i, id end
+        end
+      end
+    end
+  end
+
+  --- Show the tab holding panel `pid` (when another one does); its window's id.
+  function W.reveal_panel(pid)
+    local i, id = elsewhere("panel", pid)
+    if not i then return nil end
+    W.tab_go(i)
+    return id
+  end
+
+  -- Take window `id` out of a tab that is not shown (its panel closed, its
+  -- session went). A tab left empty goes.
+  local function prune_tab(i, id)
+    local t = tabs[i]
+    local function prune(node)
+      if node.win then return node.win ~= id and node or nil end
+      local kids = {}
+      for _, k in ipairs(node.kids) do
+        local kept = prune(k)
+        if kept then kids[#kids + 1] = kept end
+      end
+      if #kids == 0 then return nil end
+      if #kids == 1 then kids[1].w = node.w return kids[1] end
+      node.kids = kids
+      return node
+    end
+    local w = t.wins[id]
+    t.wins[id] = nil
+    t.root = t.root and prune(t.root)
+    if w and fe.on_forget then fe.on_forget(id, w) end
+    if not t.root then
+      table.remove(tabs, i)
+      if cur > i then cur = cur - 1 end
+    else
+      for _, f in ipairs({ "chatwin", "active", "last" }) do
+        if t[f] == id then t[f] = nil end
+      end
+      if t.zoomed == id then t.zoomed = false end
+      if not t.chatwin then
+        local chat = locate(t.root, function(n) return n.win and t.wins[n.win] and not t.wins[n.win].panel end)
+        t.chatwin = chat and chat.win
+      end
+    end
+    apply()
+  end
+
+  --- What tab `i` shows: its focused window's name, and how many windows.
+  function W.tab_label(i)
+    local t = tabs[i]
+    if not t then return nil end
+    local function count(node) local n = 0 each_win(node, function() n = n + 1 end) return n end
+    if i == cur then
+      local l = W.label(W.here()) or { name = "" }
+      return { name = l.name, count = W.root and count(W.root) or 0, running = l.running, here = true }
+    end
+    local id = t.active or t.chatwin or (t.root and first_win(t.root))
+    local w = id and t.wins and t.wins[id]
+    local name, running = "", false
+    if w and w.panel then
+      local p = bone.ui.panel.get(w.panel)
+      name = p and p:info().title or w.panel
+    elseif w then
+      local sess = w.chat and bone.chat.session({ session = tostring(w.chat) })
+      name = sess and sess.session_id and (sess.title or "[untitled]") or "new chat"
+      running = sess and sess.running
+    end
+    -- A turn that ended unseen in any of its windows.
+    local unread_any = false
+    for _, ww in pairs(t.wins or {}) do
+      if ww.sid and unread[ww.sid] then unread_any = true end
+    end
+    return { name = name, count = t.root and count(t.root) or 0, running = running, unread = unread_any }
+  end
+
   -- ---- startup and following the chat on screen ----------------------------
 
-  local function restore(t, reloading)
+  local function restore(t, reloading, shown)
+    if shown == nil then shown = true end
     local function walk(n)
       if n.kids then
         local kids = {}
@@ -410,7 +601,7 @@ function M.new(fe)
       -- Buffer numbers survive a Lua reload, including chats with no session
       -- yet. They are process-local, so never trust them on a fresh start.
       local existing = reloading and n.chat ~= nil and bone.chat.session({ session = tostring(n.chat) })
-      local chat = existing and existing.chat or (n.focus and bone.chat.session().chat)
+      local chat = existing and existing.chat or (shown and n.focus and bone.chat.session().chat) or nil
       local id = new_win(n.sid, nil, chat)
       if n.focus then W.chatwin = id end
       if n.zoom then W.zoomed = id end
@@ -419,6 +610,7 @@ function M.new(fe)
     W.root = walk(t)
     W.chatwin = W.chatwin or first_win(W.root)
     W.active = W.chatwin
+    if not shown then return end
     -- Show the focused window's session unless a chat was already chosen.
     local want, s = wins[W.chatwin].sid, bone.chat.session()
     if not reloading and want and s and s.new and s.items == 0 then
@@ -434,7 +626,24 @@ function M.new(fe)
     -- Defer activation so a rejected candidate cannot create/switch chats.
     bone.defer(0, function()
       if fe.start then fe.start() end
-      if type(st.tree) == "table" then
+      if type(st.tabs) == "table" and #st.tabs > 1 then
+        -- Each saved tab: built in W, then put away; the saved shown one last.
+        local want = math.max(1, math.min(#st.tabs, tonumber(st.tab) or 1))
+        tabs[1] = {}
+        for i = 1, #st.tabs do
+          if i > 1 then tabs[i] = {} end
+        end
+        for i, t in ipairs(st.tabs) do
+          if i ~= want then
+            W.chatwin, W.zoomed = nil, false
+            restore(t, ev and ev.reload, false)
+            stash(tabs[i])
+          end
+        end
+        cur = want
+        W.chatwin, W.zoomed = nil, false
+        restore(st.tabs[want], ev and ev.reload, true)
+      elseif type(st.tree) == "table" then
         restore(st.tree, ev and ev.reload)
       else
         W.root = { win = new_win(current_sid(), nil, bone.chat.session().chat), w = 1 }
@@ -449,6 +658,12 @@ function M.new(fe)
   bone.on("chat/shown", function(ev)
     unread[ev.session_id or ""] = nil
     if switching or not W.root then return end
+    if not W.win_of(ev.chat, "chat") then
+      local i = elsewhere("chat", ev.chat)
+      if i then
+        changing(function() W.tab_go(i) end)
+      end
+    end
     W.chatwin = W.win_of(ev.chat, "chat") or W.chatwin
     if not W.chatwin then return W.split("cols", ev.session_id, nil, nil, ev.chat) end
     wins[W.chatwin].sid, wins[W.chatwin].chat = ev.session_id, ev.chat
@@ -474,7 +689,13 @@ function M.new(fe)
   bone.on("focus/changed", function(ev)
     if switching or not W.root or ev.popup then return end
     local id = W.panel_win(ev.panel)
-    if ev.panel and not id then return end
+    if ev.panel and not id then
+      local i = elsewhere("panel", ev.panel)
+      if not i then return end
+      W.tab_go(i)
+      id = W.panel_win(ev.panel)
+      if not id then return end
+    end
     id = id or W.chatwin
     if not id then return W.split("cols", current_sid(), nil, nil, bone.chat.session().chat) end
     focus(id)
@@ -493,12 +714,18 @@ function M.new(fe)
   end)
 
   bone.on("session/deleted", function(ev)
-    if W.root and W.win_of(ev.session_id) then W.close(W.win_of(ev.session_id)) end
+    if not W.root then return end
+    if W.win_of(ev.session_id) then return W.close(W.win_of(ev.session_id)) end
+    local i, id = elsewhere("sid", ev.session_id)
+    if i then prune_tab(i, id) end
   end)
 
   bone.on("panel/closed", function(ev)
-    local id = W.root and W.panel_win(ev.id)
-    if id then W.close(id) end
+    if not W.root then return end
+    local id = W.panel_win(ev.id)
+    if id then return W.close(id) end
+    local i, other = elsewhere("panel", ev.id)
+    if i then prune_tab(i, other) end
   end)
 
   -- Optionally watch each sub-agent in a window under its owner's.
@@ -526,6 +753,9 @@ function M.new(fe)
     W.save()
     if fe.shutdown then fe.shutdown() end
     W.root = nil -- Closing content must not recreate panes during teardown.
+    for i, t in ipairs(tabs) do
+      if i ~= cur then for id, w in pairs(t.wins or {}) do wins[id] = w end end
+    end
     for id in pairs(wins) do forget(id) end
   end)
 
@@ -586,6 +816,10 @@ function M.new(fe)
     z = W.zoom,
     r = W.rotate,
     [";"] = function() focus(W.last) end,
+    c = function() W.tab_new() end,
+    n = function() W.tab_next(1) end,
+    N = function() W.tab_next(-1) end,
+    x = function() W.tab_close() end,
     b = function()
       broadcast = not broadcast
       bone.notify(broadcast and "windows: sending to every window" or "windows: sending to the focused window")
@@ -603,11 +837,17 @@ function M.new(fe)
     ["-"] = "shorter (repeat without the prefix)", ["+"] = "taller (repeat without the prefix)",
     ["="] = "make every window the same size", z = "zoom the window, and back",
     r = "rotate the windows", b = "send messages to every window, or not",
+    c = "a new tab", n = "the next tab", N = "the tab before", x = "close the tab and its windows",
   }
+  for i = 1, 9 do
+    keys[tostring(i)] = function() W.tab_go(i) end
+    DESC[tostring(i)] = "tab " .. i
+  end
 
   local SUB = {
     vsplit = keys.v, split = keys.s, pick = W.pick, close = keys.q, only = W.only,
     next = cycle, equal = keys["="], zoom = W.zoom, rotate = W.rotate, broadcast = keys.b,
+    tab = keys.c, tabnext = keys.n, tabprev = keys.N, tabclose = keys.x,
   }
   W.sub = SUB
 
@@ -637,7 +877,7 @@ function M.new(fe)
     local names, letters = {}, {}
     for name in pairs(SUB) do names[#names + 1] = name end
     table.sort(names)
-    for _, k in ipairs({ "t", "v", "s", "p", "q", "o", "w", ";", "h j k l", "H J K L", "< > + -", "=", "z", "r", "b" }) do
+    for _, k in ipairs({ "t", "v", "s", "p", "q", "o", "w", ";", "h j k l", "H J K L", "< > + -", "=", "z", "r", "b", "c", "n N", "1-9", "x" }) do
       if keys[k] or k:find(" ") then letters[#letters + 1] = k end
     end
     bone.cmd.create("win", function(c)

@@ -32,13 +32,29 @@ Press the prefix (`alt+w` by default; `/config` → Windows), then:
 | `b` | broadcast: messages you send also go to every other window |
 | `q` | close the window (the session stays) |
 | `o` | close every other window |
+| `c` | a new tab, with a new chat |
+| `1` … `9` · `n` `N` | that tab · the next tab, the one before |
+| `x` | close the tab and every window in it |
 
-`/win term|vsplit|split|pick|close|only|next|equal|zoom|rotate|broadcast` does the same.
+`/win term|vsplit|split|pick|close|only|next|equal|zoom|rotate|broadcast|tab|tabnext|tabprev|tabclose` does the same.
+
+**Tabs.** Each tab is a whole layout of windows, as tmux's windows or Vim's
+tab pages are. With two or more, a row of them sits over the windows: the
+number, the focused window's name, `·3` for three windows, a spinner or `•`
+for a running or unseen chat. A click shows a tab, a middle click closes it,
+`+` opens one. A terminal in a tab not shown is out of sight, its program still
+running; focusing it (ctrl+] or a click on its tab) shows its tab. Closing a
+tab's last window closes the tab. The tabs are saved and come back after a
+restart (their chats; terminals end with bone).
 `/win only` closes every other pane but keeps the active terminal or panel.
 Closing or leaving the last panel returns to the existing chat without
 creating another buffer.
 
-The focused window's title bar is highlighted. A spinner in a title means
+A title is a quiet rule with the window's name in it: the focused window's
+name is bright, with an accent mark and an accent rule (`WinBarActive`,
+`WinBarRule`; the desktop app's ✕ shows on the focused window or on hover).
+The term plugin's terminal (tabs and splits) opens as a window here, and
+`alt+w t` opens it when that plugin is loaded. A spinner in a title means
 that session is running; a `•` means a turn finished there since you last
 looked.
 

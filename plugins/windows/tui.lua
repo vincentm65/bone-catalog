@@ -13,8 +13,12 @@ local DEFAULT = { "top", { cols = { "left", "chat", "right" }, sep = "│" }, "d
 
 -- Under the colorscheme: a scheme or config that sets them wins. A drop
 -- zone is blank cells in the accent's color.
-bone.hl.set("WinBarActive", { link = "StatusLine", reverse = true, default = true })
+-- A title is a rule with the name in it: the focused window's in the accent.
+bone.hl.set("WinBarActive", { link = "Normal", default = true })
+bone.hl.set("WinBarRule", { link = "Accent", default = true })
 bone.hl.set("WinDrop", { link = "Accent", reverse = true, default = true })
+bone.hl.set("WinTab", { link = "Dim", default = true })
+bone.hl.set("WinTabActive", { link = "Selection", default = true })
 
 local ok, terminal = pcall(require, "bone.ui.terminal")
 if not ok then terminal = nil end
@@ -78,7 +82,12 @@ local shown -- the tree drawn: the root, or a zoomed terminal window alone
 local function subst(node, path)
   local name = type(node) == "table" and node[1] or node
   if name == "chat" then
-    return build(shown, type(node) == "table" and node.size or nil, path)
+    local size = type(node) == "table" and node.size or nil
+    if #W.tabs < 2 then return build(shown, size, path) end
+    -- The tabs over the windows: a row of them, then the tree.
+    local p = { unpack(path) }
+    p[#p + 1] = 2
+    return { rows = { "wm_tabs", build(shown, "fill", p) }, size = size }
   end
   if type(node) ~= "table" then return node end
   local copy = {}
@@ -112,10 +121,11 @@ function fe.apply()
   splits = {}
   local zoomed = W.zoomed
   local zoomed_term = zoomed and W.wins[zoomed] and W.wins[zoomed].panel
-  if (W.count() == 1 and not W.wins[W.root.win].panel) or (zoomed and not zoomed_term) then
+  local tabbed = #W.tabs > 1
+  if not tabbed and ((W.count() == 1 and not W.wins[W.root.win].panel) or (zoomed and not zoomed_term)) then
     applied = base
   else
-    shown = zoomed_term and W.leaf(zoomed) or W.root
+    shown = (zoomed_term or (tabbed and zoomed)) and W.leaf(zoomed) or W.root
     local rows, at = base or DEFAULT, 0
     repeat at = at + 1 until at >= #rows or has(rows[at], "^chat$")
     below = { unpack(rows, at + 1) }
@@ -165,7 +175,9 @@ end
 -- /term and ctrl+] open a terminal window rather than a docked one. An
 -- explicit panel spec is left alone.
 function fe.shutdown()
+  bone.ui.regions["wm_tabs"] = nil
   if terminal then
+    if terminal.attach_panel == fe.attach_panel then terminal.attach_panel = nil end
     terminal.open = term_open
     terminal.passthrough[require("windows.tree").PREFIX] = nil
   end
@@ -182,7 +194,21 @@ if terminal then
   -- The prefix works inside a terminal.
   terminal.passthrough[require("windows.tree").PREFIX] = true
 end
-W.keys.t = function() if terminal then open_term() end end
+-- Any panel can ask to be a window (the term plugin's tabs and splits do).
+function fe.attach_panel(id)
+  if not W.root or not bone.ui.panel.get(id) then return false end
+  local existing = W.panel_win(id)
+  if existing then W.focus(existing) return true end
+  W.split("cols", nil, nil, id)
+  return true
+end
+if terminal then terminal.attach_panel = fe.attach_panel end
+-- The term plugin's tabs and splits when it is loaded, else one terminal.
+W.keys.t = function()
+  local ok, mux = pcall(require, "term.mux")
+  if ok and type(mux) == "table" and mux.is_active and mux.is_active() then return mux.open() end
+  if terminal then open_term() end
+end
 W.sub.term = W.keys.t
 W.bind()
 
@@ -193,12 +219,52 @@ bar = function(id, ctx)
   if not l then return {} end
   local mine = id == W.here()
   local hl = mine and "WinBarActive" or "Dim"
+  local rule = mine and "WinBarRule" or "WinSeparator"
   local mark = l.running and ctx.spinner .. " " or l.unread and "• " or ""
   local title = bone.text.truncate(mark .. l.name, math.max(ctx.width - 10, 1))
+  -- The last three cells stay the ✕ the mouse handler closes with.
   return { {
-    { " ⠿ ", hl }, { title, hl }, { " ", hl },
-    { fill = mine and " " or "─", hl = mine and hl or "WinSeparator" }, { " ✕ ", hl },
+    { "─ ", rule }, { title, hl }, { " ", hl },
+    { fill = "─", hl = rule }, { " ✕ ", mine and "Dim" or "WinSeparator" },
   } }
+end
+
+-- ---- the tabs --------------------------------------------------------------
+
+local tab_spans = {} -- { from, to, tab } cells of the last drawn tab row, and the +
+bone.ui.regions["wm_tabs"] = { size = 1, render = function(ctx)
+  local line, x = {}, 0
+  tab_spans = {}
+  for i = 1, #W.tabs do
+    local l = W.tab_label(i) or { name = "" }
+    local on = i == W.tab_index()
+    local mark = l.running and (ctx.spinner or "•") .. " " or l.unread and "• " or ""
+    local label = " " .. i .. " " .. mark .. bone.text.truncate(l.name ~= "" and l.name or "new chat", 24)
+      .. (l.count > 1 and (" ·" .. l.count) or "") .. " "
+    local w = bone.text.width(label)
+    line[#line + 1] = { label, on and "WinTabActive" or "WinTab" }
+    tab_spans[#tab_spans + 1] = { from = x, to = x + w - 1, tab = i }
+    x = x + w
+    line[#line + 1] = { " " }
+    x = x + 1
+  end
+  line[#line + 1] = { " + ", "WinTab" }
+  tab_spans[#tab_spans + 1] = { from = x, to = x + 2, plus = true }
+  return { line }
+end }
+
+local function tab_click(ev)
+  if ev.region ~= "wm_tabs" or ev.action ~= "down" or not ev.col then return false end
+  local c = ev.col - 1
+  for _, r in ipairs(tab_spans) do
+    if c >= r.from and c <= r.to then
+      if r.plus then W.tab_new()
+      elseif ev.button == "middle" then W.tab_go(r.tab) W.tab_close()
+      else W.tab_go(r.tab) end
+      return true
+    end
+  end
+  return true
 end
 
 -- ---- drop preview ---------------------------------------------------------
@@ -240,6 +306,7 @@ end
 -- ---- mouse ---------------------------------------------------------------
 
 local function on_mouse(ev)
+  if not drag and tab_click(ev) then return true end
   if drag and ev.action == "drag" then
     if drag.kind == "move" then
       local id = W.win_at(ev.x, ev.y)

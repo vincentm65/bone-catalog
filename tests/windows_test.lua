@@ -356,11 +356,11 @@ assert(g.panels.term1 and g.bone.ui.panel.focused() == "term1" and g.window.embe
   "prefix then t opens and focuses an embedded terminal")
 assert(total() == 1 and current == 0, "terminal panes do not allocate or switch chat buffers")
 local term_view = g.view()[1][3]
-assert(term_view[2].panel == "term1" and term_view[2].height == 672,
+assert(term_view[3].panel == "term1" and term_view[3].height == 671,
   "terminal content fills its pane below the title")
 assert(g.terminal.passthrough["alt+w"], "window prefix is available inside the terminal")
 command(g, "zoom")
-assert(g.view()[1][2].panel == "term1", "zoomed terminal renders instead of the chat")
+assert(g.view()[1][3].panel == "term1", "zoomed terminal renders instead of the chat")
 g.bone.ui.panel.focus(nil)
 assert(g.view()[1][3], "terminal escape returns to a visible chat even from terminal zoom")
 command(g, "zoom")
@@ -379,7 +379,7 @@ assert(g.panels.term2, "prefix then t works from inside another terminal")
 command(g, "only")
 assert(g.panels.term2 and not g.panels.term1 and g.window.embedded.term2,
   "only keeps the active terminal, not the last chat")
-assert(g.view()[1][2].panel == "term2", "a terminal can be the sole pane")
+assert(g.view()[1][3].panel == "term2", "a terminal can be the sole pane")
 g.bone.ui.panel.focus(nil)
 assert(g.view()[1][3] and current == 0 and total() == 1,
   "escaping a sole terminal restores the existing chat without allocating a buffer")
@@ -407,7 +407,7 @@ local nested = load({ tree = { dir = "cols", w = 1, kids = {
 } } }, false, "gui")
 settle(nested)
 local title = node_with(nested.view(), "wm:bar:4")
-title[#title].on_click()
+title[#title][1].on_click()
 local kids = nested.state.tree.kids
 assert(kids[1].w == 2 and kids[2].w == 4.5 and kids[3].w == 1.5, "collapse preserves normalized shares")
 
@@ -437,14 +437,14 @@ settle(generic)
 local panel = generic.bone.ui.panel.open({ id = "browser", title = "Browser fixture" })
 generic.window.attach_panel(panel.id)
 assert(total() == 1 and generic.bone.ui.panel.focused() == panel.id and generic.window.embedded.browser)
-assert(generic.view()[1][3][2].panel == panel.id, "generic panel uses the tiled frame")
+assert(generic.view()[1][3][3].panel == panel.id, "generic panel uses the tiled frame")
 generic.bone.ui.panel.focus(nil)
 command(generic, "zoom")
 assert(panel.hidden)
 command(generic, "next")
 assert(not panel.hidden and generic.bone.ui.panel.focused() == panel.id, "keyboard reveals a zoomed-away panel before focusing")
 command(generic, "only")
-assert(generic.view()[1][2].panel == panel.id and generic.state.tree == nil, "only keeps the active generic content")
+assert(generic.view()[1][3].panel == panel.id and generic.state.tree == nil, "only keeps the active generic content")
 generic.bone.ui.panel.close(panel.id)
 assert(not generic.window.embedded.browser and generic.view().plain and total() == 1,
   "external sole-panel close returns to the existing chat")
