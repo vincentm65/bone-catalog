@@ -182,11 +182,14 @@ bone.tool.register({
     if level > max_depth() then
       return nil, "sub-agents cannot start more sub-agents this deep"
     end
-    local count = 0
-    for _ in pairs(active) do count = count + 1 end
-    local cap = integer("max_concurrent", 8)
-    if cap > 0 and count >= cap then
-      return nil, "maximum concurrent sub-agents reached; finish an existing task before delegating again"
+    -- Over the limit, a top-level call waits for a slot. A nested one fails:
+    -- its parent holds a slot, so waiting there could deadlock.
+    while true do
+      local count, cap = 0, integer("max_concurrent", 8)
+      for _ in pairs(active) do count = count + 1 end
+      if cap == 0 or count < cap then break end
+      if parent then return nil, "maximum concurrent sub-agents reached; finish an existing task before delegating again" end
+      if not bone.sleep(250) then return nil, "the sub-agent was cancelled" end
     end
     local token = {}
     active[token] = { parent = ctx.session_id }

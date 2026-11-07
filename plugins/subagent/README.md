@@ -17,7 +17,7 @@ Configure defaults in `/config` → **Subagents**. Settings are saved under
 | --- | --- | --- |
 | Maximum nesting depth | 2 | 0 disables delegation; 1 direct children only; 2 permits grandchildren. |
 | Allow nested delegation | on | Turning off clamps depth to 1; it never overrides depth 0. |
-| Maximum concurrent subagents | 8 | Global across sessions, including nested children. 0 means unlimited. Extra calls fail immediately, rather than queueing and risking nested-delegation deadlock. |
+| Maximum concurrent subagents | 8 | Global across sessions, including nested children. 0 means unlimited. Extra calls from the main agent wait for a free slot; extra nested calls fail immediately, since waiting there could deadlock. |
 | Default provider | blank | Configured provider entry name; blank uses the child session's provider. |
 | Default model | blank | Model ID supported by that provider; blank uses its configured model. |
 | Default instructions | blank | Prepended to the normal system prompt; blank uses the built-in subagent role. |

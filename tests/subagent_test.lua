@@ -129,10 +129,8 @@ end
 local co = coroutine.create(function() return tool.run({ prompt = "test" }, { session_id = "root" }) end)
 local ok, running = coroutine.resume(co)
 assert(ok and coroutine.status(co) == "suspended")
-local before = created
-result, err = tool.run({ prompt = "test" }, { session_id = "other-root" })
-assert(result == nil and err:find("maximum concurrent", 1, true) and created == before)
-assert(coroutine.resume(co))
+bone.sleep = function() assert(coroutine.resume(co)); run_impl = function() return { text = "done", outcome = { status = "completed" } } end; return true end
+assert(tool.run({ prompt = "test" }, { session_id = "other-root" }) == "done")
 assert(coroutine.status(co) == "dead")
 
 -- Errors/cancellation do not leak the reserved slot.
@@ -149,8 +147,11 @@ assert(ok)
 hooks.turn_end({ session_id = "root" })
 assert(coroutine.resume(co))
 run_impl = function() return { text = "done", outcome = { status = "completed" } } end
+result, err = tool.run({ prompt = "test" }, { session_id = child })
+assert(result == nil and err:find("maximum concurrent", 1, true), "a nested call fails while the cancelled child stops")
+bone.sleep = function() return nil end
 result, err = tool.run({ prompt = "test" }, { session_id = "other-root" })
-assert(result == nil and err:find("maximum concurrent", 1, true), "cancelled child is still stopping")
+assert(result == nil and err == "the sub-agent was cancelled", "a top-level wait ends with its turn")
 hooks.turn_end({ session_id = running })
 spawn("other-root", true)
 spawn("root", true)

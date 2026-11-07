@@ -1,5 +1,5 @@
 {
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Delegate tasks to sub-agents that run in sessions of their own",
   "capabilities": ["tool"],
   "title": "Subagents",
@@ -19,7 +19,7 @@
     {
       "key": "max_concurrent", "label": "Maximum concurrent subagents", "type": "integer",
       "default": 8, "min": 0,
-      "desc": "Global limit across sessions, including nested agents. Extra calls fail instead of waiting; 0 means unlimited."
+      "desc": "Global limit across sessions, including nested agents. Extra calls wait for a free slot (nested ones fail instead); 0 means unlimited."
     },
     {
       "key": "provider", "label": "Default provider", "type": "string", "default": "",

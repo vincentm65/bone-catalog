@@ -94,7 +94,7 @@ class ModelServer:
                 "default case": ("default", "default child", None, "default child answer"),
                 "nested case": ("nested", "nested child", "delegator", "nested child answer"),
                 "hold case": ("hold", "hold child", None, None),
-                "busy case": ("busy", "default child", None, "maximum concurrent sub-agents reached"),
+                "busy case": ("busy", "default child", None, "default child answer"),
             }
             call_id, child_prompt, name, answer = calls[prompt]
             if not results:
@@ -310,13 +310,19 @@ bone.config.subagents = {{ reviewer = {{ system = "LEGACY", provider = "parent",
                 held_child = next(s for s in bone.call("session/list")
                                   if s.get("owner", {}).get("session_id") == held_parent)
                 child_start = bone.wait_event("turn/started", lambda p: p["session_id"] == held_child["session_id"])
-                run_case(bone.call("session/create")["session_id"], "busy case")
-                busy = bone.wait_event("tool/finished", lambda p: p["call_id"] == "busy")
-                assert busy["is_error"] is True, busy
+                # A top-level call over the cap waits for the slot instead of failing.
+                busy_parent = bone.call("session/create")["session_id"]
+                busy_turn = bone.start(busy_parent, "busy case")
+                bone.wait_event("tool/started", lambda p: p["call"]["id"] == "busy")
+                time.sleep(1)
+                assert not any(s.get("owner", {}).get("session_id") == busy_parent for s in bone.call("session/list"))
                 bone.call("turn/cancel", {"session_id": held_parent})
                 bone.finish(held_parent, held_turn, "cancelled")
                 bone.finish(held_child["session_id"], child_start["turn_id"], "cancelled")
                 mock.release.set()
+                bone.finish(busy_parent, busy_turn)
+                messages = bone.call("session/messages", {"session_id": busy_parent})["messages"]
+                assert messages[-1]["content"] == "parent final: busy case", messages
                 assert bone.call("session/active") == []
                 # Child turn_end cleanup must free the slot for subsequent delegation.
                 run_case(bone.call("session/create")["session_id"], "default case")
