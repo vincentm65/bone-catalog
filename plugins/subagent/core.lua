@@ -38,7 +38,8 @@ local function max_depth()
   local limit = integer("max_depth", 2)
   return setting("allow_nested") == false and math.min(limit, 1) or limit
 end
-local function depth(id) return children[id] and children[id].depth or 0 end
+local child_of
+local function depth(id) local c = child_of(id) return c and c.depth or 0 end
 local function tool_list(value)
   if not text(value) or value:match("^%s*%*%s*$") then return nil end
   if value:match("^%s*none%s*$") or value:match("^%s*%[%]%s*$") then return {} end
@@ -93,6 +94,19 @@ local function agents()
   end
   return out
 end
+-- A child from before a restart: the owner (and named agent) is in the
+-- session header, so its role, whitelist and depth survive the registry.
+function child_of(id)
+  local c = children[id]
+  if c == nil and id then
+    local ok, info = pcall(bone.session.info, id)
+    local o = ok and type(info) == "table" and info.owner
+    c = o and { spec = (agents() or {})[o.name] or {}, depth = depth(o.session_id) + 1 } or false
+    children[id] = c
+  end
+  return c or nil
+end
+
 local function roster(all)
   local names = {}
   for name, spec in pairs(all) do
@@ -103,12 +117,12 @@ local function roster(all)
 end
 
 bone.hook("system", function(ev)
-  local c = children[ev.session_id]
+  local c = child_of(ev.session_id)
   if c then return { prompt = spec_for(c).system .. "\n\n" .. (ev.prompt or "") } end
 end)
 
 bone.hook("request", function(ev)
-  local c = children[ev.session_id]
+  local c = child_of(ev.session_id)
   -- Defaults apply only to child sessions, never to their owner.
   local spec = c and spec_for(c) or {}
   local all, err = agents()
@@ -131,17 +145,25 @@ end)
 
 -- Also enforce whitelists on calls, not just advertised tool definitions.
 bone.hook("tool_call", function(ev)
-  local c = children[ev.session_id]
+  local c = child_of(ev.session_id)
   if c and not allowed(spec_for(c), ev.name) then
     return { deny = "tool " .. ev.name .. " is not allowed for this sub-agent" }
   end
 end)
 
--- A cancelled wait returns before the child stops; retain its slot until turn_end.
+-- A cancelled wait returns before a started child stops: its slot is kept
+-- until that turn ends. One whose child never began a turn is freed by the
+-- parent's turn_end, or the slot would leak.
+bone.hook("turn_start", function(ev)
+  for _, reservation in pairs(active) do
+    if reservation.child == ev.session_id then reservation.started = true end
+  end
+end)
+
 bone.hook("turn_end", function(ev)
   for token, reservation in pairs(active) do
     if reservation.child == ev.session_id
-      or (not reservation.child and reservation.parent == ev.session_id) then
+      or (not reservation.started and reservation.parent == ev.session_id) then
       active[token] = nil
     end
   end
@@ -166,14 +188,13 @@ bone.tool.register({
   parallel = true,
   needs_approval = false,
   run = function(args, ctx)
-    local name = args.name
-    if name == "" then
-      name = nil
-    end
+    local name = text(args.name)
     local all, err = agents()
     if not all then return nil, err end
     if name and not all[name] then return nil, "no sub-agent named " .. name end
-    local parent = children[ctx.session_id]
+    -- Before the session exists: a child with no turn would show forever.
+    if not text(args.prompt) then return nil, "subagent needs a prompt with the full task" end
+    local parent = child_of(ctx.session_id)
     if parent and not allowed(spec_for(parent), "subagent") then
       return nil, "tool subagent is not allowed for this sub-agent"
     end
@@ -203,15 +224,15 @@ bone.tool.register({
       if not active[token] then return nil, "the sub-agent was cancelled" end
       active[token].child = info.session_id
       children[info.session_id] = { spec = spec, depth = level }
-      return bone.session.run(info.session_id, args.prompt or "")
+      return bone.session.run(info.session_id, args.prompt)
     end)
     local reservation = active[token]
     -- nil without an error means the wait was cancelled, not that the child finished.
-    if not (ok and not r and not err and reservation and reservation.child) then
+    if not (ok and not r and not err and reservation and reservation.started) then
       active[token] = nil
     end
     if not ok then return nil, tostring(r) end
-    if not r then return nil, err or "the sub-agent failed" end
+    if not r then return nil, err or "the sub-agent was cancelled" end
     local status = r.outcome and r.outcome.status
     if status == "failed" then
       return nil, "the sub-agent failed: " .. tostring(r.outcome.message)

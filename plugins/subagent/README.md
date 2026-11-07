@@ -66,5 +66,7 @@ bone.config.subagents.reviewer = {
 - needs a Bone 3 core with `bone.session.create` / `bone.session.run`
 - Per-agent/default model overrides and reliable cancellation cleanup require
   a core with request-hook `model` support and cancellation-safe `turn_end` hooks.
+- A child's role, whitelist and depth survive a core restart on a core with
+  `bone.session.info` (the owner is read back from the session header).
 
 Install with `python3 install.py subagent` from the repository root.

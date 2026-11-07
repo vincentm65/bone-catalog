@@ -16,7 +16,11 @@ bone = {
       created = created + 1
       return { session_id = "child" .. created }
     end,
-    run = function(id) return run_impl(id) end,
+    run = function(id)
+      -- The core runs turn_start hooks as every turn begins.
+      if hooks.turn_start then hooks.turn_start({ session_id = id }) end
+      return run_impl(id)
+    end,
   },
 }
 dofile("plugins/subagent/core.lua")
