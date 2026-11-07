@@ -1218,3 +1218,113 @@ local opts = {
 }
 bone.cmd.create("usage", run, opts)
 bone.cmd.create("stats", run, opts)
+
+-- The new-chat screen (bone.ui.new_chat, drawn by libraries that have one):
+-- a daily activity chart and a few numbers. The function runs on every
+-- frame, so it only reads `glance`; the query runs in the background, again
+-- after a turn finishes, on a new day or after a minute.
+local glance = { requests = {}, next = 0, dirty = true }
+
+local function load_glance()
+  glance.pending = true
+  bone.request("store/query", {
+    sql = "SELECT date(at, 'unixepoch', 'localtime') AS d, sum(input_tokens + output_tokens), count(*) FROM usage GROUP BY d",
+  }, function(res)
+    glance.pending, glance.next = false, os.time() + 60
+    if not (res and res.rows) then
+      return
+    end
+    local daily, requests = {}, {}
+    for _, row in ipairs(res.rows) do
+      local k = tostring(row[1])
+      daily[k], requests[k] = tonumber(row[2]) or 0, tonumber(row[3]) or 0
+    end
+    glance.daily, glance.requests, glance.day = daily, requests, ymd(os.time())
+    -- Defaults under the colorscheme, from its current colors: the glance's
+    -- squares go from the separator (no use) up to Normal, mostly dark.
+    setup_colors()
+    local lo, hi = hex(fg_of("WinSeparator")), hex(fg_of("Normal"))
+    if lo and hi then
+      for i, f in ipairs({ 0, 0.15, 0.3, 0.5, 0.8 }) do
+        local c = {}
+        for j = 1, 3 do
+          c[j] = math.floor(lo[j] + (hi[j] - lo[j]) * f + 0.5)
+        end
+        define("UsageGlance" .. (i - 1), { fg = string.format("#%02x%02x%02x", c[1], c[2], c[3]) })
+      end
+    else
+      for i = 0, 4 do
+        define("UsageGlance" .. i, { link = "UsageHeat" .. i })
+      end
+    end
+  end)
+end
+
+local function stat(add, label, value, first)
+  if not first then
+    add("  ·  ", "Dim")
+  end
+  add(value, "Normal")
+  add(" " .. label, "Dim")
+end
+
+local function new_chat(ctx)
+  local now = os.time()
+  if not glance.pending and (glance.dirty or now >= glance.next or glance.day ~= ymd(now)) then
+    glance.dirty = false
+    load_glance()
+  end
+  local daily = glance.daily
+  if not daily or next(daily) == nil then
+    return nil
+  end
+  -- A plain grid, a week a column (2 cells each, no gap after the last).
+  local weeks = math.min(20, math.floor((ctx.width + 1) / 2))
+  if weeks < 8 then
+    return nil
+  end
+  local start = noon_plus(monday(now), -7 * (weeks - 1))
+  local today = ymd(now)
+  local keys, max = {}, 0
+  for i = 0, weeks * 7 - 1 do
+    keys[i] = ymd(noon_plus(start, i))
+    max = math.max(max, daily[keys[i]] or 0)
+  end
+  local out = {}
+  for wd = 0, 6 do
+    local l, add = builder()
+    for wk = 0, weeks - 1 do
+      local k = keys[wk * 7 + wd]
+      local gap = wk < weeks - 1 and " " or ""
+      local v = k <= today and tonumber(daily[k]) or 0
+      local level = (v > 0 and max > 0) and math.max(1, math.min(4, math.ceil(math.sqrt(v / max) * 4))) or 0
+      add(k > today and " " or "■", "UsageGlance" .. level)
+      add(gap, "UsageGlance0")
+    end
+    out[#out + 1] = l
+  end
+  -- The last 7 days and the streak, in one quiet line.
+  local week, week_requests = 0, 0
+  for i = 0, 6 do
+    local k = ymd(noon_plus(now, -i))
+    week, week_requests = week + (daily[k] or 0), week_requests + (glance.requests[k] or 0)
+  end
+  local cur = streaks(daily)
+  local l, add = builder()
+  stat(add, "tokens this week", num(week), true)
+  stat(add, "requests", num(week_requests))
+  if cur > 0 then
+    stat(add, "day streak", tostring(cur))
+  end
+  out[#out + 1] = {}
+  out[#out + 1] = l
+  return out
+end
+
+-- Older bones have no new-chat screen to add to.
+if bone.ui.new_chat then
+  bone.ui.new_chat.usage = new_chat
+  bone.on("turn/finished", function()
+    glance.dirty = true
+  end)
+end

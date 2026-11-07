@@ -29,6 +29,12 @@ filter chips remove that filter; **Clear all** resets filters and dates.
 `1`-`5` or `←`/`→` (also `d w m y a`) switch period, `t` enters dates,
 `j`/`k`, page keys and the wheel scroll, `r` refreshes, `q`/`esc` closes.
 
+On an empty chat, libraries with a new-chat screen (the standard one)
+show a small grey grid of daily activity for up to the last 20 weeks,
+with the week's tokens and requests and your current streak. It is
+registered as `bone.ui.new_chat.usage`; set that to `nil` in your config
+to hide it.
+
 Current-chat lifetime cards stay unfiltered. All usage sections follow model
 and session filters; tools cannot be attributed to a model and are marked
 unfiltered by model. Activity remains all-history within those filters.
