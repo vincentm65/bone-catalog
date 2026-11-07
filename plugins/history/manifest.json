@@ -2,8 +2,6 @@
   "title": "History",
   "version": "1.0.1",
   "description": "Resume a recent conversation",
-  "capabilities": [
-    "command",
-    "sessions"
-  ]
+  "capabilities": ["command", "sessions"],
+  "min_bone_version": "3.0.4"
 }

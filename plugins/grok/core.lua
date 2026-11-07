@@ -27,6 +27,7 @@ end
 
 -- The plan endpoint refuses clients older than it supports, so requests
 -- claim the installed Grok CLI's version (it updates itself).
+local CLI_VERSION
 local function cli_version()
   local ok, v = pcall(function()
     local h = io.popen(grok_bin() .. " --version 2>/dev/null")
@@ -34,9 +35,9 @@ local function cli_version()
     if h then h:close() end
     return out:match("(%d+%.%d+%.%d+)")
   end)
-  return ok and v or "1.0.60"
+  CLI_VERSION = ok and v or "1.0.60"
+  return CLI_VERSION
 end
-local CLI_VERSION = cli_version()
 
 local function decode(s)
   local ok, v = pcall(bone.json.decode, s)
@@ -126,7 +127,7 @@ local function prepare(req)
   end
   headers.authorization = "Bearer " .. token
   headers["x-xai-token-auth"] = "xai-grok-cli"
-  headers["x-grok-client-version"] = o.client_version or CLI_VERSION
+  headers["x-grok-client-version"] = o.client_version or CLI_VERSION or cli_version()
   return { api = "responses", base_url = base_url or os.getenv("GROK_CLI_CHAT_PROXY_BASE_URL") or PLAN_URL, headers = headers }
 end
 

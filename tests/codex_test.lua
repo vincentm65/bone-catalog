@@ -57,8 +57,8 @@ local quota = { plan_type = "plus", rate_limit = { primary_window = {
   used_percent = 25, limit_window_seconds = 18000, reset_at = 1900000000,
 }, secondary_window = { used_percent = 80, limit_window_seconds = 604800 } }, credits = { balance = "10" } }
 bone.rpc.call = function(name, args, cb) assert(name == "codex.usage"); cb(quota) end
-assert(commands.usage == commands["codex-usage"])
-commands.usage()
+assert(commands.usage == nil)
+commands["codex-usage"]()
 -- The page is one element tree: its words, and its meters.
 local function read(tree)
   local text, meters = {}, {}
@@ -80,11 +80,11 @@ assert(text:find("75% remaining", 1, true))
 assert(text:find("7-day window", 1, true) and text:find("Resets:", 1, true))
 assert(text:find("Credits: 10", 1, true))
 quota.rate_limit.primary_window.used_percent = 120
-commands.usage()
+commands["codex-usage"]()
 text, meters = read(page)
 assert(meters[1].value == 0 and meters[1].tone == "error" and meters[1].label == "0% remaining")
 bone.rpc.call = function(name, args, cb) cb(nil, "login expired") end
-commands.usage()
+commands["codex-usage"]()
 assert(notice[1] == "login expired" and notice[2] == "error")
 -- Mock auth without reading the user's real credentials.
 local open = io.open

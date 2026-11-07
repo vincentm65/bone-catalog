@@ -7,7 +7,7 @@ local function fixture(settings)
     ui = { views = {} },
     chat = {
       session = function(opts)
-        local id = opts and opts.session or "a"
+        local id = opts and assert(type(opts.session) == "string" and opts.session) or "a"
         return { session_id = id, running = f.running == id }
       end,
       messages = function(session_id, cb)
@@ -42,7 +42,7 @@ end
 local f = fixture()
 f.finish()
 assert(#f.timers == 0)
-f.command()
+f.command({ args = "" })
 assert(f.requests == 1 and f.added[1] == "Fixed the bug.")
 
 -- Namespaced settings enable automatic recaps and preserve the default delay.

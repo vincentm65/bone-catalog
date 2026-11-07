@@ -6,7 +6,7 @@ Codex backend, so turns count against your ChatGPT plan. Give it an
 `api_key` and it uses `https://api.openai.com/v1` instead.
 
 - core half: yes
-- TUI and GUI: yes (`/fast`, `/usage`, `/codex-usage`)
+- TUI and GUI: yes (`/fast`, `/codex-usage`)
 
 Install with `python3 install.py codex` from the repository root. If you are
 logged in to the Codex CLI, a `codex` provider (`gpt-6.1-sol`) appears in
@@ -31,15 +31,11 @@ the `priority` service tier; availability and billing depend on your plan.
 The saved setting overrides the provider's `fast` option; without a saved
 setting, the provider option still applies.
 
-Use `/usage` to view your ChatGPT Codex plan, quota windows (used and remaining
+Use `/codex-usage` to view your ChatGPT Codex plan, quota windows (used and remaining
 percentages), reset times, code-review limits and credits when available.
 This requires your Codex CLI login, not an OpenAI API key. It fetches the
 account quotas, not the token totals for the current Bone conversation.
 The endpoint is undocumented and its availability may change.
-
-`/codex-usage` always opens this view. If the separate `usage` catalog plugin
-is installed, it owns `/usage` instead (its token/activity dashboard); use
-`/codex-usage` for Codex quotas.
 
 Run `codex login` once first. The token is read on every request, and the
 Codex CLI refreshes it in place; if a turn fails with HTTP 401, run `codex`

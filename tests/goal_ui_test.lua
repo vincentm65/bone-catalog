@@ -6,7 +6,7 @@ local function boot(gui_on)
     api = { session = function() return { session_id = "s1" } end, open_session = function() end },
     chat = { session = function() return { cwd = "/tmp", session_id = "s1" } end },
     notify = function(text, level) notes[#notes + 1] = { text, level } end,
-    request = function(method, params, cb) requests[#requests + 1] = { method = method, params = params, cb = cb } end,
+    rpc = { call = function(name, args, cb) requests[#requests + 1] = { method = "lua/call", params = { name = name, args = args, cwd = "/tmp" }, cb = cb } end },
     cmd = { create = function(name, fn, spec) commands[name] = { fn = fn, spec = spec } end },
     on = function(name, fn) events[name] = fn end,
     plugin = { on_shutdown = function(fn) shutdown = fn end },

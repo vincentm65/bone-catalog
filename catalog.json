@@ -5,7 +5,7 @@
     "kind": "plugin",
     "version": "1.2.2",
     "description": "Ask the user questions in the terminal prompt or a desktop window, like the first bone",
-    "min_bone_version": "0.1.0",
+    "min_bone_version": "3.0.4",
     "capabilities": [
       "tool",
       "ask",
@@ -26,7 +26,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "5397173529a51d96a6413f8874f5e9265afa75eea7d62fe265b066d019aa3aa0"
+        "sha256": "8c2c7377ae19bb6196898a5960f43dd29f7eb220eaf471a82e9e01c11f3cec4b"
       },
       {
         "path": "tui.lua",
@@ -65,7 +65,7 @@
     "name": "claude-code",
     "title": "Claude Code",
     "kind": "plugin",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "description": "Claude subscription model provider through your installed Claude Code CLI; Bone retains tools and approvals",
     "min_bone_version": "3.0.0",
     "capabilities": [
@@ -79,11 +79,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "2f2dd56a5817c19179de0f143746affca65e36c7c57d0b72b80ae3871afef110"
+        "sha256": "c2c7cf39679959e4f3ea8a01a1633e3feaac953a7a0b885aa61045b883930089"
       },
       {
         "path": "manifest.json",
-        "sha256": "4c95966e7ea07ec6e94d04b465a98e0df5f0e503f9b0382f85984196295ae59e"
+        "sha256": "854b82fc91406b42277af4392d76fe7798d78bcd9153411579d27fbfa1002e52"
       }
     ]
   },
@@ -122,7 +122,7 @@
     "name": "codex",
     "title": "Codex",
     "kind": "plugin",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "description": "Model provider for OpenAI's Responses API: your ChatGPT plan through the Codex CLI login, or an OpenAI API key",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -133,7 +133,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "242471561f979da5d77396a1690040915cac603c167e8f8e324e4bff483f4560"
+        "sha256": "fdae89a20e39dcb05efe73afe91405edc01d46b8f126c22290eba78fbc1d9fcf"
       },
       {
         "path": "core.lua",
@@ -141,11 +141,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "203999f9408151f557697b762e6b561201cfff9d619aa385cd6646e0e5f5ce33"
+        "sha256": "80e652440865b355e2ef7a3b877815f0f1932d27efedd67f14d6bcbd416c61da"
       },
       {
         "path": "ui.lua",
-        "sha256": "9a548a4967214087f484a28549db01c1beb216e05223a00bd873941f4d0a8ba1"
+        "sha256": "c6033afca7ae60810c1babb6b77f876afaba2da74eae0fdfbb4ecb8dbf2c880b"
       }
     ]
   },
@@ -398,7 +398,7 @@
     "name": "goal",
     "title": "Goal",
     "kind": "plugin",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "Keep a chat working on an objective, turn after turn, until it is done: /goal <objective>. A status band shows it in the terminal and the desktop app.",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -416,11 +416,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "0f79485923d702909b011f1e65da1b1c018bccae49c8a16afc5d50f6b7877706"
+        "sha256": "a78240c033d4aebd0c5fac305e3346d6bfa41a3928fd95631abd9c8786319af9"
       },
       {
         "path": "ui.lua",
-        "sha256": "f634e2f60f42a02d4d5aa824417dbcd8016f38862a6a8ad90a96d47c57a23d8b"
+        "sha256": "4ee694fdf037c26835df08c55343002a167f887a74afd2f4b20944434412b710"
       }
     ]
   },
@@ -428,7 +428,7 @@
     "name": "grok",
     "title": "Grok",
     "kind": "plugin",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "Model provider for xAI's Grok: your SuperGrok / X plan through the Grok Build CLI login, or an xAI API key",
     "min_bone_version": "3.0.2",
     "capabilities": [
@@ -442,11 +442,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "492b0d407e509d555c43dbeacf0ec6ab06d79e0444fd018d3126d1d20933bd90"
+        "sha256": "39d350e5aaa4fefc581ad6ac5a09e7320b088100b9c49556bd75273f3fef827b"
       },
       {
         "path": "manifest.json",
-        "sha256": "4ee6a7d23481221a271530f4f9e19bd0a5eaf1a0da901a1ef11f69017184fd7c"
+        "sha256": "77dc3ede4d87d62d6967a7eb53212bc42230e0a7bda9eb2ec87269abb4a32c88"
       }
     ]
   },
@@ -456,7 +456,7 @@
     "kind": "plugin",
     "version": "1.0.1",
     "description": "Resume a recent conversation",
-    "min_bone_version": "0.1.0",
+    "min_bone_version": "3.0.4",
     "capabilities": [
       "command",
       "sessions"
@@ -468,7 +468,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "bd0583bcff2dabd39c4b88de04a477b91b8de29658626c1b3cfa2a2e652c14dc"
+        "sha256": "8e53ba7779d0bf38d617ff909c5dfc6af6bce9206bd2b5b0f4848db4f606d153"
       },
       {
         "path": "ui.lua",
@@ -510,7 +510,7 @@
     "min_bone_version": "3.0.4",
     "capabilities": [
       "mcp",
-      "panel",
+      "ui",
       "command"
     ],
     "files": [
@@ -524,7 +524,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "fd0b2dd2d0ddacf4d81b4671dd9959c6162c2b6d875351b8728a0fcc7a7d336b"
+        "sha256": "9e589cb503dd17c2fc7cf5a94b6ffd07f64980685e341a08e3149add17dce648"
       },
       {
         "path": "ui.lua",
@@ -667,9 +667,9 @@
     "name": "recap",
     "title": "Recap",
     "kind": "plugin",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "Show a brief recap of the conversation",
-    "min_bone_version": "0.1.0",
+    "min_bone_version": "3.0.4",
     "capabilities": [
       "command",
       "model"
@@ -681,11 +681,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "50356c39a3b0f664ff05a1d555a888e8f733a024c715f9d1925b9036ae29b760"
+        "sha256": "6416aa7097d0374f2eb5edb2386371d4580d09209a76db683c34662a341f4d04"
       },
       {
         "path": "ui.lua",
-        "sha256": "89e4c2fd51dbe949dd6cc72c0ca951a73b6d8d8ab898cceabdc16b9cfd969e37"
+        "sha256": "50a6b65d3b82397b1b064303e3cfea9efa34cf4aa59db4cef683c2d451074ef6"
       }
     ]
   },
@@ -695,13 +695,12 @@
     "kind": "plugin",
     "version": "2.0.1",
     "description": "Submit verification-first Git reviews of unstaged/untracked or branch changes with bounded turn-only context and selectable effort",
-    "min_bone_version": "0.1.0",
+    "min_bone_version": "3.0.4",
     "capabilities": [
-      "hooks",
+      "hook",
       "system",
       "command",
-      "prompt",
-      "action"
+      "ui"
     ],
     "files": [
       {
@@ -714,7 +713,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "b7d48edd09db68e81ca18cb0a9042e2924431ad1ed2a73025a3294d9f55ffa13"
+        "sha256": "36e7bf95a159d3eaaf2c50ab174e94307a7eeb13e830c6b274e2c2158e1a5f31"
       },
       {
         "path": "ui.lua",
@@ -728,7 +727,7 @@
     "kind": "plugin",
     "version": "1.0.1",
     "description": "Run !commands locally in chat without sending them to the model",
-    "min_bone_version": "0.1.0",
+    "min_bone_version": "3.0.4",
     "capabilities": [
       "command",
       "ui",
@@ -741,7 +740,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "e544b5e8cc6b61dc5c82accd5a5886252edd89765484719ba78d1e65185246f3"
+        "sha256": "ad90cd87e1cab7cef53baf6bc1dea8cc3ba2f7b6c66e2ae695129c4c083210bc"
       },
       {
         "path": "ui.lua",
@@ -854,7 +853,7 @@
     "kind": "plugin",
     "version": "1.0.2",
     "description": "Pick or apply one of the ported Bone color themes",
-    "min_bone_version": "0.1.0",
+    "min_bone_version": "3.0.4",
     "capabilities": [
       "command",
       "colors"
@@ -910,7 +909,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "88d7071a335ec81a1e6efe6c18c9aafffde711107d8ff3f1b7d486eadd19c98f"
+        "sha256": "f6b4644a9c3e9442deced9454de3d9def5011bf3a9734f0ec909c4144d107808"
       },
       {
         "path": "ui.lua",
@@ -956,8 +955,7 @@
     "description": "Show tool timelines consistently in the TUI and GUI; history uses equal-width segments",
     "min_bone_version": "3.0.3",
     "capabilities": [
-      "tui",
-      "gui"
+      "ui"
     ],
     "files": [
       {
@@ -970,7 +968,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "169fe0558a517c35470c8f5ce2293caa317e9a65c804d77c70e8896c1d0046c2"
+        "sha256": "d425151f8b1fed2b33b4f02c12ec995cb5cc09353f297a712f362ca94b58342c"
       },
       {
         "path": "tui.lua",
@@ -988,7 +986,7 @@
     "kind": "plugin",
     "version": "1.2.4",
     "description": "Full-screen usage dashboard: tokens, models, tools, activity",
-    "min_bone_version": "0.1.0",
+    "min_bone_version": "3.0.4",
     "capabilities": [
       "command",
       "store"
@@ -1004,7 +1002,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "fba2b37d7e2a3d545daa8ddd57d133e2a26a59d183e2abad108dff77d5fae220"
+        "sha256": "054a9be7f8a27a91a3cb49574e1dcd6d3f2a85a58c17688a5284463514ecaded"
       },
       {
         "path": "ui.lua",
@@ -1018,11 +1016,11 @@
     "kind": "plugin",
     "version": "1.2.0",
     "description": "Search the web with DuckDuckGo (real results through ddgs when uv is installed)",
-    "min_bone_version": "0.1.0",
+    "min_bone_version": "3.0.4",
     "capabilities": [
       "tool",
       "network",
-      "process"
+      "system"
     ],
     "files": [
       {
@@ -1035,7 +1033,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "78aa47c41096744d4acef288cabf54367c15d462dbb6279e2730d429b6119bca"
+        "sha256": "96c6aaf53333c16bfe0ec80dd03a2a6824ed912d074213f58473a03856595400"
       }
     ]
   },

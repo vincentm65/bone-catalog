@@ -9,8 +9,7 @@ local function current() return (bone.api.session() or {}).session_id end
 local function notify(msg, level) bone.notify("goal: " .. tostring(msg), level) end
 -- Quiet unless `loud`: without the core half a background call just fails.
 local function call(name, args, cb, loud)
-  local s = bone.chat.session()
-  bone.request("lua/call", { name = name, args = args, cwd = s and s.cwd or nil }, function(r, err)
+  bone.rpc.call(name, args, function(r, err)
     if not alive then return end
     if err then return loud and notify(err, "error") end
     if cb then cb(r) end

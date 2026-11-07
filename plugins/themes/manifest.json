@@ -2,8 +2,6 @@
   "title": "Themes",
   "version": "1.0.2",
   "description": "Pick or apply one of the ported Bone color themes",
-  "capabilities": [
-    "command",
-    "colors"
-  ]
+  "capabilities": ["command", "colors"],
+  "min_bone_version": "3.0.4"
 }

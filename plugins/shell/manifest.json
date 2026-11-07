@@ -2,10 +2,6 @@
   "title": "Shell",
   "version": "1.0.1",
   "description": "Run !commands locally in chat without sending them to the model",
-  "min_bone_version": "0.1.0",
-  "capabilities": [
-    "command",
-    "ui",
-    "system"
-  ]
+  "capabilities": ["command", "ui", "system"],
+  "min_bone_version": "3.0.4"
 }

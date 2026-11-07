@@ -105,7 +105,7 @@ local auth_env = "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_
 local function complete(req, emit)
   local o = req.options
   local sid = req.session_id or "default"
-  local remaining = (o.max_turn_budget_usd or 1) - (turn_cost[sid] or 0)
+  local remaining = (o.max_turn_budget_usd or 1) - (req.session_id and turn_cost[sid] or 0)
   if remaining <= 0 then error("claude-code: Bone turn budget reached; no automatic retry", 0) end
   local tools, variants, known = {}, {}, {}
   for _, t in ipairs(req.tools or {}) do tools[#tools + 1] = t end
@@ -199,7 +199,7 @@ local function complete(req, emit)
   local read, write = u.cache_read_input_tokens or 0, u.cache_creation_input_tokens or 0
   -- CLI usage is per invocation, but total_cost_usd/modelUsage include prior resumes.
   local cost = math.max(0, (doc.total_cost_usd or 0) - (s.total_cost or 0))
-  turn_cost[sid] = (turn_cost[sid] or 0) + cost
+  turn_cost[sid] = (req.session_id and turn_cost[sid] or 0) + cost
   last_usage[req.session_id or "default"] = { input_tokens = u.input_tokens or 0,
     cache_read_input_tokens = read, cache_creation_input_tokens = write,
     output_tokens = u.output_tokens or 0, total_cost_usd = cost, cli_session_cost_usd = doc.total_cost_usd,

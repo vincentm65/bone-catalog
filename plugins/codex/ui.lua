@@ -51,6 +51,4 @@ local function show_usage()
     bone.ui.pager(page, { title = "Codex usage" })
   end)
 end
-for _, name in ipairs({ "usage", "codex-usage" }) do
-  bone.cmd.create(name, show_usage, { desc = "show Codex plan usage and reset times" })
-end
+bone.cmd.create("codex-usage", show_usage, { desc = "show Codex plan usage and reset times" })

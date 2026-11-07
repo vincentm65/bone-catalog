@@ -1,11 +1,8 @@
 {
   "version": "1.2.0",
   "description": "Search the web with DuckDuckGo (real results through ddgs when uv is installed)",
-  "capabilities": [
-    "tool",
-    "network",
-    "process"
-  ],
+  "capabilities": ["tool", "network", "system"],
+  "min_bone_version": "3.0.4",
   "title": "Web Search",
   "settings": [
     {

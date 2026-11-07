@@ -41,7 +41,7 @@ local function request(sid)
   end)
 end
 
-bone.cmd.create("recap", request, { desc = "show a brief conversation recap" })
+bone.cmd.create("recap", function() request() end, { desc = "show a brief conversation recap" })
 bone.on("turn/started", function(ev)
   local sid = ev and ev.session_id
   if sid then seqs[sid] = (seqs[sid] or 0) + 1 end
