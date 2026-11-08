@@ -148,7 +148,8 @@ end
 function M.results(root, query)
   local entry = lists[root]
   local out = {}
-  local prefix = root == "/" and "/" or (root .. "/")
+  -- A root (/, C:/) ends in its slash already.
+  local prefix = root:sub(-1) == "/" and root or (root .. "/")
   local recent_rank = {}
   for i, p in ipairs(load_recent()) do
     if p:sub(1, #prefix) == prefix then recent_rank[p:sub(#prefix + 1)] = i end

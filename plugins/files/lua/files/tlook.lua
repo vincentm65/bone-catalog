@@ -191,16 +191,21 @@ local function crumbs(r, s)
   local root, home = s.listing.root, s.home
   local parts = {}
   local rest = root
+  local drive = root:match("^%a:/")
   if home ~= "" and (root == home or root:sub(1, #home + 1) == home .. "/") then
     parts[1] = { "~", home }
     rest = root:sub(#home + 2)
+  elseif drive then
+    -- A Windows drive: C: is the first crumb, C:/ its path.
+    parts[1] = { drive:sub(1, 2), drive }
+    rest = root:sub(#drive + 1)
   else
     parts[1] = { "/", "/" }
     rest = root:gsub("^/+", "")
   end
   local at = parts[1][2]
   for part in tostring(rest):gmatch("[^/]+") do
-    at = (at == "/" and "" or at) .. "/" .. part
+    at = (at:sub(-1) == "/" and at or at .. "/") .. part
     parts[#parts + 1] = { part, at }
   end
   local first = math.max(1, #parts - 3)

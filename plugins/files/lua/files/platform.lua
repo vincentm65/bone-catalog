@@ -16,6 +16,64 @@ M.windows = os_name == "Windows"
 M.arch = arch -- "x64" or "arm64"
 M.name = M.mac and "macOS" or M.windows and "Windows" or "Linux"
 
+-- ---- paths ----------------------------------------------------------------
+-- The plugin writes every path with forward slashes, the way Windows takes
+-- them too: `C:/Users/me/src`. What comes from the system (the chat's
+-- folder, HOME, a tool's argument) goes through M.norm first, so a path
+-- built here and one reported there compare equal.
+
+--- `path` with forward slashes, an upper-case drive letter, and no slash
+--- at its end (but for a root: `/`, `C:/`). Elsewhere only the trailing
+--- slashes go: a backslash is a letter of a Linux file's name.
+function M.norm(path)
+  if path == nil then return nil end
+  path = tostring(path)
+  if M.windows then
+    path = path:gsub("\\", "/")
+    -- \\?\C:\… (a verbatim path) is C:/…
+    path = path:gsub("^//%?/(%a:/)", "%1")
+    path = path:gsub("^(%a):", function(d) return d:upper() .. ":" end)
+    if path:match("^%a:$") then return path .. "/" end
+  end
+  if #path > 1 and not M.is_root(path) then path = path:gsub("/+$", "") end
+  return path
+end
+
+--- A file system's root: `/`, or on Windows a drive's (`C:/`).
+function M.is_root(path)
+  return path == "/" or (M.windows and path:match("^%a:/$") ~= nil)
+end
+
+--- Whether `path` starts at a root rather than at the current folder.
+function M.is_absolute(path)
+  path = tostring(path or "")
+  if path:sub(1, 1) == "/" then return true end
+  return M.windows and (path:match("^%a:[/\\]") ~= nil or path:sub(1, 2) == "\\\\")
+end
+
+--- The home folder (USERPROFILE on Windows when HOME is not set).
+function M.home()
+  local h = os.getenv("HOME")
+  if (not h or h == "") and M.windows then h = os.getenv("USERPROFILE") end
+  return M.norm((h and h ~= "") and h or "/")
+end
+
+--- `path` made absolute against `base`, with `.` and `..` resolved; its
+--- root (`/`, `C:/`, `//server`) kept.
+function M.resolve(path, base)
+  path = M.norm(path)
+  if not M.is_absolute(path) then
+    base = M.norm(base or "")
+    path = (base:sub(-1) == "/" and base or base .. "/") .. path
+  end
+  local root = path:match("^%a:/") or path:match("^//[^/]+/[^/]+/") or path:match("^/") or ""
+  local parts = {}
+  for part in path:sub(#root + 1):gmatch("[^/]+") do
+    if part == ".." then table.remove(parts) elseif part ~= "." then parts[#parts + 1] = part end
+  end
+  return root .. table.concat(parts, "/")
+end
+
 --- A single quote around a value, for the shell (PowerShell on Windows).
 function M.quoted(value)
   value = tostring(value)

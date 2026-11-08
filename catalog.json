@@ -220,7 +220,7 @@
     "name": "files",
     "title": "Files",
     "kind": "plugin",
-    "version": "3.6.0",
+    "version": "3.6.1",
     "description": "A file explorer, a file viewer and a text editor in one right-docked sidebar, in the terminal and the desktop app: a folder tree that marks what the agent changed, Git's own markers, search through the folder, and an editor that will not write over a file someone else changed",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -237,7 +237,7 @@
       },
       {
         "path": "core.lua",
-        "sha256": "82d59c6d0569df59c0bf60c8d2b97dcb0fcb4d502a87f499ef5bc31ccc193ee7"
+        "sha256": "aa620fca1bf0c8be46f57d04c4d2cf925368875153ef859bd575f7b4dcd9049a"
       },
       {
         "path": "lua/files/buffer.lua",
@@ -261,7 +261,7 @@
       },
       {
         "path": "lua/files/fileops.lua",
-        "sha256": "1e7e86ec12880a8db6c9b218d1f16bd725f1f9393ae16770454c29569159f00f"
+        "sha256": "3a0f7e932ab79486e4064b6cdda0e53c0148b835f16af0d534bef6fc8269714c"
       },
       {
         "path": "lua/files/gif.lua",
@@ -285,7 +285,7 @@
       },
       {
         "path": "lua/files/look.lua",
-        "sha256": "6610357bf0960535824ab12c2adf043e10bdc6900dd86ca2d2cce58b117ae4be"
+        "sha256": "e7d7f24e1d7c717f8a2daf312c280d7ba773244e37fbca14264533bfbd9829d7"
       },
       {
         "path": "lua/files/media.lua",
@@ -301,11 +301,11 @@
       },
       {
         "path": "lua/files/platform.lua",
-        "sha256": "6ff8897dc73acd10f23be6f22c92f45b033fc470dd2e1dfa663d0e4f45b67978"
+        "sha256": "bf386883e1348d772ea2cd9c0c7a7657f7cad58cef76d6da388d94ca5438101a"
       },
       {
         "path": "lua/files/quick.lua",
-        "sha256": "0f4a9b1eab1353800e759e5ec1d8664ab7486dc2dbc3c133ea69093b6e9cdec1"
+        "sha256": "1550af1dd0643685bde44aef5d1555266723bc6f23916476c30bc3758fb0236d"
       },
       {
         "path": "lua/files/syntax.lua",
@@ -317,15 +317,15 @@
       },
       {
         "path": "lua/files/tlook.lua",
-        "sha256": "791155908822cd3b14e9636fadaa3e805bfa189afa75d530cfece7b09c1dd41e"
+        "sha256": "8bb0c466db93d9e77c9a13e8ab4152e3bf7c0f98e828c1d92436648e2b48fd3c"
       },
       {
         "path": "manifest.json",
-        "sha256": "0e479235ede4e611066686f7bcdf8b88107a71609c60d10700b9b5aec37a6844"
+        "sha256": "54b224dd081a995b45df05c9508eb18411e8736c2825a828a896814d04ada4f9"
       },
       {
         "path": "ui.lua",
-        "sha256": "0fd3e6e380637dc5e32767a29e299936163008a4d76a7c7c2ca49c42ee4fbd77"
+        "sha256": "0607b403a771b707f7d341d4ba48e971e960be5b5ad7c337cbb2a21923a7feae"
       }
     ]
   },
@@ -1045,7 +1045,7 @@
     "name": "windows",
     "title": "Windows",
     "kind": "plugin",
-    "version": "1.7.0",
+    "version": "1.7.1",
     "description": "Tiled chat windows and tabs of layouts, in the terminal and the desktop app: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -1059,7 +1059,7 @@
       },
       {
         "path": "gui.lua",
-        "sha256": "a9cc93862bfe494efd1ebba4cfcd6fa73746aac6ec1c6ad3a75a3d086683f798"
+        "sha256": "6a582aee94edb4d5a08d227f0dabf49bd5fc1ecaffd5b4bf7d0969bcf13a245a"
       },
       {
         "path": "lua/windows/drop.lua",
@@ -1071,11 +1071,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "b125bcfd23c2e95bf08f4f6b23c69f1dae5e4618a5ed228444a166aa43a109b1"
+        "sha256": "36d89ec34d6611d413e835d1cfd253a93a867d364f8ef73cf37e2ab61ac6f936"
       },
       {
         "path": "tui.lua",
-        "sha256": "033d58f1f8f4c0a9212a9978d34b481f72d4e49d0744f878bb71be9f4438aa01"
+        "sha256": "88ecc81a73fa40e51a01f1d6d38face46d06adacc81c1e32b167e777f9274b6a"
       }
     ]
   },

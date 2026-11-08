@@ -307,16 +307,21 @@ end
 local function crumbs(root, home)
   local out = {}
   local rest = root
+  local drive = root:match("^%a:/")
   if home ~= "" and home ~= "/" and (root == home or root:sub(1, #home + 1) == home .. "/") then
     out[1] = { label = "~", path = home }
     rest = root:sub(#home + 2)
+  elseif drive then
+    -- A Windows drive: C: is the first crumb, C:/ its path.
+    out[1] = { label = drive:sub(1, 2), path = drive }
+    rest = root:sub(#drive + 1)
   else
     out[1] = { label = "/", path = "/" }
     rest = root:gsub("^/+", "")
   end
   local at = out[1].path
   for part in tostring(rest):gmatch("[^/]+") do
-    at = (at == "/" and "" or at) .. "/" .. part
+    at = (at:sub(-1) == "/" and at or at .. "/") .. part
     out[#out + 1] = { label = part, path = at }
   end
   return out
@@ -1533,7 +1538,9 @@ local function picture_file(src, base, page)
   end
   if src:match("^%a[%w+.-]*:") and not src:match("^file:") then return nil end
   local path = src:gsub("^file://", ""):gsub("[?#].*$", ""):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)
-  if path:sub(1, 1) ~= "/" then path = base .. "/" .. path end
+  local P = require("files.platform")
+  if P.windows then path = path:gsub("^/(%a:[/\\])", "%1") end
+  if not P.is_absolute(path) then path = P.resolve(path, base) end
   return path
 end
 

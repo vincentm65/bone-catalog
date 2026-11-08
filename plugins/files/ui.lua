@@ -16,6 +16,7 @@ local gutter = require("files.gutter")
 local fileops = require("files.fileops")
 local media = require("files.media")
 local extedit = require("files.extedit")
+local platform = require("files.platform")
 
 -- The desktop draws the panel with its own look (files.look); a terminal
 -- draws the shared elements below.
@@ -118,12 +119,14 @@ local function join(dir, name)
   return dir .. "/" .. name
 end
 
---- The folder above `dir`.
+--- The folder above `dir`; a root (`/`, or a drive's `C:/`) is its own.
 local function parent(dir)
-  if dir == "/" or dir == "" then return dir end
+  if dir == "" or platform.is_root(dir) then return dir end
   local clean = dir:gsub("/+$", "")
   local up = clean:match("^(.*)/[^/]+$")
   if not up or up == "" then return "/" end
+  -- C:/Users's parent is the drive's root, C:/.
+  if up:match("^%a:$") then return up .. "/" end
   return up
 end
 
@@ -131,21 +134,21 @@ end
 local function home()
   local ok, session = pcall(function() return bone.chat.session() end)
   if ok and type(session) == "table" and session.cwd and session.cwd ~= "" then
-    return session.cwd
+    return platform.norm(session.cwd)
   end
-  return os.getenv("HOME") or "/"
+  return platform.home()
 end
 
 --- `path` as an absolute one (what the tools want).
 local function absolute(path)
-  path = tostring(path or ""):match("^%s*(.-)%s*$")
+  path = platform.norm(tostring(path or ""):match("^%s*(.-)%s*$"))
   if path == "" then return home() end
   if path == "~" then
-    path = os.getenv("HOME") or "/"
+    path = platform.home()
   elseif path:sub(1, 2) == "~/" then
-    path = (os.getenv("HOME") or "/") .. path:sub(2)
+    path = join(platform.home(), path:sub(3))
   end
-  if path:sub(1, 1) ~= "/" then path = join(home(), path) end
+  if not platform.is_absolute(path) then path = join(home(), path) end
   return path
 end
 
@@ -193,7 +196,8 @@ end
 --- A path inside the folder being shown, as that folder's own relative one.
 local function relative(path)
   local root = listing.root
-  if root ~= "/" and path:sub(1, #root + 1) == root .. "/" then return path:sub(#root + 2) end
+  local prefix = root:sub(-1) == "/" and root or root .. "/"
+  if root ~= "" and path:sub(1, #prefix) == prefix then return path:sub(#prefix + 1) end
   return path
 end
 
@@ -690,7 +694,7 @@ fetch_git = function()
           local root = ""
           for line in (result.stdout or ""):gmatch("[^\n]+") do
             if root == "" then
-              root = line:gsub("/+$", "")
+              root = platform.norm((line:gsub("\r$", "")))
             elseif line:sub(1, 2) == "!!" then
               local path = line:sub(4):gsub("/+$", "")
               ignored[(root == "" and path or root .. "/" .. path)] = true
@@ -811,12 +815,13 @@ reveal = function(path)
   listing.query, listing.search_state, hit_rows = "", "off", {}
   search_note, search_error = nil, nil
   local root = listing.root
-  if path:sub(1, #root + 1) ~= root .. "/" then root = parent(path) end
+  local prefix = root:sub(-1) == "/" and root or root .. "/"
+  if path:sub(1, #prefix) ~= prefix then root = parent(path) end
   listing.root, listing.read = root, {}
   listing.chosen = true
   listing.open = { [root] = true }
   local dir = parent(path)
-  while dir and dir ~= root and dir ~= "" and dir ~= "/" do
+  while dir and dir ~= root and dir ~= "" and not platform.is_root(dir) do
     listing.open[dir] = true
     local up = parent(dir)
     if up == dir then break end
@@ -2497,13 +2502,10 @@ function act.open_link(href, base)
     return
   end
   local path = href:gsub("^file://", ""):gsub("[?#].*$", ""):gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end)
-  if path:sub(1, 1) ~= "/" then path = (base or listing.root) .. "/" .. path end
+  -- file:///C:/x is C:/x on Windows.
+  if platform.windows then path = path:gsub("^/(%a:[/\\])", "%1") end
   -- ./ and ../ as a browser takes them.
-  local parts = {}
-  for part in path:gmatch("[^/]+") do
-    if part == ".." then table.remove(parts) elseif part ~= "." then parts[#parts + 1] = part end
-  end
-  path = "/" .. table.concat(parts, "/")
+  path = platform.resolve(path, base or listing.root)
   if not fileops.exists(path) then
     note("There is no " .. relative(path) .. " beside the page")
     redraw()
@@ -3450,7 +3452,7 @@ local bridge = {
         pane = pane, tab = TAB_AT[side] or 1, doc = doc, doc_focused = pane == EDIT or pane == PREVIEW,
         listing = listing, editor = editor, preview = preview, hits = hit_rows,
         search_note = search_note, search_error = search_error, keys_here = keys_here,
-        home = os.getenv("HOME") or "", leaf = name_of(listing.root), relative = relative,
+        home = platform.home(), leaf = name_of(listing.root), relative = relative,
         docs = docs, doc_at = doc_at, quick_on = quick_on, quick_q = quick_q, quick_sel = quick_sel,
         ask = ask, menu = menu, following = act.following,
       }
@@ -3921,13 +3923,9 @@ local refs_count = 0
 
 local function ref_path(p, cwd)
   p = p:gsub("^file://", ""):gsub("%%20", " ")
-  if p:sub(1, 2) == "~/" then p = (os.getenv("HOME") or "") .. p:sub(2) end
-  if p:sub(1, 1) ~= "/" then p = cwd:gsub("/$", "") .. "/" .. p:gsub("^%./", "") end
-  local parts = {}
-  for part in p:gmatch("[^/]+") do
-    if part == ".." then table.remove(parts) elseif part ~= "." then parts[#parts + 1] = part end
-  end
-  return "/" .. table.concat(parts, "/")
+  if platform.windows then p = p:gsub("^/(%a:[/\\])", "%1") end
+  if p:sub(1, 2) == "~/" then p = platform.home() .. p:sub(2) end
+  return platform.resolve(p, cwd)
 end
 
 function act.refs_in(text)

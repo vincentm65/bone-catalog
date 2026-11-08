@@ -5,6 +5,7 @@
 -- tell that the file moved under it).
 
 local pdf = require("files.pdf")
+local platform = require("files.platform")
 
 -- ---- helpers --------------------------------------------------------------
 
@@ -22,15 +23,16 @@ local function run(command, timeout)
 end
 
 --- `path` as an absolute one, against the session's own directory.
+--- Forward slashes on Windows too, as the desktop half writes its paths.
 local function absolute(path, cwd)
-  path = tostring(path or ""):match("^%s*(.-)%s*$")
+  path = platform.norm(tostring(path or ""):match("^%s*(.-)%s*$"))
   if path == "" then return nil end
-  if path == "~" then return os.getenv("HOME") or "/" end
-  if path:sub(1, 2) == "~/" then return (os.getenv("HOME") or "/") .. path:sub(2) end
-  if path:sub(1, 1) == "/" then return path end
-  cwd = tostring(cwd or ""):gsub("/+$", "")
+  if path == "~" then return platform.home() end
+  if path:sub(1, 2) == "~/" then return platform.home() .. path:sub(2) end
+  if platform.is_absolute(path) then return path end
+  cwd = platform.norm(tostring(cwd or ""))
   if cwd == "" then return path end
-  return cwd .. "/" .. path
+  return (cwd:sub(-1) == "/" and cwd or cwd .. "/") .. path
 end
 
 -- ---- what the agent changed -----------------------------------------------

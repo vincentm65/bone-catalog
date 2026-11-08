@@ -128,7 +128,8 @@ end
 --- Delete `path` for good (a folder with everything in it). Only after you
 --- said so: the panel asks first.
 function M.delete(path, done)
-  if path == "" or path == "/" or path == (os.getenv("HOME") or "") then return done(nil, "That is not something to delete.") end
+  local P = require("files.platform")
+  if path == "" or P.is_root(P.norm(path)) or P.norm(path) == P.home() then return done(nil, "That is not something to delete.") end
   bone.job.start("rm -rf -- " .. quoted(path), { name = "files: delete", timeout = 60000, buffer = true,
     on_exit = function(r)
       if r and r.code == 0 then done(true) else done(nil, (r and r.stderr) or "It could not be deleted.") end
