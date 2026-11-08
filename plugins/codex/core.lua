@@ -23,7 +23,7 @@ end
 
 -- The Codex CLI's login. Read on every call: the CLI refreshes it in place.
 local function codex_auth()
-  local f = io.open((os.getenv("CODEX_HOME") or (os.getenv("HOME") .. "/.codex")) .. "/auth.json")
+  local f = io.open((os.getenv("CODEX_HOME") or ((os.getenv("HOME") or os.getenv("USERPROFILE") or "") .. "/.codex")) .. "/auth.json")
   if not f then
     return nil
   end

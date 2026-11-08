@@ -45,7 +45,7 @@ local function decorate()
         return { { core.suggestion(), "Placeholder" } }
       end
       if type(old) == "function" then return old(ctx) end
-      return old or {}
+      return old
     end
     prompt.placeholder = placeholder
   end

@@ -16,7 +16,7 @@ local PLAN_URL = "https://cli-chat-proxy.grok.com/v1"
 local XAI_URL = "https://api.x.ai/v1"
 
 local function grok_bin()
-  local home = os.getenv("GROK_HOME") or (os.getenv("HOME") .. "/.grok")
+  local home = os.getenv("GROK_HOME") or ((os.getenv("HOME") or os.getenv("USERPROFILE") or "") .. "/.grok")
   local f = io.open(home .. "/bin/grok")
   if f then
     f:close()
@@ -49,7 +49,7 @@ local function auth_path()
   if p and p ~= "" then
     return p
   end
-  return (os.getenv("GROK_HOME") or (os.getenv("HOME") .. "/.grok")) .. "/auth.json"
+  return (os.getenv("GROK_HOME") or ((os.getenv("HOME") or os.getenv("USERPROFILE") or "") .. "/.grok")) .. "/auth.json"
 end
 
 -- "2026-10-16T12:34:56.789Z" (or with an offset) → Unix time, or nil.

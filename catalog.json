@@ -122,7 +122,7 @@
     "name": "codex",
     "title": "Codex",
     "kind": "plugin",
-    "version": "1.6.0",
+    "version": "1.6.1",
     "description": "Model provider for OpenAI's Responses API: your ChatGPT plan through the Codex CLI login, or an OpenAI API key",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -137,11 +137,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "181da37a6f0dced1a6ccd2fc31ccb0908b62aee4b9668dbd725c17a28b87b862"
+        "sha256": "74232dfed32f22bebddb42f316b2a7d77bd6dab3b1ed631a4559e3c2e429d3da"
       },
       {
         "path": "manifest.json",
-        "sha256": "80e652440865b355e2ef7a3b877815f0f1932d27efedd67f14d6bcbd416c61da"
+        "sha256": "5ad7701a64fd05d887342d439b2b69ad5ecf9ca7ac571cc4a0b5813116aefa3e"
       },
       {
         "path": "ui.lua",
@@ -428,7 +428,7 @@
     "name": "grok",
     "title": "Grok",
     "kind": "plugin",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "description": "Model provider for xAI's Grok: your SuperGrok / X plan through the Grok Build CLI login, or an xAI API key",
     "min_bone_version": "3.0.2",
     "capabilities": [
@@ -442,11 +442,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "39d350e5aaa4fefc581ad6ac5a09e7320b088100b9c49556bd75273f3fef827b"
+        "sha256": "dcacdd35f710872c756d1f26d31ef4740003efa6aa0856aa0066d9ba88f8c488"
       },
       {
         "path": "manifest.json",
-        "sha256": "77dc3ede4d87d62d6967a7eb53212bc42230e0a7bda9eb2ec87269abb4a32c88"
+        "sha256": "8b0d9757250ca4078adab493fed7ca18c77ef9d80b9a0a99f01a216bbc2a9d62"
       }
     ]
   },
@@ -629,7 +629,7 @@
     "name": "prompt-suggestions",
     "title": "Prompt Suggestions",
     "kind": "plugin",
-    "version": "1.1.3",
+    "version": "1.1.4",
     "description": "Next-prompt predictions in the terminal and desktop composer; Tab accepts, Escape dismisses",
     "min_bone_version": "3.0.2",
     "capabilities": [
@@ -643,7 +643,7 @@
       },
       {
         "path": "gui.lua",
-        "sha256": "57cedb08130c1b7ad72a894e01e005c1ffe50b349893ac3dd1268b9809352051"
+        "sha256": "d4f512253b8ab32b6b68b187ead06e20e72423cb87daf378051f8b9048528240"
       },
       {
         "path": "lua/prompt_suggestions.lua",
@@ -651,11 +651,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "e5e4e7e2bf956e763bc7cf092598d555f78e9ab834263af2fc5314ccd99719f1"
+        "sha256": "a4587b285182ea43a9707208d7b39a7175ed32cd96683d37b44b466c5a17eb63"
       },
       {
         "path": "tui.lua",
-        "sha256": "96e55448d2ee6f9434379e40b25a8f7917b3145e19643e02519ff792ef358c49"
+        "sha256": "249382d37e43cf7ce601746a82c8ca43f8296e2df2a7fc8179a8bbb4d8f49caf"
       },
       {
         "path": "ui.lua",
@@ -812,7 +812,7 @@
     "name": "term",
     "title": "Terminal",
     "kind": "plugin",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "description": "Terminal tabs and split panes in one panel, in the terminal and the desktop app, with mouse, scrollback and paste",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -839,12 +839,16 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "a09a5ad054c76239508245fe8f9a35435fa1ca152cffac05aec62dc24f716baa"
+        "sha256": "40c2d555fffe9faa80030145f8a99ef4968f7c4ce42d5046e1f64b18328b9514"
       },
       {
         "path": "tui.lua",
         "sha256": "0c0bd9fed6498d57485943d44d1f1054420281cc9b9999f44a0401c14be24ad3"
       }
+    ],
+    "os": [
+      "linux",
+      "macos"
     ]
   },
   {
@@ -984,7 +988,7 @@
     "name": "usage",
     "title": "Usage",
     "kind": "plugin",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "description": "Full-screen usage dashboard: tokens, models, tools, activity",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -1002,11 +1006,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "17a2964aeadbe5b5ac10c35fdfb56fab2d52ee8ca045a186f94c793cf7155cf5"
+        "sha256": "c463cc32c9865f2abe9dffa30775a2d7124c58cfee9159d9e51e06ad5d088c45"
       },
       {
         "path": "ui.lua",
-        "sha256": "ec5a2d60455a604146b74738b92a2b264654ffea0c5a8054ef85eaeff316ccfe"
+        "sha256": "76a35d626e912469c83cf23c37b78e2a8c1c933b73c33b8dd34ecda613d31568"
       }
     ]
   },

@@ -35,6 +35,9 @@ def main() -> None:
             "capabilities": manifest.get("capabilities", []),
             "files": files,
         }
+        # The systems it runs on ("linux", "macos", "windows"); none: all.
+        if "os" in manifest:
+            entry["os"] = manifest["os"]
         entries.append(entry)
     output = json.dumps(entries, indent=2) + "\n"
     target = ROOT / "catalog.json"

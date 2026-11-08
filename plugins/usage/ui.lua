@@ -1240,6 +1240,19 @@ local function load_glance()
       daily[k], requests[k] = tonumber(row[2]) or 0, tonumber(row[3]) or 0
     end
     glance.daily, glance.requests, glance.day = daily, requests, ymd(os.time())
+    -- Kept quiet: numbers as bright as the new-chat screen's second line
+    -- (Dim without one), labels a little under Dim.
+    define("UsageGlanceValue", { link = bone.hl.get("NewChatHint").fg and "NewChatHint" or "Dim" })
+    local dim, sep = hex(fg_of("Dim")), hex(fg_of("WinSeparator"))
+    if dim and sep then
+      local c = {}
+      for j = 1, 3 do
+        c[j] = math.floor(dim[j] * 0.7 + sep[j] * 0.3 + 0.5)
+      end
+      define("UsageGlanceLabel", { fg = string.format("#%02x%02x%02x", c[1], c[2], c[3]) })
+    else
+      define("UsageGlanceLabel", { link = "Dim" })
+    end
     -- Defaults under the colorscheme, from its current colors: the glance's
     -- squares go from the separator (no use) up to Normal, mostly dark.
     setup_colors()
@@ -1262,10 +1275,10 @@ end
 
 local function stat(add, label, value, first)
   if not first then
-    add("  ·  ", "Dim")
+    add("  ·  ", "UsageGlanceLabel")
   end
-  add(value, "Normal")
-  add(" " .. label, "Dim")
+  add(value, "UsageGlanceValue")
+  add(" " .. label, "UsageGlanceLabel")
 end
 
 local function new_chat(ctx)

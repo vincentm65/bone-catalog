@@ -1,5 +1,5 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.4",
   "title": "Grok",
   "description": "Model provider for xAI's Grok: your SuperGrok / X plan through the Grok Build CLI login, or an xAI API key",
   "capabilities": [
