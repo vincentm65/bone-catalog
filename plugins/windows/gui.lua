@@ -265,6 +265,20 @@ local function tiled(ctx)
   return out
 end
 
+-- A press anywhere in another window focuses it: its chat, its blank
+-- space, its composer, not only the composer's field. The press goes on
+-- to what is under it (selecting text, a button), now in the focused one.
+bone.on("mouse", function(ev)
+  if ev.action ~= "down" or ev.button ~= "left" or not ev.px or not W.root or W.count() <= 1 then return end
+  for id in pairs(W.wins) do
+    local r = bone.gui.rect("wm:" .. id)
+    if r and ev.px >= r.x and ev.px < r.x + r.w and ev.py >= r.y and ev.py < r.y + r.h then
+      if id ~= W.here() then W.focus(id) end
+      return
+    end
+  end
+end)
+
 window.area = tiled
 bone.plugin.on_shutdown(function()
   if window.area == tiled then window.area = plain end

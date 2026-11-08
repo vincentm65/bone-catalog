@@ -385,11 +385,13 @@ local function on_mouse(ev)
     drag = { kind = "rows", split = splits[key], i = tonumber(i), last = ev.y }
     return true
   end
-  -- A click in another window focuses it.
-  id = W.win_of(tonumber(region:match("^%a+:(%d+)$")), "chat")
+  -- A click anywhere in another window focuses it: its chat, prompt,
+  -- status line or the blank rows between. A terminal's window still gets
+  -- the click (the program may want it).
+  id = W.win_at(ev.x, ev.y)
   if id and id ~= W.here() then
     W.focus(id)
-    return true
+    if not W.wins[id].panel then return true end
   end
 end
 
