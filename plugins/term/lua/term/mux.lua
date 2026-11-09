@@ -111,13 +111,33 @@ end
 
 local close_pane
 
+-- The shell a pane runs: $SHELL, else /bin/sh. On Windows $SHELL counts
+-- only when it names a file there (Git Bash sets a Unix one); else
+-- PowerShell 7 (pwsh) on the PATH, Windows PowerShell, then %ComSpec%.
+local function default_shell()
+  local function file(path)
+    local f = path and path ~= "" and io.open(path, "rb")
+    if f then f:close() return true end
+    return false
+  end
+  local env = os.getenv("SHELL")
+  if package.config:sub(1, 1) ~= "\\" then return { (env and env ~= "") and env or "/bin/sh" } end
+  if file(env) then return { env } end
+  for dir in (os.getenv("PATH") or ""):gmatch("[^;]+") do
+    if file(dir .. "\\pwsh.exe") then return { dir .. "\\pwsh.exe", "-NoLogo" } end
+  end
+  local ps = (os.getenv("SystemRoot") or "C:\\Windows") .. "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+  if file(ps) then return { ps, "-NoLogo" } end
+  return { os.getenv("ComSpec") or "cmd.exe" }
+end
+
 local function new_pane(opts)
   opts = opts or {}
   next_id = next_id + 1
   local p = { id = next_id, scroll = 0, cwd = opts.cwd, label = opts.label, command = opts.cmd ~= nil }
   local session = bone.chat.session()
   p.cwd = p.cwd or (session and session.cwd)
-  p.job = bone.job.start(opts.cmd or { os.getenv("SHELL") or "/bin/sh" }, {
+  p.job = bone.job.start(opts.cmd or default_shell(), {
     name = "term:" .. p.id,
     pty = { width = 80, height = 24 },
     cwd = p.cwd,
