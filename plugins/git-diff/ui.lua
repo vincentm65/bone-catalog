@@ -17,8 +17,13 @@ local function session()
 end
 
 local function set_rows(value)
+  local open = active and active.path
   rows, shown = value, nil
   files, active = tree.files(value), nil
+  -- A refresh keeps the file whose patch is open, while it is still changed.
+  for _, file in ipairs(files) do
+    if file.path == open then active = file end
+  end
   nodes = tree.nodes(files, collapsed)
 end
 
@@ -62,7 +67,8 @@ local function refresh(reset_scroll)
   cwd, session_id = session()
   if reset_scroll then panel:scroll("top") end
   if not cwd then return message("No session working directory.") end
-  message("Loading Git diff…")
+  -- Refreshed in place, what is shown stays until Git answers.
+  if reset_scroll or #files == 0 then message("Loading Git diff…") end
   local token, requested_cwd, requested_session = generation, cwd, session_id
   local command = "git rev-parse --show-toplevel >/dev/null || exit $?\n"
   local flags = "git --no-pager diff --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ "

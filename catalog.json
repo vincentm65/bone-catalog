@@ -363,7 +363,7 @@
     "name": "git-diff",
     "title": "Git Diff",
     "kind": "plugin",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "description": "Read-only Git diffs in a right sidebar, in the terminal and the desktop app, with a clickable file tree",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -386,11 +386,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "da0d218e2404f2632639e4d25f0d87b64e2586859a4891a9135173a61d435157"
+        "sha256": "19f02c12d2bb014642a193e60be677eb9134ab4c85d84811744058bb0ba8418e"
       },
       {
         "path": "ui.lua",
-        "sha256": "e3ed01b2572aefed8bf0b8f70130f526cccba69b4c3801114b71609632fda807"
+        "sha256": "a8eb181cd4ca671d15d3cc4099c37fcbe99b967da1bb76b04e1de3f172bf5275"
       }
     ]
   },

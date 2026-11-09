@@ -1,1 +1,1 @@
-{"title":"Git Diff","version":"1.2.1","description":"Read-only Git diffs in a right sidebar, in the terminal and the desktop app, with a clickable file tree","min_bone_version":"3.0.4","capabilities":["command","ui","system"]}
+{"title":"Git Diff","version":"1.2.2","description":"Read-only Git diffs in a right sidebar, in the terminal and the desktop app, with a clickable file tree","min_bone_version":"3.0.4","capabilities":["command","ui","system"]}

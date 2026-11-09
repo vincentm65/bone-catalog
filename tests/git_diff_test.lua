@@ -107,7 +107,9 @@ finish(jobs[#jobs]); open(); assert(contains(text(), "before")) -- unborn HEAD
 shell("git commit -m initial")
 write("tracked", "staged\n"); shell("git add tracked")
 write("tracked", "unstaged\n")
-commands.diff({ args = "refresh" }); finish(jobs[#jobs]); open()
+-- A refresh keeps the open file's patch: what is shown stays until Git answers.
+commands.diff({ args = "refresh" }); assert(find("diff") and not contains(text(), "Loading"))
+finish(jobs[#jobs]); assert(find("button") and find("diff"))
 assert(contains(text(), "unstaged") and contains(text(), "before"))
 assert(panel.spec.title == "Git diff")
 assert(not contains(text(), "diff --git") and not contains(text(), "index "))
