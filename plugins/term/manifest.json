@@ -2,7 +2,7 @@
   "title": "Terminal",
   "version": "1.3.0",
   "description": "Terminal tabs and split panes in one panel, in the terminal and the desktop app, with mouse, scrollback and paste",
-  "min_bone_version": "3.0.11",
+  "min_bone_version": "3.0.10",
   "capabilities": ["command", "ui", "system"],
   "os": ["linux", "macos", "windows"]
 }
