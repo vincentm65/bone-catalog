@@ -30,7 +30,7 @@ local function load(saved, reloading, frontend, with_terminal)
     ["bone.nodes.style"] = { size = {}, radius = {}, space = { xs = 2, sm = 4, md = 8, lg = 12, xl = 16 }, alpha = function() return "#4488ff18" end, hover = function() end },
   }
   local bone = {
-    settings = { get = function() end }, hl = { set = function() end },
+    settings = { get = function() end }, hl = { set = function() end, get = function() end },
     plugin = { state = function() return vm.state end, on_shutdown = function(fn) vm.shutdowns[#vm.shutdowns + 1] = fn end },
     on = function(name, fn)
       vm.events[name] = vm.events[name] or {}
@@ -356,7 +356,7 @@ assert(g.panels.term1 and g.bone.ui.panel.focused() == "term1" and g.window.embe
   "prefix then t opens and focuses an embedded terminal")
 assert(total() == 1 and current == 0, "terminal panes do not allocate or switch chat buffers")
 local term_view = g.view()[1][3]
-assert(term_view[3].panel == "term1" and term_view[3].height == 671,
+assert(term_view[3].panel == "term1" and term_view[3].height == 655,
   "terminal content fills its pane below the title")
 assert(g.terminal.passthrough["alt+w"], "window prefix is available inside the terminal")
 command(g, "zoom")
