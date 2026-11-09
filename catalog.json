@@ -780,6 +780,49 @@
     ]
   },
   {
+    "name": "ssh",
+    "title": "SSH",
+    "kind": "plugin",
+    "version": "3.0.0",
+    "description": "Open a desktop bone window on another machine over ssh, with saved connections, a form and connection tests",
+    "min_bone_version": "3.0.7",
+    "capabilities": [
+      "command",
+      "gui",
+      "system"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "4fb078caba23859cfb992c902f215efbf170a20053681d88520b1e0689309267"
+      },
+      {
+        "path": "gui.lua",
+        "sha256": "88fe8602c043349312c6b60e7969c18707f3f4870a9c23fa2ca473ca76c203f4"
+      },
+      {
+        "path": "lua/ssh/core.lua",
+        "sha256": "10551ac7e083ad19472253a34ee9efb9d45ba243d23805d4c49646711c7b25b3"
+      },
+      {
+        "path": "lua/ssh/dialog.lua",
+        "sha256": "5b62df21eb53ee3bf22b912d7b80f4933a14cc8e5186bc05a73933b5e34afdd1"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "683a31ecb2a15b4bb0b6584fb6e5f0b118a88e7d01c986e1b327e6a779833ab1"
+      },
+      {
+        "path": "ssh_window.py",
+        "sha256": "8cad9ae8579545eeef2c023ee43c60245a2da6bd066d21f6bd7fdfc407ea54b9"
+      }
+    ],
+    "os": [
+      "linux",
+      "windows"
+    ]
+  },
+  {
     "name": "subagent",
     "title": "Subagents",
     "kind": "plugin",
@@ -812,9 +855,9 @@
     "name": "term",
     "title": "Terminal",
     "kind": "plugin",
-    "version": "1.2.1",
+    "version": "1.3.0",
     "description": "Terminal tabs and split panes in one panel, in the terminal and the desktop app, with mouse, scrollback and paste",
-    "min_bone_version": "3.0.3",
+    "min_bone_version": "3.0.11",
     "capabilities": [
       "command",
       "ui",
@@ -835,11 +878,11 @@
       },
       {
         "path": "lua/term/mux.lua",
-        "sha256": "e876e022fc422e6873e1fae2af7f2b2cd07fcdd7481cf98ddca2a70faa48b47e"
+        "sha256": "e7139afd9dcaf82572f88f6993f88b34511ff488bcbf16510d66c14f0b9b65e0"
       },
       {
         "path": "manifest.json",
-        "sha256": "40c2d555fffe9faa80030145f8a99ef4968f7c4ce42d5046e1f64b18328b9514"
+        "sha256": "944cd103a0f91fde70b7b48eaea1ef8f93a384b19d5459df7b434eaa790a3541"
       },
       {
         "path": "tui.lua",
@@ -848,7 +891,8 @@
     ],
     "os": [
       "linux",
-      "macos"
+      "macos",
+      "windows"
     ]
   },
   {

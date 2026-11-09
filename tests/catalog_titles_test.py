@@ -28,6 +28,7 @@ TITLES = {
     "review": "Review",
     "shell": "Shell",
     "skill": "Skills",
+    "ssh": "SSH",
     "subagent": "Subagents",
     "term": "Terminal",
     "themes": "Themes",

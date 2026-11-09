@@ -1,0 +1,15 @@
+{
+  "title": "SSH",
+  "version": "3.0.0",
+  "description": "Open a desktop bone window on another machine over ssh, with saved connections, a form and connection tests",
+  "capabilities": [
+    "command",
+    "gui",
+    "system"
+  ],
+  "os": [
+    "linux",
+    "windows"
+  ],
+  "min_bone_version": "3.0.7"
+}
