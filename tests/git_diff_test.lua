@@ -12,6 +12,10 @@ assert(#diff.parse("") == 0)
 assert(diff.parse("@@ -0,0 +1 @@\n+你好\n")[2].new == 1)
 assert(diff.parse("diff --git a/a b/b\nsimilarity index 100%\nrename from a\nrename to b\n")[4].text == "rename to b")
 assert(diff.parse("Binary files a/a and b/a differ\n")[1].tone == "dim")
+-- A merge conflict's combined diff is a file of its own, not more of the one before it.
+local conflict = tree.files(diff.parse("diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-x\n+y\n"
+  .. "diff --cc c\nindex 1,2..0\n--- a/c\n+++ b/c\n@@@ -1,1 -1,1 +1,3 @@@\n++<<<<<<< HEAD\n +ours\n"))
+assert(#conflict == 2 and conflict[1].added == 1 and conflict[2].path == "c")
 
 local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
 local root = os.tmpname(); os.remove(root)

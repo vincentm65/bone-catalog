@@ -1,6 +1,6 @@
 {
   "title": "Files",
-  "version": "3.6.1",
+  "version": "3.6.2",
   "description": "A file explorer, a file viewer and a text editor in one right-docked sidebar, in the terminal and the desktop app: a folder tree that marks what the agent changed, Git's own markers, search through the folder, and an editor that will not write over a file someone else changed",
   "capabilities": [
     "command",

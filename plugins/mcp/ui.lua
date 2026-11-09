@@ -39,9 +39,10 @@ local function redraw()
 end
 
 local function note(text, bad)
-  if st then
-    st.note = text and { text = text, bad = bad } or nil
+  if not (id and bone.ui.is_open(id)) then -- /mcp-add, or a reply after the popup closed
+    return text and bone.notify("mcp: " .. text, bad and "error" or nil)
   end
+  st.note = text and { text = text, bad = bad } or nil
   redraw()
 end
 
@@ -356,6 +357,5 @@ bone.cmd.create("mcp-add", function(c)
   if #argv < 2 or not argv[1]:match("^[%w_%-]+$") then
     return bone.notify("usage: /mcp-add NAME COMMAND [ARGS...]  or  NAME https://URL", "error")
   end
-  st = st or { servers = {}, sel = 1 }
   add(argv[1], table.concat(argv, " ", 2), "")
 end, { desc = "add an MCP server: /mcp-add NAME COMMAND [ARGS...] or NAME URL" })

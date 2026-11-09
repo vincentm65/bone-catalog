@@ -8,7 +8,7 @@ function M.parse(patch)
   for line in (patch .. "\n"):gmatch("(.-)\n") do
     local a, b = line:match("^@@ %-(%d+),?%d* %+(%d+),?%d* @@")
     local row = { text = line, tone = "dim" }
-    if line:match("^diff %-%-git ") then
+    if line:match("^diff %-%-") then
       old, new = nil, nil
       row.tone = "accent"
     elseif a then

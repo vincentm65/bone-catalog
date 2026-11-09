@@ -42,16 +42,9 @@ end
 local WRITE_TOOLS = { edit_file = true, write_file = true }
 local MARK_LIMIT, SESSION_LIMIT = 60, 12
 
-local ok_state, state = pcall(bone.plugin.state)
-if not ok_state or type(state) ~= "table" then state = { sessions = {} } end
-state.sessions = state.sessions or {}
-
-local marks = {}    -- session_id -> { path -> { path, tool, at, writes } }
+-- session_id -> { path -> { path, tool, at, writes } }, saved after each turn.
+local marks = bone.state.load("files")
 local pending = {}  -- a tool call's id -> { path, tool }, until it finishes
-
-for id, by_path in pairs(state.sessions) do
-  if type(by_path) == "table" then marks[id] = by_path end
-end
 
 local function count(list)
   local n = 0
@@ -98,23 +91,19 @@ bone.hook("tool_result", function(ev)
   remember(ev.session_id, held.path, held.tool)
 end)
 
-bone.hook("turn_end", function(ev)
-  if ev.session_id then state.sessions[ev.session_id] = marks[ev.session_id] end
+bone.hook("turn_end", function()
   local sessions = {}
-  for id, by_path in pairs(state.sessions) do sessions[#sessions + 1] = id end
+  for id in pairs(marks) do sessions[#sessions + 1] = id end
   table.sort(sessions, function(a, b)
     local function newest(id)
       local at = 0
-      for _, m in pairs(state.sessions[id] or {}) do at = math.max(at, tonumber(m.at) or 0) end
+      for _, m in pairs(marks[id]) do at = math.max(at, tonumber(m.at) or 0) end
       return at
     end
     return newest(a) > newest(b)
   end)
-  for i = SESSION_LIMIT + 1, #sessions do
-    state.sessions[sessions[i]] = nil
-    marks[sessions[i]] = nil
-  end
-  pcall(bone.plugin.save_state)
+  for i = SESSION_LIMIT + 1, #sessions do marks[sessions[i]] = nil end
+  pcall(bone.state.save, "files", marks)
 end)
 
 --- What this session changed, newest first. The desktop half marks those

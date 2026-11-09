@@ -11,6 +11,7 @@
 -- keymaps. Every color is a highlight group linked to the scheme's.
 
 local M = {}
+local vt = require("term.vt")
 
 local ID = "terminal"
 local GUI = bone.has_capability and bone.has_capability("gui.window_nodes") or false
@@ -340,11 +341,6 @@ local function write(p, bytes)
   p.job:write(bytes)
 end
 
-local function scroll_by(p, by)
-  local max = p.screen and p.screen.max or 0
-  p.scroll = math.max(0, math.min(max, p.scroll + by))
-end
-
 local ACTIONS = {
   ["alt+t"] = function() M.new_tab({ cwd = tab() and pane_cwd(tab().focus) }) end,
   ["alt+\\"] = function() split("row") end,
@@ -388,15 +384,7 @@ function M.key(key)
   local t = tab()
   local p = t and t.focus
   if not p then return true end
-  local max = p.screen and p.screen.max or 0
-  if key == "wheelup" then scroll_by(p, 3)
-  elseif key == "wheeldown" then scroll_by(p, -3)
-  elseif key == "shift+pageup" or (key == "pageup" and p.scroll > 0) then
-    scroll_by(p, math.max(1, (p.screen and #p.screen.lines or 24) - 1))
-  elseif key == "shift+pagedown" or (key == "pagedown" and p.scroll > 0) then
-    scroll_by(p, -math.max(1, (p.screen and #p.screen.lines or 24) - 1))
-  elseif key == "ctrl+home" and max > 0 then scroll_by(p, 1e9)
-  elseif key == "ctrl+end" then p.scroll = 0
+  if vt.scroll(p, key) then -- scrolled back
   elseif p.exited and key == "enter" then close_pane(p)
   else
     local bytes = base.encode(key, p.screen and p.screen.app_cursor)
@@ -413,29 +401,6 @@ function M.paste(text)
   if p.screen and p.screen.bracketed_paste then text = "\27[200~" .. text .. "\27[201~" end
   write(p, text)
   redraw()
-end
-
---- xterm's report of a mouse action at `col`, `row` of pane `p` (nil when
---- the program does not ask for the mouse).
-local function mouse_bytes(p, action, button, col, row)
-  local s = p.screen
-  local mode = s and s.mouse
-  if mode == nil or mode == "none" then return nil end
-  if action == "up" and mode == "press" then return nil end
-  if action == "drag" and mode ~= "button_motion" and mode ~= "any_motion" then return nil end
-  local code
-  if action == "wheel" then code = button == "up" and 64 or 65
-  else
-    code = ({ left = 0, middle = 1, right = 2 })[button or "left"]
-    if not code then return nil end
-    if action == "up" then code = 3 elseif action == "drag" then code = code + 32 end
-  end
-  if s.mouse_encoding == "sgr" then
-    return string.format("\27[<%d;%d;%d%s", code, col, row, action == "up" and "m" or "M")
-  end
-  if s.mouse_encoding == "utf8" then return "\27[M" .. utf8.char(32 + code, 32 + col, 32 + row) end
-  col, row = math.min(223, col), math.min(223, row)
-  return "\27[M" .. string.char(32 + code, 32 + col, 32 + row)
 end
 
 -- ---- drawing: the screens ------------------------------------------------
@@ -474,36 +439,6 @@ local function fit(line, w)
   return out
 end
 
---- The cell at `col` drawn as the cursor.
-local function with_cursor(line, col)
-  local out, x, done = {}, 1, false
-  for _, item in ipairs(line) do
-    local text, hl = item[1], item[2]
-    local w = bone.text.width(text)
-    if not done and col < x + w then
-      local before, cell, after, cx = "", nil, "", x
-      for ch in text:gmatch(CHAR) do
-        if cell then after = after .. ch
-        elseif cx + bone.text.width(ch) > col then cell = ch
-        else before = before .. ch end
-        cx = cx + bone.text.width(ch)
-      end
-      if before ~= "" then out[#out + 1] = { before, hl } end
-      out[#out + 1] = { cell or " ", "TermCursor" }
-      if after ~= "" then out[#out + 1] = { after, hl } end
-      done = true
-    else
-      out[#out + 1] = item
-    end
-    x = x + w
-  end
-  if not done then
-    out[#out + 1] = { string.rep(" ", math.max(0, col - x)) }
-    out[#out + 1] = { " ", "TermCursor" }
-  end
-  return out
-end
-
 --- Pane `r`'s lines at its size, with the cursor when it has the keyboard.
 local function pane_lines(r, focused)
   local s = screen_of(r.pane, r.w, r.h)
@@ -511,7 +446,7 @@ local function pane_lines(r, focused)
   for i = 1, r.h do lines[i] = (s and s.lines[i]) or {} end
   if focused and s and s.cursor and not r.pane.exited then
     local row, col = s.cursor[1], s.cursor[2]
-    if row >= 1 and row <= r.h then lines[row] = with_cursor(lines[row], col) end
+    if row >= 1 and row <= r.h then lines[row] = vt.with_cursor(lines[row], col) end
   end
   if r.pane.exited then
     lines[r.h] = { { " exited " .. tostring(r.pane.exited) .. " · enter closes ", "TermTabActive" } }
@@ -662,12 +597,12 @@ function M.mouse(ev)
     if cx >= r.x and cx < r.x + r.w and cy >= r.y and cy < r.y + r.h then
       local p = r.pane
       if ev.action == "down" and t.focus ~= p then t.focus = p end
-      local bytes = mouse_bytes(p, ev.action, ev.button, cx - r.x + 1, cy - r.y + 1)
+      local bytes = vt.mouse(p.screen, ev.action, ev.button, cx - r.x + 1, cy - r.y + 1)
       if bytes then
         bone.ui.panel.focus(ID)
         write(p, bytes)
       elseif ev.action == "wheel" then
-        scroll_by(p, ev.button == "up" and 3 or -3)
+        vt.scroll(p, "wheel" .. ev.button)
       elseif ev.action == "down" then
         bone.ui.panel.focus(ID)
       end
@@ -714,21 +649,21 @@ local function gui_pane(r, cell, focused, size)
     pcall(bone.ui.panel.focus, ID)
     local c, rw = at_cell(pt)
     p.press_at = { c, rw }
-    local bytes = mouse_bytes(p, "down", "left", c, rw)
+    local bytes = vt.mouse(p.screen, "down", "left", c, rw)
     if bytes then write(p, bytes) end
     redraw()
   end
   box.on_release = function(pt)
     local c, rw = at_cell(pt)
     if not pt and p.press_at then c, rw = p.press_at[1], p.press_at[2] end
-    local bytes = mouse_bytes(p, "up", "left", c, rw)
+    local bytes = vt.mouse(p.screen, "up", "left", c, rw)
     if bytes then write(p, bytes) end
   end
   box.on_scroll = function(dy)
     local up = (dy or 0) > 0
     local c, rw = math.floor(r.w / 2), math.floor(r.h / 2)
-    local bytes = mouse_bytes(p, "wheel", up and "up" or "down", c, rw)
-    if bytes then write(p, bytes) else scroll_by(p, up and 3 or -3) end
+    local bytes = vt.mouse(p.screen, "wheel", up and "up" or "down", c, rw)
+    if bytes then write(p, bytes) else vt.scroll(p, up and "wheelup" or "wheeldown") end
     redraw()
     return true
   end

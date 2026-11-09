@@ -220,7 +220,7 @@
     "name": "files",
     "title": "Files",
     "kind": "plugin",
-    "version": "3.6.1",
+    "version": "3.6.2",
     "description": "A file explorer, a file viewer and a text editor in one right-docked sidebar, in the terminal and the desktop app: a folder tree that marks what the agent changed, Git's own markers, search through the folder, and an editor that will not write over a file someone else changed",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -237,7 +237,7 @@
       },
       {
         "path": "core.lua",
-        "sha256": "aa620fca1bf0c8be46f57d04c4d2cf925368875153ef859bd575f7b4dcd9049a"
+        "sha256": "a7f57e2b8362150fa90efeaf381fcfc56f8e0c5fa4ce2b63f3febfcf903722ae"
       },
       {
         "path": "lua/files/buffer.lua",
@@ -321,7 +321,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "54b224dd081a995b45df05c9508eb18411e8736c2825a828a896814d04ada4f9"
+        "sha256": "762b6c950f40dd2161a2aaff0c40cf343321e3397e2db8e59a9adb84a2bf70cf"
       },
       {
         "path": "ui.lua",
@@ -363,7 +363,7 @@
     "name": "git-diff",
     "title": "Git Diff",
     "kind": "plugin",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "description": "Read-only Git diffs in a right sidebar, in the terminal and the desktop app, with a clickable file tree",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -378,19 +378,19 @@
       },
       {
         "path": "lua/git_diff.lua",
-        "sha256": "83b4ea7425e14e577e7319111c5393599e5b9b4dd1538ae384bfc2b9a1dd2a09"
+        "sha256": "2e5072f74dc24d3b6f12256a010feb5ffcdeb896cd1996c3f13ad5767f10495f"
       },
       {
         "path": "lua/git_diff_tree.lua",
-        "sha256": "7bf8024687012b30b7d469f693a7fd2b8e1528b33b3888253bf3d60ea4e15b1a"
+        "sha256": "741ec2e8cfbbd7d82de2c641c1f004e4bd7aa20a2f8bc5bbe95ae066d6f93ab0"
       },
       {
         "path": "manifest.json",
-        "sha256": "d6e513410981a624c2712e384e9da7c031b543d21f41ca089dabac8f01be53e7"
+        "sha256": "da0d218e2404f2632639e4d25f0d87b64e2586859a4891a9135173a61d435157"
       },
       {
         "path": "ui.lua",
-        "sha256": "2957a87d54d05e9ec01e8935c59b24b8f33fcf0adcd46d36fd3ee5cd075a2e14"
+        "sha256": "e3ed01b2572aefed8bf0b8f70130f526cccba69b4c3801114b71609632fda807"
       }
     ]
   },
@@ -505,7 +505,7 @@
     "name": "mcp",
     "title": "MCP",
     "kind": "plugin",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "description": "Manage MCP servers: add, sign in (OAuth), reconnect and browse tools",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -524,11 +524,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "9e589cb503dd17c2fc7cf5a94b6ffd07f64980685e341a08e3149add17dce648"
+        "sha256": "d59e72b507b4f960c34ddcf3a0cdce1e6062f8b7c242dd0f989e44805f5a5ed9"
       },
       {
         "path": "ui.lua",
-        "sha256": "a2417af9b63123de2d16d2da6cdf5682bf419331774e918f2cc94f08202ac2f5"
+        "sha256": "dd80edce74c9e30200c6e124e51bca04c62fb878de47e16605cc4918210e7402"
       }
     ]
   },
@@ -667,7 +667,7 @@
     "name": "recap",
     "title": "Recap",
     "kind": "plugin",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "description": "Show a brief recap of the conversation",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -681,11 +681,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "6416aa7097d0374f2eb5edb2386371d4580d09209a76db683c34662a341f4d04"
+        "sha256": "c62a09be00df775d484c6843973ffdef7a6602b8c1761cbca52c3c62ad8c65e6"
       },
       {
         "path": "ui.lua",
-        "sha256": "50a6b65d3b82397b1b064303e3cfea9efa34cf4aa59db4cef683c2d451074ef6"
+        "sha256": "de8cda46852e5377e3e50d445c72a81aad8bf7d081f28cbbe2aa955b2e9ffcc0"
       }
     ]
   },
@@ -855,7 +855,7 @@
     "name": "term",
     "title": "Terminal",
     "kind": "plugin",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "description": "Terminal tabs and split panes in one panel, in the terminal and the desktop app, with mouse, scrollback and paste",
     "min_bone_version": "3.0.10",
     "capabilities": [
@@ -874,15 +874,19 @@
       },
       {
         "path": "lua/bone/ui/terminal.lua",
-        "sha256": "1c195654f678c981f0d8af32e680834350ca31b5cd494507c8a67c541b97c0a7"
+        "sha256": "a58a6e37f954371a7123de35e2a4f22cd404e3162a3341d45154b808ac2fd7aa"
       },
       {
         "path": "lua/term/mux.lua",
-        "sha256": "e7139afd9dcaf82572f88f6993f88b34511ff488bcbf16510d66c14f0b9b65e0"
+        "sha256": "7837fcdbbb8742c63cdc10765fe9d335d56211fdba3c095a8b99ae8dbf061b71"
+      },
+      {
+        "path": "lua/term/vt.lua",
+        "sha256": "89b2338b887b41fd753a820d0161f36236421ad1a5613a9d709668f59c977efa"
       },
       {
         "path": "manifest.json",
-        "sha256": "60c7ca2326c9d1cafcd466621b67a0cdbead2544c74b96e779f0616420a24fcb"
+        "sha256": "82fd64bdc8e26daf6be518f12ca294d8e7d8ef54adc892ad1471b8c0aab6db1c"
       },
       {
         "path": "tui.lua",

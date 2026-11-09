@@ -8,7 +8,8 @@ local function fixture(settings)
     chat = {
       session = function(opts)
         local id = opts and assert(type(opts.session) == "string" and opts.session) or "a"
-        return { session_id = id, running = f.running == id }
+        if f.closed == id then return nil end
+        return { session_id = not f.new and id or nil, running = f.running == id }
       end,
       messages = function(session_id, cb)
         if type(session_id) == "function" then session_id, cb = nil, session_id end
@@ -76,4 +77,21 @@ f.finish(nil, "a")
 f.events["turn/started"]({ session_id = "b" })
 f.timers[2].run()
 assert(f.requests == 1 and f.asked == "a" and f.added_session == "a")
+
+-- A session with no chat open here (a sub-agent's, another client's) and one
+-- running again are left alone without a word: notify raises in this fixture.
+f = fixture({ ["recap.auto"] = true })
+f.closed = "sub"
+f.finish(nil, "sub")
+f.timers[1].run()
+f.running = "a"
+f.finish()
+f.timers[2].run()
+assert(f.requests == 0)
+-- /recap says which it is: a turn still running, or a chat with nothing yet.
+local _, why = pcall(f.command, { args = "" })
+assert(tostring(why):find("wait for the turn to finish", 1, true))
+f.running, f.new = nil, true
+_, why = pcall(f.command, { args = "" })
+assert(tostring(why):find("nothing to summarize", 1, true) and f.requests == 0)
 print("recap plugin settings, defaults, command and idle scheduling OK")

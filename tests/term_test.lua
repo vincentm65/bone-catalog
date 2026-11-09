@@ -38,7 +38,7 @@ bone = {
       self.size = size
       return { lines = { { { "a界z", "Normal" } }, {} }, cursor = { 1, 2 },
         scroll = size.scroll, max = 100, app_cursor = true, bracketed_paste = true,
-        mouse = "press_release", mouse_encoding = "sgr" }
+        mouse = "press_release", mouse_encoding = self.encoding or "sgr" }
     end
     jobs[#jobs + 1] = job
     return job
@@ -131,6 +131,16 @@ assert(mouse({ panel = p.id, panel_row = 2, panel_col = 3, action = "down", butt
 assert(j.writes[#j.writes] == "\27[<0;3;2M")
 assert(mouse({ panel = p.id, panel_row = 2, panel_col = 3, action = "up", button = "left" }))
 assert(j.writes[#j.writes] == "\27[<3;3;2m")
+-- xterm's UTF-8 mouse encoding (LuaJIT has no utf8 library): column 200 is two bytes.
+j.encoding = "utf8"; p.spec.render({ width = 30, height = 8 })
+assert(mouse({ panel = p.id, panel_row = 2, panel_col = 200, action = "down", button = "left" }))
+assert(j.writes[#j.writes] == "\27[M \195\168\"")
+j.encoding = nil; p.spec.render({ width = 30, height = 8 })
+-- While it shows live output the page keys, Home and End are the program's.
+assert(p.spec.on_key("pagedown") and j.writes[#j.writes] == "\27[6~")
+assert(p.spec.on_key("pageup") and j.writes[#j.writes] == "\27[5~")
+assert(p.spec.on_key("home") and j.writes[#j.writes] == "\27OH")
+assert(p.spec.on_key("end") and j.writes[#j.writes] == "\27OF")
 writes = #j.writes
 term.passthrough["alt+w"] = true
 assert(p.spec.on_key("alt+w") == false)

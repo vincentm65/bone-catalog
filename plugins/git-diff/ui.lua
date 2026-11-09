@@ -102,7 +102,7 @@ local function patch_rows()
   for _, row in ipairs(active and active.rows or rows) do
     if row.sign then
       out[#out + 1] = row
-    elseif not active or not (row.text:match("^diff %-%-git ") or row.text:match("^index ")
+    elseif not active or not (row.text:match("^diff %-%-") or row.text:match("^index ")
       or row.text:match("^%-%-%- ") or row.text:match("^%+%+%+ ")) then
       out[#out + 1] = { text = row.text, tone = row.tone or "dim" }
     end

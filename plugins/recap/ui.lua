@@ -16,9 +16,8 @@ end)
 local seqs = {}
 local function request(sid)
   local session = bone.chat.session(sid and { session = sid } or nil)
-  if not session or not session.session_id or session.running then
-    return bone.notify("recap: wait for the turn to finish", "error")
-  end
+  if not session or not session.session_id then return bone.notify("recap: nothing to summarize") end
+  if session.running then return bone.notify("recap: wait for the turn to finish", "error") end
   sid = session.session_id
   bone.chat.messages(sid, function(messages, err)
     if err then return bone.notify("recap: " .. tostring(err), "error") end
@@ -52,6 +51,8 @@ bone.on("turn/finished", function(ev)
   local sid = ev and ev.session_id
   local mine = sid and seqs[sid]
   bone.defer(tonumber(bone.settings.get("recap.idle_ms")) or 900000, function()
-    if not sid or seqs[sid] == mine then request(sid) end
+    -- Only a chat open here and still idle: not a sub-agent's or another client's session.
+    local session = sid and bone.chat.session({ session = sid })
+    if session and not session.running and seqs[sid] == mine then request(sid) end
   end)
 end)

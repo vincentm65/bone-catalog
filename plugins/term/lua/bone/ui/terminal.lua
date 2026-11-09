@@ -16,6 +16,7 @@
 local M = bone._term_module or {}
 if M._active then return M end -- A dependency can evict package.loaded while we run.
 bone._term_module = M
+local vt = require("term.vt")
 local active, stopped = false, false
 
 --- The panel spec /term and ctrl+] open terminals with.
@@ -32,16 +33,6 @@ M.passthrough = M.passthrough or {}
 local terms = {}
 -- The terminal last opened or typed into.
 local last
-
-local function shift_scroll(t, by)
-  local max = t.screen and t.screen.max or 0
-  t.scroll = math.max(0, math.min(max, t.scroll + by))
-end
-
-local function page_scroll(t, direction)
-  local page = math.max(1, (t.screen and #t.screen.lines or 24) - 1)
-  shift_scroll(t, direction * page)
-end
 
 -- Key names (as on_key gets them) to the bytes a terminal sends.
 local CSI = "\27["
@@ -93,40 +84,6 @@ local function encode(key, app_cursor)
 end
 M.encode = encode
 
--- Give the cell at `col` of a line the cursor's look.
-local function with_cursor(line, col)
-  local out, at, done = {}, 1, false
-  for _, item in ipairs(line) do
-    local text, hl = item[1], item[2]
-    local w = bone.text.width(text)
-    if not done and col < at + w then
-      local before, cell, after, x = "", nil, "", at
-      for ch in text:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
-        if cell then
-          after = after .. ch
-        elseif x + bone.text.width(ch) > col then
-          cell = ch
-        else
-          before = before .. ch
-        end
-        x = x + bone.text.width(ch)
-      end
-      if before ~= "" then out[#out + 1] = { before, hl } end
-      out[#out + 1] = { cell or " ", "TermCursor" }
-      if after ~= "" then out[#out + 1] = { after, hl } end
-      done = true
-    else
-      out[#out + 1] = item
-    end
-    at = at + w
-  end
-  if not done then
-    out[#out + 1] = { string.rep(" ", col - at) }
-    out[#out + 1] = { " ", "TermCursor" }
-  end
-  return out
-end
-
 local function render(id, t, ctx)
   if not active or terms[id] ~= t then return {} end
   local s = t.job:screen({ width = ctx.width, height = ctx.height, scroll = t.scroll }) or t.screen
@@ -136,7 +93,7 @@ local function render(id, t, ctx)
   for i, line in ipairs(s.lines) do lines[i] = line end
   if s.cursor and ctx.focused then
     local row, col = s.cursor[1], s.cursor[2]
-    lines[row] = with_cursor(lines[row] or {}, col)
+    lines[row] = vt.with_cursor(lines[row] or {}, col)
   end
   return lines
 end
@@ -150,19 +107,7 @@ local function on_key(id, t, key)
     return false
   elseif M.escape[key] then
     bone.ui.panel.focus(nil)
-  elseif key == "wheelup" then
-    shift_scroll(t, 3)
-  elseif key == "wheeldown" then
-    shift_scroll(t, -3)
-  elseif key == "pageup" or key == "shift+pageup" then
-    page_scroll(t, 1)
-  elseif key == "pagedown" or key == "shift+pagedown" then
-    page_scroll(t, -1)
-  elseif key == "ctrl+home" or (key == "home" and (t.screen and t.screen.max or 0) > 0) then
-    shift_scroll(t, 1e9)
-  elseif key == "ctrl+end" or (key == "end" and (t.screen and t.screen.max or 0) > 0) then
-    t.scroll = 0
-  else
+  elseif not vt.scroll(t, key) then
     local bytes = encode(key, t.screen and t.screen.app_cursor)
     if bytes then
       t.scroll = 0
@@ -189,38 +134,6 @@ local function mouse_position(ev)
   return id, t, row, col
 end
 
-local function mouse_code(t, ev)
-  local mode = t.screen.mouse
-  if mode == nil or mode == "none" then return end
-  local action, button = ev.action, ev.button
-  if action == "up" and mode == "press" then return end
-  if action == "drag" and mode ~= "button_motion" and mode ~= "any_motion" then return end
-  local code
-  if action == "wheel" then
-    code = button == "up" and 64 or 65
-  else
-    code = ({ left = 0, middle = 1, right = 2 })[button]
-    if code == nil then return end
-    if action == "up" then
-      code = 3
-    elseif action == "drag" then
-      code = code + 32
-    end
-  end
-  local row, col = ev.panel_row or ev.row, ev.panel_col or ev.col
-  if t.screen.mouse_encoding == "sgr" then
-    return string.format("\27[<%d;%d;%d%s", code, col, row, action == "up" and "m" or "M")
-  end
-  if t.screen.mouse_encoding == "utf8" then
-    return "\27[M" .. utf8.char(32 + code, 32 + col, 32 + row)
-  end
-  -- The legacy encoding is deliberately capped to its printable range. SGR
-  -- is what modern programs request when they need larger coordinates.
-  col, row = math.min(223, col), math.min(223, row)
-  local suffix = string.char(32 + code, 32 + col, 32 + row)
-  return "\27[M" .. suffix
-end
-
 function M.setup()
   if stopped or pasting then
     return
@@ -239,17 +152,13 @@ function M.setup()
     t.job:write(text)
   end)
   mouse_events = bone.on("mouse", function(ev)
-    local id, t = mouse_position(ev)
+    local id, t, row, col = mouse_position(ev)
     if not id then return end
-    local bytes = mouse_code(t, ev)
+    local bytes = vt.mouse(t.screen, ev.action, ev.button, col, row)
     if not bytes then
       -- A terminal without mouse reporting still gets conventional wheel
       -- scrolling while it has the pointer over it.
-      if ev.action == "wheel" then
-        shift_scroll(t, ev.button == "up" and 3 or -3)
-        return true
-      end
-      return
+      return ev.action == "wheel" and vt.scroll(t, "wheel" .. ev.button) or nil
     end
     bone.ui.panel.focus(id)
     t.scroll = 0

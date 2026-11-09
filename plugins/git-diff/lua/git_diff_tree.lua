@@ -9,7 +9,7 @@ end
 function M.files(rows)
   local files, file = {}, nil
   for _, row in ipairs(rows) do
-    if not row.sign and row.text:match('^diff %-%-git ') then
+    if not row.sign and row.text:match('^diff %-%-') then
       local bare = row.text:match(' b/(.*)$')
       local path = bare and unquote(bare) or unquote(row.text:match(' ("b/.*")$') or row.text):gsub('^b/', '')
       file = { path = path, rows = {}, added = 0, deleted = 0 }
