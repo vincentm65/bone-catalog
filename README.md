@@ -95,6 +95,3 @@ BONE_BIN=/path/to/bone3 python3 tests/md_tmux_test.py
 BONE_BIN=/path/to/bone3 python3 tests/term_tmux_test.py
 BONE_BIN=/path/to/bone3 python3 tests/codex_app_tmux_test.py
 ```
-
-The previous catalog, including its index, packages and tests, is archived under
-[`legacy/`](legacy/). The root index and installer target Bone 3.
