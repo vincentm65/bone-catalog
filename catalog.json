@@ -955,8 +955,8 @@
     "name": "toolstrip",
     "title": "Toolstrip",
     "kind": "plugin",
-    "version": "1.1.11",
-    "description": "Show tool timelines consistently in the TUI and GUI; history uses equal-width segments",
+    "version": "1.2.0",
+    "description": "Show tool timelines and fold finished turns in the TUI and GUI; history uses equal-width segments",
     "min_bone_version": "3.0.3",
     "capabilities": [
       "ui"
@@ -968,11 +968,15 @@
       },
       {
         "path": "gui.lua",
-        "sha256": "ae55a23126f6892a79cd6e77462e92536c9a1bb11857e9536e2e528d97972a2a"
+        "sha256": "5881699709f9dffe69a0029f53def75531f4c2f70fb72b8b8ca9debb33bfdfe1"
+      },
+      {
+        "path": "lua/toolstrip/strip.lua",
+        "sha256": "63ab93325ec3db7e9152e94b0722be1c394fca9cf868023959b30aa8f33d9e6d"
       },
       {
         "path": "manifest.json",
-        "sha256": "d425151f8b1fed2b33b4f02c12ec995cb5cc09353f297a712f362ca94b58342c"
+        "sha256": "4063ea9e801bce4ce600798b9e8de40faba8adc8138a3bbf2d8d192dae4b9a44"
       },
       {
         "path": "tui.lua",
@@ -1045,7 +1049,7 @@
     "name": "windows",
     "title": "Windows",
     "kind": "plugin",
-    "version": "1.7.1",
+    "version": "1.8.0",
     "description": "Tiled chat windows and tabs of layouts, in the terminal and the desktop app: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -1059,7 +1063,7 @@
       },
       {
         "path": "gui.lua",
-        "sha256": "6a582aee94edb4d5a08d227f0dabf49bd5fc1ecaffd5b4bf7d0969bcf13a245a"
+        "sha256": "75fba60034e84b5c50e5f9f0984cfbd0205a7adb217e9a6c7c55bf9f2d1c156c"
       },
       {
         "path": "lua/windows/drop.lua",
@@ -1071,7 +1075,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "36d89ec34d6611d413e835d1cfd253a93a867d364f8ef73cf37e2ab61ac6f936"
+        "sha256": "bd7b6814b5721027efe56d8ab2033c74e736bfdd0a9af6149ad57cffb13c7d96"
       },
       {
         "path": "tui.lua",

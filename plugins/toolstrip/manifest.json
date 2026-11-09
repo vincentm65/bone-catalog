@@ -1,7 +1,7 @@
 {
   "title": "Toolstrip",
-  "version": "1.1.11",
-  "description": "Show tool timelines consistently in the TUI and GUI; history uses equal-width segments",
+  "version": "1.2.0",
+  "description": "Show tool timelines and fold finished turns in the TUI and GUI; history uses equal-width segments",
   "min_bone_version": "3.0.3",
   "capabilities": ["ui"],
   "settings": [

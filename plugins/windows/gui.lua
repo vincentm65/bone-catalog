@@ -15,7 +15,7 @@ local has_terminal, terminal = pcall(require, "bone.terminal")
 if not has_terminal then terminal = nil end
 
 local MIN = 180 -- the fewest pixels a resize leaves a window, either way
-local BAR = 28 -- a window's title bar
+local BAR = 44 -- a window's title bar
 local SEP = 7 -- the handle between two windows
 
 local W
@@ -77,7 +77,7 @@ local function handle(split, i)
     [cols and "width" or "height"] = SEP, cursor = cols and "col-resize" or "row-resize",
     direction = cols and "row" or "column", justify = "center",
     hover = { bg = style.hover() },
-    { [cols and "width" or "height"] = 1, bg = style.alpha("PromptBorder", "ff") or style.hover() },
+    { [cols and "width" or "height"] = 1, bg = style.alpha("WinSeparator", "ff", "fg") or style.alpha("PromptBorder", "ff") or style.hover() },
     on_drag = function(pos)
       local r = W.bounds(split.kids[i - 1])
       if r then W.resize(split, i - 1, i, (cols and pos.x - r.x or pos.y - r.y) - SEP / 2) end
@@ -91,7 +91,7 @@ local function mark(l)
     if has_widgets and widgets.spinner then return widgets.spinner(12) end
     return { text = "●", hl = "Accent", size = style.size.small }
   end
-  if l.unread then return { text = "•", hl = "Accent", size = style.size.caption } end
+  if l.unread then return { text = "•", hl = (bone.hl.get("SessionUnread") or {}).fg and "SessionUnread" or "Accent", size = style.size.caption } end
 end
 
 -- Use painted rectangles, not the estimated flex boxes: a sidebar or a
@@ -112,7 +112,8 @@ end
 local function close(id)
   local click = function() W.close(id) end
   if has_widgets and widgets.icon_button then
-    return widgets.icon_button("✕", "Close the window", click, { size = style.size.small })
+    return widgets.icon_button("close", "Close the window", click,
+      { box = 26, size = 14, radius = style.radius.md })
   end
   return {
     text = "✕", hl = "Dim", size = style.size.small, padding = { 2, 6, 2, 6 }, radius = style.radius.md,
@@ -121,8 +122,9 @@ local function close(id)
   }
 end
 
--- A window's title: no fill. The focused one has its name in the text's own
--- color, an accent mark and an accent rule under it; the others are quiet.
+-- A window's title, as the chat's header looks: no fill, the name in the
+-- text's color and medium weight with a small accent dot on the focused
+-- one, quiet grey on the others; a hairline under each.
 local function bar(id)
   local l = W.label(id) or { name = "" }
   local mine = id == W.here()
@@ -131,8 +133,8 @@ local function bar(id)
     transition = 90, shrink = 0, x }
   return {
     id = "wm:bar:" .. id,
-    direction = "row", align = "center", gap = style.space.sm, height = BAR,
-    padding = { 0, style.space.xs or 2, 0, style.space.md },
+    direction = "row", align = "center", gap = 8, height = BAR,
+    padding = { 0, 10, 0, 16 },
     cursor = drag and drag.id == id and "grabbing" or "grab",
     hover = { bg = style.hover() },
     on_press = function() held, drag = id, nil; W.focus(id) end,
@@ -153,9 +155,9 @@ local function bar(id)
     end,
     on_double_click = W.zoom,
     on_secondary = W.pick,
-    mark(l) or (mine and { width = 6, height = 6, radius = 3, bg = style.alpha("Accent", "ff"), shrink = 0 }) or nil,
-    { text = l.name, hl = mine and "Normal" or "Dim", bold = mine, size = style.size.caption,
-      grow = 1, wrap = false, overflow = "hidden", text_overflow = "ellipsis" },
+    mark(l) or (mine and { width = 6, height = 6, radius = 3, bg = style.alpha("SessionUnread", "ff", "fg") or style.alpha("Accent", "ff"), shrink = 0 }) or nil,
+    { text = l.name, hl = mine and "Normal" or ((bone.hl.get("Muted") or {}).fg and "Muted" or "Dim"),
+      medium = mine, size = style.size.body, grow = 1, wrap = false, overflow = "hidden", text_overflow = "ellipsis" },
     closer,
   }
 end
@@ -163,8 +165,7 @@ end
 --- The rule under a title: the accent on the focused window, a hairline elsewhere.
 local function rule(id)
   local mine = id == W.here()
-  return { height = 1, shrink = 0, bg = mine and style.alpha("Accent", "ff") or (style.alpha("PromptBorder", "ff") or style.hover()),
-    opacity = mine and 0.55 or 0.6 }
+  return { height = 1, shrink = 0, bg = style.alpha("WinSeparator", "ff", "fg") or style.alpha("PromptBorder", "ff") or style.hover() }
 end
 
 local function draw(node, parent, ctx, width, height)
@@ -179,7 +180,7 @@ local function draw(node, parent, ctx, width, height)
       W.wins[id].panel and window.panel(W.wins[id].panel, {
         width = width, height = math.max(0, height - BAR - 1), cell = ctx.cell,
       }) or window.column(ctx, {
-        chat = W.wins[id].chat, width = width, on_focus = function() W.focus(id) end,
+        chat = W.wins[id].chat, width = width, header = false, on_focus = function() W.focus(id) end,
       }),
     }
   else
@@ -216,7 +217,7 @@ local function tab_bar()
       direction = "column", shrink = 0, cursor = "pointer", radius = style.radius.md, max_width = 240,
       hover = not on and { bg = style.hover() } or nil, role = "option", selected = on, label = "Tab " .. i,
       { direction = "row", align = "center", gap = style.space.sm, height = TABS - 3, padding = { 0, style.space.md, 0, style.space.md },
-        (l.running and has_widgets and widgets.spinner and widgets.spinner(10)) or (l.unread and { text = "•", hl = "Accent", size = style.size.caption }) or nil,
+        (l.running and has_widgets and widgets.spinner and widgets.spinner(10)) or (l.unread and { text = "•", hl = (bone.hl.get("SessionUnread") or {}).fg and "SessionUnread" or "Accent", size = style.size.caption }) or nil,
         { text = label, hl = on and "Normal" or "Dim", bold = on, size = style.size.caption, wrap = false,
           text_overflow = "ellipsis", shrink = 1 } },
       { height = 2, radius = 1, bg = on and style.alpha("Accent", "ff") or nil, margin = { 0, style.space.sm, 0, style.space.sm } },
