@@ -855,7 +855,7 @@
     "name": "term",
     "title": "Terminal",
     "kind": "plugin",
-    "version": "1.3.1",
+    "version": "1.4.0",
     "description": "Terminal tabs and split panes in one panel, in the terminal and the desktop app, with mouse, scrollback and paste",
     "min_bone_version": "3.0.10",
     "capabilities": [
@@ -866,7 +866,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "b06470fd1ceab2fdd11273910ba29a6ac9c06d55c831b6690218bd920d202322"
+        "sha256": "eb6dbaa9cf4be2fb0dfd4c6de88f88765b7ced58800cbde5002068ba473a7f95"
       },
       {
         "path": "gui.lua",
@@ -874,19 +874,19 @@
       },
       {
         "path": "lua/bone/ui/terminal.lua",
-        "sha256": "a58a6e37f954371a7123de35e2a4f22cd404e3162a3341d45154b808ac2fd7aa"
+        "sha256": "a16ddc4150a272df7188321806eab92f6a8e1917f5dbabf2a8820ee481e13810"
       },
       {
         "path": "lua/term/mux.lua",
-        "sha256": "7837fcdbbb8742c63cdc10765fe9d335d56211fdba3c095a8b99ae8dbf061b71"
+        "sha256": "2f1510a5372732d6659f87e7956868ac4db8a4a0a22c3d4159972b3ec5033856"
       },
       {
         "path": "lua/term/vt.lua",
-        "sha256": "89b2338b887b41fd753a820d0161f36236421ad1a5613a9d709668f59c977efa"
+        "sha256": "c275ae3c03c5903be946f7b2727cb515834f81e7fcc4191c87c66547d9c8a312"
       },
       {
         "path": "manifest.json",
-        "sha256": "82fd64bdc8e26daf6be518f12ca294d8e7d8ef54adc892ad1471b8c0aab6db1c"
+        "sha256": "f9f2769f112c66c539868492aaee241cf7dbe3e8201d56ccb2085809cab94a0e"
       },
       {
         "path": "tui.lua",

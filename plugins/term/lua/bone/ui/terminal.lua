@@ -144,12 +144,8 @@ function M.setup()
     if not active or ev.context ~= "panel" or not t or type(ev.text) ~= "string" then
       return
     end
-    local text = ev.text
-    if t.screen and t.screen.bracketed_paste then
-      text = "\27[200~" .. text .. "\27[201~"
-    end
     t.scroll = 0
-    t.job:write(text)
+    t.job:write(vt.paste(t.screen, ev.text))
   end)
   mouse_events = bone.on("mouse", function(ev)
     local id, t, row, col = mouse_position(ev)

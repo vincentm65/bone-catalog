@@ -337,7 +337,7 @@ local CSI = "\27["
 
 local function write(p, bytes)
   if not p or p.exited then return end
-  p.scroll = 0
+  p.scroll, p.sel = 0, nil
   p.job:write(bytes)
 end
 
@@ -384,7 +384,14 @@ function M.key(key)
   local t = tab()
   local p = t and t.focus
   if not p then return true end
-  if vt.scroll(p, key) then -- scrolled back
+  if key == "ctrl+c" and p.sel then
+    -- With a selection, ctrl+c copies it (and ends it) instead of
+    -- interrupting the program. Key names fold shift into letters, so
+    -- ctrl+shift+c arrives as this too.
+    local text = vt.sel_text(p)
+    if text and bone.clipboard then bone.clipboard.copy(text) end
+    p.sel = nil
+  elseif vt.scroll(p, key) then -- scrolled back
   elseif p.exited and key == "enter" then close_pane(p)
   else
     local bytes = base.encode(key, p.screen and p.screen.app_cursor)
@@ -398,8 +405,7 @@ function M.paste(text)
   local t = tab()
   local p = t and t.focus
   if not p then return end
-  if p.screen and p.screen.bracketed_paste then text = "\27[200~" .. text .. "\27[201~" end
-  write(p, text)
+  write(p, vt.paste(p.screen, text))
   redraw()
 end
 
@@ -624,40 +630,78 @@ local BAR_H = 30
 
 local gui_drag -- { sep, x0, y0, ratio0, px } while a divider is dragged
 
+-- A pane on a grid of character cells: every run of text exactly as wide as
+-- its cells, so a wide or fallback glyph cannot shift what follows, and
+-- backgrounds fill their cells. Where the program does not take the mouse, a
+-- drag selects (a double click a word, a triple click a line) and the release
+-- copies it.
 local function gui_pane(r, cell, focused, size)
   local p = r.pane
-  local lines = pane_lines(r, focused)
-  local normal = bone.hl.get("Normal") or {}
-  local box = { position = "absolute", left = r.x * cell.w, top = r.y * cell.h, width = r.w * cell.w,
-    height = r.h * cell.h, direction = "column", overflow = "hidden" }
-  for _, line in ipairs(lines) do
-    local spans = {}
-    for i, item in ipairs(line) do
-      local span = { text = item[1], hl = item[2], bg = (item[2] and item[2] ~= "Normal") and item[2] or nil }
-      if item[2] == "TermCursor" then span.color, span.bg = normal.bg or "#161616", normal.fg or "#eeeeee" end
-      spans[i] = span
+  local s = screen_of(p, r.w, r.h)
+  local box = { id = "term:pane:" .. p.id, position = "absolute", left = r.x * cell.w, top = r.y * cell.h,
+    width = r.w * cell.w, height = r.h * cell.h, direction = "column", overflow = "hidden" }
+  local look = vt.look(cell, size, r.w)
+  local sel = { vt.sel_range(p) }
+  local cursor = focused and not p.exited and s and s.cursor
+  for i = 1, r.h do
+    local row = (s and s.lines[i]) or {}
+    if p.exited and i == r.h then
+      row = { { " exited " .. tostring(p.exited) .. " · enter closes ", "TermTabActive" } }
     end
-    box[#box + 1] = { height = cell.h, line_height = cell.h, font = "mono", size = size, wrap = false,
-      spans = #spans > 0 and spans or { { text = " " } } }
+    box[#box + 1] = vt.row_node(row, i - p.scroll, sel, cursor and cursor[1] == i and cursor[2] or nil, look)
+  end
+  local function clamp(c, rw)
+    return math.max(1, math.min(r.w, c)), math.max(1, math.min(r.h, rw))
   end
   local function at_cell(pt)
-    return math.floor((pt and pt.x or 0) / cell.w) + 1, math.floor((pt and pt.y or 0) / cell.h) + 1
+    return clamp(math.floor((pt and pt.x or 0) / cell.w) + 1, math.floor((pt and pt.y or 0) / cell.h) + 1)
   end
   box.on_press = function(pt)
     local t = tab()
     if t then t.focus = p end
     pcall(bone.ui.panel.focus, ID)
     local c, rw = at_cell(pt)
-    p.press_at = { c, rw }
+    p.press_at, p.drag_at = { c, rw }, nil
+    for _, q in pairs(panes) do q.sel = nil end
     local bytes = vt.mouse(p.screen, "down", "left", c, rw)
-    if bytes then write(p, bytes) end
+    p.reporting = bytes ~= nil
+    if bytes then write(p, bytes) else vt.sel_start(p, rw - p.scroll, c) end
     redraw()
   end
+  -- The pointer in the window while the button is held.
+  box.on_drag = function(pt)
+    local rect = pt and bone.gui.rect(box.id)
+    if not rect then return end
+    local c = math.floor((pt.x - rect.x) / cell.w) + 1
+    local rw = math.floor((pt.y - rect.y) / cell.h) + 1
+    if p.reporting then
+      c, rw = clamp(c, rw)
+      if p.drag_at and p.drag_at[1] == c and p.drag_at[2] == rw then return end
+      p.drag_at = { c, rw }
+      local bytes = vt.mouse(p.screen, "drag", "left", c, rw)
+      if bytes then write(p, bytes) end
+    elseif p.sel then
+      -- Past the top scrolls back, past the bottom forward again.
+      local max = p.screen and p.screen.max or 0
+      if rw < 1 then p.scroll = math.min(max, p.scroll + 1)
+      elseif rw > r.h and p.scroll > 0 then p.scroll = p.scroll - 1 end
+      c, rw = clamp(c, rw)
+      p.sel.b = { rw - p.scroll, c }
+      redraw()
+    end
+  end
   box.on_release = function(pt)
-    local c, rw = at_cell(pt)
-    if not pt and p.press_at then c, rw = p.press_at[1], p.press_at[2] end
-    local bytes = vt.mouse(p.screen, "up", "left", c, rw)
-    if bytes then write(p, bytes) end
+    if p.reporting then
+      local c, rw = at_cell(pt)
+      if p.drag_at then c, rw = p.drag_at[1], p.drag_at[2]
+      elseif not pt and p.press_at then c, rw = p.press_at[1], p.press_at[2] end
+      local bytes = vt.mouse(p.screen, "up", "left", c, rw)
+      if bytes then write(p, bytes) end
+    else
+      vt.sel_finish(p)
+    end
+    p.reporting, p.drag_at = false, nil
+    redraw()
   end
   box.on_scroll = function(dy)
     local up = (dy or 0) > 0

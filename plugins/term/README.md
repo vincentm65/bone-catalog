@@ -32,8 +32,16 @@ While the terminal has the keyboard, with no prefix:
 
 The mouse: a click focuses a pane, a divider drags, a tab is a click away
 (middle click closes it, **+** opens one; × on a tab in the desktop app). A
-program that asks for the mouse (vim, htop) gets clicks and the wheel. Paste
-goes to the focused pane, bracketed when the program asks.
+program that asks for the mouse (vim, htop) gets clicks, drags and the wheel.
+Paste goes to the focused pane, line breaks typed as enter, bracketed when the
+program asks.
+
+In the desktop app panes are drawn on a grid of character cells: wide
+characters, emoji and icons keep their columns, and colored cells fill them
+edge to edge. Where the program does not take the mouse, a drag selects text
+(a double click a word, a triple click a line; past the top it scrolls back)
+and releasing copies it. **ctrl+c** while a selection is shown copies it again
+and clears it; with none, ctrl+c goes to the program.
 
 With the **windows** plugin loaded, the terminal is a window of its own beside
 the chats (in both frontends): moved, resized, zoomed and closed like any other,
