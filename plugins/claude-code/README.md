@@ -17,9 +17,10 @@ bone.config.providers.claude_code = {
   type = "claude_code",
   model = "claude-haiku-5-5", -- use an exact model ID for predictable caching
   reasoning_effort = "low",
-  timeout_ms = 120000,
-  max_budget_usd = 0.5,      -- CLI allowance per model invocation
-  max_turn_budget_usd = 1,  -- stop further invocations after accumulated turn usage
+  timeout_ms = 600000,       -- per model invocation (default 10 min)
+  -- Budgets are off by default (subscription usage, list-price estimates).
+  -- max_budget_usd = 0.5,     -- CLI allowance per invocation; the CLI SHOWS this to the model
+  -- max_turn_budget_usd = 5,  -- Bone-side: stop further invocations once the turn's estimate passes this
   -- executable = "/path/to/claude",
 }
 -- Select only when you want Claude to handle subsequent turns:
@@ -38,14 +39,24 @@ Resumption temporarily persists CLI transcripts in the normal Claude config's `p
 
 `lua/call` with `{ "name": "claude-code.usage", "session_id": "…" }` returns the latest CLI call's uncached input, cache-read, cache-write, output, incremental list-price estimate, accumulated turn estimate, whether it resumed, and the number of appended messages. `model_usage` and `cli_session_cost_usd` are CLI-session cumulative; the adapter subtracts prior cumulative cost for budget tracking. Bone's usual `usage.cached_tokens` receives cache-read tokens; total input includes read and write tokens. `usage.context_tokens` is the last real assistant model call's input (including cache reads/writes), not the sum across CLI internal calls. Updated Bone builds use this for `curr`; aggregate input remains available for consumption totals.
 
-Budget figures are CLI list-price estimates, **not a promise about subscription quota or a hard prepaid limit**. A request can cross a budget threshold before the CLI notices; the turn guard stops subsequent invocations. Tool loops consume more than one model invocation. Errors, rate limits and timeouts are not automatically retried by this plugin (other user-installed request-error hooks may retry).
+Both budgets are off unless configured. `max_budget_usd` becomes the CLI's `--max-budget-usd`, which the CLI also puts in the model's context (`USD budget: $0/$0.5; $0.5 remaining`); models then ration work or stop early, so only set it when you want a hard cap. `max_turn_budget_usd` is enforced by Bone between invocations and is not shown to the model. Budget figures are CLI list-price estimates, **not a promise about subscription quota or a hard prepaid limit**. A request can cross a budget threshold before the CLI notices; the turn guard stops subsequent invocations. Tool loops consume more than one model invocation. Errors, rate limits and timeouts are not automatically retried by this plugin (other user-installed request-error hooks may retry).
+
+## Turn-ending guard (1.2.1)
+
+The system preamble now spells out the ending rules: an empty `tool_calls` array ends the
+turn, so a reply that announces further work must carry the matching tool calls. If a reply
+still arrives with no tool calls but text that reads as unfinished — a plan, "let me know",
+a trailing "now." — the adapter resumes the CLI session once and tells the model to continue
+or to finish explicitly. Set `continuation_nudge = false` in the provider entry to disable
+the extra invocation. In Bone's self-benchmarks this removed every premature turn-end on
+multi-minute debugging tasks (8/12 to 11/12 passes with haiku on reverted real bugs).
 
 ## Tests
 
 ```sh
 # Real Bone server, fake CLI: no model tokens consumed
 python3 tests/claude_code_test.py
-for s in malformed unknown-tool too-many-tools object-tool-calls timeout turn-budget growth reset; do
+for s in no-budget malformed unknown-tool too-many-tools object-tool-calls timeout turn-budget growth reset; do
   python3 tests/claude_code_test.py --scenario "$s"
 done
 

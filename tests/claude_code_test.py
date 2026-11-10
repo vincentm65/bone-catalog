@@ -14,7 +14,7 @@ import tempfile
 p = argparse.ArgumentParser()
 p.add_argument('--live', action='store_true')
 p.add_argument('--scenario', choices=['happy', 'malformed', 'unknown-tool', 'too-many-tools',
-                                       'object-tool-calls', 'timeout', 'turn-budget', 'growth', 'reset'], default='happy')
+                                       'object-tool-calls', 'timeout', 'turn-budget', 'growth', 'reset', 'no-budget'], default='happy')
 a = p.parse_args()
 if a.live and a.scenario not in ('happy', 'growth'):
     p.error('--live is only supported for bounded happy/growth paths')
@@ -45,7 +45,11 @@ assert 'ANTHROPIC_API_KEY' not in __import__('os').environ
 assert args[args.index('--model') + 1] == 'claude-haiku-5-5'
 prior = __import__('pathlib').Path('mock-cumulative-cost')
 previous_cost = float(prior.read_text()) if '--resume' in args and prior.exists() else 0
-assert abs(float(args[args.index('--max-budget-usd') + 1]) - previous_cost - 0.12) < 1e-9 or scenario == 'turn-budget'
+if scenario == 'no-budget':
+    # The CLI shows this limit to the model, which then rations or quits early.
+    assert '--max-budget-usd' not in args
+else:
+    assert abs(float(args[args.index('--max-budget-usd') + 1]) - previous_cost - 0.12) < 1e-9 or scenario == 'turn-budget'
 schema = json.loads(args[args.index('--json-schema') + 1])
 history = json.loads(sys.stdin.read().split('\\n', 1)[1])
 if '--resume' in args:
@@ -161,6 +165,8 @@ bone.hook('context', function(ev)
   return { messages = ev.messages }
 end)
 '''
+    if a.scenario == 'no-budget':
+        setup = setup.replace(" max_budget_usd = 0.12,", "").replace(" max_turn_budget_usd = TURN_BUDGET,", "")
     setup = setup.replace('TIMEOUT', '100' if a.scenario == 'timeout' else '90000')
     setup = setup.replace('TURN_BUDGET', '0.0005' if a.scenario == 'turn-budget' else '1')
     setup = setup.replace('EXECUTABLE', json.dumps('claude' if a.live else str(fake))).replace('SYSTEM', json.dumps("You are a test assistant; don't do anything beyond the requested small test.\n" + padding))
@@ -256,7 +262,7 @@ end)
                 assert rewarmed['resumed'] is True and rewarmed['sent_messages'] == 1, rewarmed
             assert len(calls_log.read_text().splitlines()) == 8
             print('PASS: history-prefix and system-prompt resets in independent sessions', flush=True)
-        elif a.scenario != 'happy':
+        elif a.scenario not in ('happy', 'no-budget'):
             expected_error = {
                 'malformed': 'claude-code: invalid CLI stream',
                 'unknown-tool': 'claude-code: invalid tool request',
