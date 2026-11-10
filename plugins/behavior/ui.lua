@@ -32,14 +32,40 @@ local FIELDS = {
     desc = "Ask first on ambiguity, or proceed on stated assumptions." },
   { key = "read_before_edit", label = "Read before edit", type = "boolean", default = false,
     desc = "Refuse edit_file on files the model has not read this turn." },
+  { key = "custom", label = "Custom rules", type = "string", default = "",
+    desc = "Your own working-style rules, one per line or ;-separated; `/behavior add <rule>` appends one." },
 }
 
 bone.settings.page({ name = "behavior", title = "Behavior", fields = FIELDS })
 
 bone.cmd.create("behavior", function(c)
-  local knob, value = c.args:match("^(%S+)%s+(%S+)$")
+  local knob, value = c.args:match("^(%S+)%s+(.+)$")
+  if value then value = value:match("^%s*(.-)%s*$") end
   if not knob then
-    return require("bone.config").open("behavior")
+    if c.args:match("^%s*clear%s*$") then knob, value = "clear", "" else
+      return require("bone.config").open("behavior")
+    end
+  end
+  if knob == "add" or knob == "clear" then
+    -- /behavior add <rule>: append a custom rule; /behavior clear: drop them.
+    local now = bone.settings.get("behavior.custom")
+    local next_
+    if knob == "clear" then
+      next_ = ""
+    else
+      if not value or value == "" then
+        return bone.notify("usage: /behavior add <rule text>", "error")
+      end
+      now = type(now) == "string" and now or ""
+      next_ = now == "" and value or (now .. "\n" .. value)
+    end
+    return bone.settings.set("behavior.custom", next_, function(_, err)
+      if err then
+        return bone.notify("behavior: " .. tostring(err), "error")
+      end
+      bone.notify(knob == "clear" and "behavior: custom rules cleared"
+        or ("behavior: added rule — " .. value))
+    end)
   end
   local known
   for _, f in ipairs(FIELDS) do
@@ -54,15 +80,18 @@ bone.cmd.create("behavior", function(c)
   elseif known.type == "boolean" then
     if value == "on" or value == "true" then v = true end
     if value == "off" or value == "false" then v = false end
-  else
-    for _, choice in ipairs(known.choices or {}) do
+  elseif known.choices then
+    for _, choice in ipairs(known.choices) do
       if value == choice then v = value end
     end
+  else
+    v = value
   end
   if v == nil then
     local usage = known.type == "integer" and "N"
       or known.type == "boolean" and "on|off"
-      or table.concat(known.choices, "|")
+      or (known.choices and table.concat(known.choices, "|"))
+      or "<text>"
     return bone.notify("usage: /behavior " .. knob .. " " .. usage, "error")
   end
   bone.settings.set("behavior." .. knob, v, function(_, err)
@@ -74,7 +103,8 @@ bone.cmd.create("behavior", function(c)
 end, {
   desc = "behavior knobs: narration, discipline levels, tone, conciseness (behavior plugin)",
   complete = function()
-    local out = {}
+    local out = { { value = "add", desc = "append a custom rule: /behavior add <rule text>" },
+      { value = "clear", desc = "remove every custom rule added from the app" } }
     for _, f in ipairs(FIELDS) do
       out[#out + 1] = { value = f.key, desc = f.desc }
     end

@@ -13,7 +13,12 @@
 --     comments = "normal",        -- none | sparse | normal
 --     autonomy = "normal",        -- careful | normal | high
 --     read_before_edit = false,   -- refuse edit_file on files not read this turn
+--     custom = { "Always run clippy after Rust edits" },  -- your own rules
 --   }
+--
+-- Custom rules also come from the app: the /behavior page's "Custom rules"
+-- field (one per line or ;-separated) and `/behavior add <rule>`. Rules from
+-- core.lua and the app are combined.
 --
 -- Everything defaults to off (the neutral level): installed, the plugin does
 -- nothing until a knob is raised. App choices (settings.json, the /behavior
@@ -144,6 +149,24 @@ local function conf()
     and bone.settings.get("behavior.final_format") then
     out.conciseness = "concise"
   end
+  -- Custom rules are additive: core.lua's and the app's combine.
+  out.custom = {}
+  local seen_rule = {}
+  local function add(v)
+    if type(v) == "string" then
+      for line in v:gmatch("[^\n;]+") do
+        line = line:match("^%s*(.-)%s*$")
+        if line ~= "" and not seen_rule[line] then
+          seen_rule[line] = true
+          out.custom[#out.custom + 1] = line
+        end
+      end
+    elseif type(v) == "table" then
+      for _, s in ipairs(v) do add(s) end
+    end
+  end
+  add(c.custom)
+  add(bone.settings.get("behavior.custom"))
   return out
 end
 
@@ -161,6 +184,9 @@ bone.hook("system", function(ev)
     if rule then
       rules[#rules + 1] = rule
     end
+  end
+  for _, rule in ipairs(c.custom) do
+    rules[#rules + 1] = rule
   end
   if #rules == 0 then
     return

@@ -48,6 +48,17 @@ Each level strengthens the rule: `verify = "light"` asks for cheap proof,
 0.2.0 booleans still work (true = standard, false = off; `minimal_diffs` and
 `no_unrequested_files` fold into `scope`, `final_format` into `conciseness`).
 
+## Custom rules
+
+Add your own working-style rules; they join the contract after the built-in
+knobs. Three ways, combined and deduplicated:
+
+- `/behavior add Always run clippy after Rust edits` appends one from the prompt;
+- the "Custom rules" field on the `/behavior` page (one per line or `;`-separated);
+- a list in core.lua: `bone.config.behavior.custom = { "..." }`.
+
+`/behavior clear` removes the app-added ones (core.lua rules stay yours).
+
 `read_before_edit` is off by default because models legitimately read files
 through the shell (grep, cat); only `read_file`/`write_file` count as having
 seen a file, so strict mode can nag. Turn it on if you want the guarantee.
