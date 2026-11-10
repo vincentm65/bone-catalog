@@ -10,11 +10,9 @@
 --     verify = "off",             -- off | light | standard | strict (standard+ stamps
 --                                 --   unverified finals mechanically)
 --     scope = "off",              -- off | light | standard | strict
---     tone = "plain",             -- plain | friendly | dry | formal
 --     conciseness = "normal",     -- chatty | normal | concise | terse
 --     detail = "medium",          -- low | medium | high
 --     comments = "normal",        -- none | sparse | normal
---     autonomy = "normal",        -- careful | normal | high
 --     read_before_edit = false,   -- refuse edit_file on files not read this turn
 --     custom = { "..." },         -- your own rules
 --     models = {                  -- per-model overrides, matched against the
@@ -36,11 +34,9 @@ local defaults = {
   ending = "off",
   verify = "off",
   scope = "off",
-  tone = "plain",
   conciseness = "normal",
   detail = "medium",
   comments = "normal",
-  autonomy = "normal",
   read_before_edit = false,
 }
 
@@ -70,11 +66,6 @@ local RULES = {
       .. " the point, and no new files nobody asked for. If you must touch a file beyond the"
       .. " obvious ones, name it in your final message with a one-line reason.",
   },
-  tone = {
-    friendly = "Write warmly and conversationally.",
-    dry = "Keep a dry, matter-of-fact voice: no enthusiasm, no apologies, no filler.",
-    formal = "Write formally and precisely.",
-  },
   conciseness = {
     chatty = "Explain as you go; thoroughness beats brevity.",
     concise = "Keep every message short. Final message: lead with what changed and what proved"
@@ -91,12 +82,6 @@ local RULES = {
     none = "Write no code comments unless the code is genuinely non-obvious.",
     sparse = "Comment only what the code cannot say: constraints, invariants and whys — never"
       .. " what the next line does.",
-  },
-  autonomy = {
-    careful = "When a decision is ambiguous or hard to reverse, stop and ask the user before"
-      .. " acting on it.",
-    high = "Proceed on reasonable assumptions without asking, and state each assumption in one"
-      .. " line. Ask only when a wrong guess would destroy work or data.",
   },
 }
 
@@ -233,8 +218,8 @@ bone.hook("system", function(ev)
       .. " short line saying what you are doing or what you found. Never run long stretches of"
       .. " tools in silence."
   end
-  for _, field in ipairs({ "ending", "verify", "scope", "tone", "conciseness", "detail",
-    "comments", "autonomy" }) do
+  for _, field in ipairs({ "ending", "verify", "scope", "conciseness", "detail",
+    "comments" }) do
     local rule = RULES[field][tostring(c[field])]
     if rule then
       rules[#rules + 1] = rule

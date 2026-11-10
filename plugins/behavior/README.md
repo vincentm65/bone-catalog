@@ -33,11 +33,9 @@ bone.config.behavior = {
   ending = "off",             -- off | light | standard | strict
   verify = "off",             -- off | light | standard | strict
   scope = "off",              -- off | light | standard | strict: diffs stay on task
-  tone = "plain",             -- plain | friendly | dry | formal
   conciseness = "normal",     -- chatty | normal | concise | terse
   detail = "medium",          -- low | medium | high technical detail
   comments = "normal",        -- none | sparse | normal code comments
-  autonomy = "normal",        -- careful | normal | high
   read_before_edit = false,   -- refuse edit_file on files not read this turn
 }
 ```
@@ -58,6 +56,10 @@ knobs. Three ways, combined and deduplicated:
 - a list in core.lua: `bone.config.behavior.custom = { "..." }`.
 
 `/behavior clear` removes the app-added ones (core.lua rules stay yours).
+
+Dropped in 0.5.1 after per-knob measurement showed no effect: `tone` and
+`autonomy`. Both are one custom rule away if you want them (`/behavior add
+keep a dry voice, no filler`). Saved settings for the old keys are ignored.
 
 `read_before_edit` is off by default because models legitimately read files
 through the shell (grep, cat); only `read_file`/`write_file` count as having

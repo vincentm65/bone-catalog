@@ -1,7 +1,7 @@
 -- behavior, frontend side (TUI and GUI):
 --   /behavior                 open the knobs as a settings page
 --   /behavior <knob> <value>  set one directly: /behavior narrate_every 4,
---                             /behavior verify strict, /behavior tone dry
+--                             /behavior verify strict, /behavior detail high
 
 local FIELDS = {
   { header = "Discipline" },
@@ -23,9 +23,6 @@ local FIELDS = {
   { key = "read_before_edit", label = "Read before edit", type = "boolean", default = false,
     desc = "Refuse edit_file on files not read this turn (shell reads do not count)." },
   { header = "Voice" },
-  { key = "tone", label = "Tone", type = "string", default = "plain",
-    choices = { "plain", "friendly", "dry", "formal" },
-    desc = "Everything written to the user: plain, friendly, dry (no enthusiasm or filler), or formal." },
   { key = "conciseness", label = "Conciseness", type = "string", default = "normal",
     choices = { "chatty", "normal", "concise", "terse" },
     desc = "chatty: explain as you go · concise: six-line finals, outcome first · terse: three lines, minimum words." },
@@ -35,9 +32,6 @@ local FIELDS = {
   { key = "comments", label = "Code comments", type = "string", default = "normal",
     choices = { "none", "sparse", "normal" },
     desc = "none: only the truly non-obvious · sparse: constraints and whys, never what the next line does." },
-  { key = "autonomy", label = "Autonomy", type = "string", default = "normal",
-    choices = { "careful", "normal", "high" },
-    desc = "careful: ask before ambiguous or hard-to-reverse actions · high: proceed on stated assumptions." },
   { header = "Custom" },
   { key = "custom", label = "Custom rules", type = "string", default = "",
     desc = "Your own rules, one per line or ;-separated; /behavior add <rule> appends one, /behavior clear removes them." },
@@ -50,7 +44,7 @@ bone.settings.page({ name = "behavior", title = "Behavior", fields = FIELDS })
 local PRESETS = {
   reviewer = { verify = "strict", scope = "strict", detail = "high", ending = "standard" },
   pair = { narrate_every = 3, conciseness = "chatty", detail = "high" },
-  ship = { conciseness = "terse", autonomy = "high", ending = "strict", verify = "standard" },
+  ship = { conciseness = "terse", ending = "strict", verify = "standard" },
 }
 
 local function apply_preset(name)
@@ -155,7 +149,7 @@ bone.cmd.create("behavior", function(c)
     bone.notify("behavior." .. knob .. " = " .. tostring(v))
   end)
 end, {
-  desc = "behavior knobs: narration, discipline levels, tone, conciseness (behavior plugin)",
+  desc = "behavior knobs: narration, discipline levels, conciseness (behavior plugin)",
   complete = function()
     local out = { { value = "add", desc = "append a custom rule: /behavior add <rule text>" },
       { value = "clear", desc = "remove every custom rule added from the app" },
