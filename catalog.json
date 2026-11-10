@@ -65,7 +65,7 @@
     "name": "behavior",
     "title": "Behavior",
     "kind": "plugin",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "description": "Tunable knobs for how the model works: narration while it uses tools, turn-ending discipline, verification, diff scope and final-answer format",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -84,11 +84,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "b1c97ddc87c72935b168371cafa7e53874a3fb1545569cf688611a31ff41b6b3"
+        "sha256": "6795d51bc2f0eccc617e23580bba3071ddeb9c486e3c15efc6bf64f5bc3249c8"
       },
       {
         "path": "ui.lua",
-        "sha256": "96d31f34e630269d57f298fd632c481acdf5438b9bd4c422a1c80a4a4d438915"
+        "sha256": "616447ef6549dff95a67f0a0c7a20286e08eff4822a91fd664c353d2f3a89109"
       }
     ]
   },
