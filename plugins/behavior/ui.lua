@@ -7,6 +7,10 @@ local FIELDS = {
   { header = "Discipline" },
   { key = "narrate_every", label = "Narration nudge", type = "integer", default = 0, min = 0, max = 50,
     desc = "Remind the model to say something after this many silent tool calls; the note repeats until it does (0 = off)." },
+  { key = "max_tool_calls", label = "Turn budget", type = "integer", default = 0, min = 0, max = 200,
+    desc = "Past this many tool calls in one turn, tell the model to wrap up or summarize state (0 = off)." },
+  { key = "repeat_guard", label = "Repeat guard", type = "integer", default = 0, min = 0, max = 20,
+    desc = "After this many identical failing commands in a row, tell the model to change approach (0 = off)." },
   { key = "ending", label = "Ending", type = "string", default = "off",
     choices = { "off", "light", "standard", "strict" },
     desc = "light: prefer acting over announcing · standard: never end on a plan · strict: re-read the final reply for unexecuted work." },
@@ -41,13 +45,60 @@ local FIELDS = {
 
 bone.settings.page({ name = "behavior", title = "Behavior", fields = FIELDS })
 
+-- Presets: one command flips a whole board of knobs (saved as settings, so
+-- the page shows them and `/behavior preset off` resets them all).
+local PRESETS = {
+  reviewer = { verify = "strict", scope = "strict", detail = "high", ending = "standard" },
+  pair = { narrate_every = 3, conciseness = "chatty", detail = "high" },
+  ship = { conciseness = "terse", autonomy = "high", ending = "strict", verify = "standard" },
+}
+
+local function apply_preset(name)
+  if name == "off" then
+    for _, f in ipairs(FIELDS) do
+      if f.key then bone.settings.reset("behavior." .. f.key) end
+    end
+    return bone.notify("behavior: every knob reset to its default")
+  end
+  local preset = PRESETS[name]
+  if not preset then
+    local names = { "off" }
+    for n in pairs(PRESETS) do names[#names + 1] = n end
+    table.sort(names)
+    return bone.notify("behavior: no preset " .. name .. " (" .. table.concat(names, ", ") .. ")", "error")
+  end
+  local parts = {}
+  for k, v in pairs(preset) do
+    bone.settings.set("behavior." .. k, v)
+    parts[#parts + 1] = k .. "=" .. tostring(v)
+  end
+  table.sort(parts)
+  bone.notify("behavior preset " .. name .. ": " .. table.concat(parts, ", "))
+end
+
 bone.cmd.create("behavior", function(c)
   local knob, value = c.args:match("^(%S+)%s+(.+)$")
   if value then value = value:match("^%s*(.-)%s*$") end
   if not knob then
-    if c.args:match("^%s*clear%s*$") then knob, value = "clear", "" else
+    local bare = c.args:match("^%s*(%S*)%s*$")
+    if bare == "clear" then knob, value = "clear", ""
+    elseif bare == "stats" then
+      return bone.rpc.call("behavior.stats", {}, function(r, err)
+        if err or type(r) ~= "table" then
+          return bone.notify("behavior: " .. tostring(err or "no stats"), "error")
+        end
+        local st = r.stats or {}
+        bone.notify(("behavior (%s): %d narration nudges, %d budget notes, %d repeat notes, "
+          .. "%d unverified stamps, longest silent streak %d")
+          :format(r.model or "?", st.nudges or 0, st.budget or 0, st.repeats or 0,
+            st.stamps or 0, st.max_streak or 0))
+      end)
+    else
       return require("bone.config").open("behavior")
     end
+  end
+  if knob == "preset" then
+    return apply_preset(value or "")
   end
   if knob == "add" or knob == "clear" then
     -- /behavior add <rule>: append a custom rule; /behavior clear: drop them.
@@ -107,7 +158,9 @@ end, {
   desc = "behavior knobs: narration, discipline levels, tone, conciseness (behavior plugin)",
   complete = function()
     local out = { { value = "add", desc = "append a custom rule: /behavior add <rule text>" },
-      { value = "clear", desc = "remove every custom rule added from the app" } }
+      { value = "clear", desc = "remove every custom rule added from the app" },
+      { value = "preset", desc = "apply a bundle: reviewer, pair, ship, or off to reset all" },
+      { value = "stats", desc = "what the plugin did this session (nudges, stamps, streaks)" } }
     for _, f in ipairs(FIELDS) do
       if f.key then
         out[#out + 1] = { value = f.key, desc = f.desc }
