@@ -1,6 +1,6 @@
 {
   "title": "Behavior",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Tunable knobs for how the model works: narration while it uses tools, turn-ending discipline, verification, diff scope and final-answer format",
   "capabilities": ["hook", "command", "ui"],
   "min_bone_version": "3.0.4"
