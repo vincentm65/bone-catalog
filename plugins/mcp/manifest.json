@@ -1,1 +1,43 @@
-{"title": "MCP", "version": "1.3.1", "description": "Manage MCP servers: add, sign in (OAuth), reconnect and browse tools", "capabilities": ["mcp", "ui", "command"],"min_bone_version":"3.0.4"}
+{
+  "title": "MCP",
+  "version": "1.4.0",
+  "description": "Manage MCP servers: add, sign in (OAuth), browse tools, turn them on and off, and load them on demand",
+  "capabilities": [
+    "mcp",
+    "ui",
+    "command",
+    "tool",
+    "hook"
+  ],
+  "min_bone_version": "3.0.4",
+  "settings": [
+    {
+      "key": "on_demand",
+      "label": "Load tools on demand",
+      "type": "string",
+      "choices": [
+        "auto",
+        "on",
+        "off"
+      ],
+      "default": "auto",
+      "desc": "Give the model a tool search in place of every MCP tool definition: auto does when they pass the size below"
+    },
+    {
+      "key": "on_demand_above",
+      "label": "On demand above (tokens)",
+      "type": "integer",
+      "default": 2000,
+      "min": 0,
+      "desc": "With auto, the size of the MCP tool definitions past which they load on demand"
+    },
+    {
+      "key": "max_output",
+      "label": "Longest tool result (bytes)",
+      "type": "integer",
+      "default": 40000,
+      "min": 0,
+      "desc": "A longer MCP result reaches the model as its start and end, the rest in a file; 0 for no limit"
+    }
+  ]
+}
