@@ -62,6 +62,31 @@
     ]
   },
   {
+    "name": "behavior",
+    "title": "Behavior",
+    "kind": "plugin",
+    "version": "0.1.0",
+    "description": "Tunable knobs for how the model works: narration while it uses tools, turn-ending discipline, verification, diff scope and final-answer format",
+    "min_bone_version": "3.0.4",
+    "capabilities": [
+      "hook"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "782c92ad0777bc62f9e852647c3ed321bda432f6f2a3bdc2c7c5591f50781956"
+      },
+      {
+        "path": "core.lua",
+        "sha256": "207e23a16172416dd329ef4f74cfc5df7b996f690cd0b881576dd3f82c8633f6"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "fb3c8e05273627afd5a614ce85436f44fd20359b59df0585578780bff5faaedd"
+      }
+    ]
+  },
+  {
     "name": "claude-code",
     "title": "Claude Code",
     "kind": "plugin",
