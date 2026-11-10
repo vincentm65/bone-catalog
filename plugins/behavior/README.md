@@ -13,6 +13,13 @@ With it, every N-th silent tool result carries a reminder to say one short
 line about what it is doing — the same trick the todo plugin uses for stale
 checklists, so it costs nothing until it is needed.
 
+## /behavior
+
+`/behavior` opens the knobs as a native settings page, in the terminal and the
+desktop app alike (values persist in `settings.json` and beat `core.lua`).
+`/behavior <knob> <value>` sets one directly, with completion:
+`/behavior narrate_every 4`, `/behavior verify off`.
+
 ## Configuration
 
 ```lua

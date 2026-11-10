@@ -22,10 +22,19 @@ local defaults = {
 }
 
 local function conf()
+  -- Precedence follows bone's convention: choices made in the app
+  -- (settings.json, the /behavior page) beat core.lua, which beats defaults.
   local c = bone.config.behavior or {}
   local out = {}
   for k, v in pairs(defaults) do
-    if c[k] == nil then out[k] = v else out[k] = c[k] end
+    local s = bone.settings.get("behavior." .. k)
+    if s ~= nil then
+      out[k] = s
+    elseif c[k] ~= nil then
+      out[k] = c[k]
+    else
+      out[k] = v
+    end
   end
   return out
 end
