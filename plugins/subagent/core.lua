@@ -261,11 +261,14 @@ end)
 bone.hook("request_error", function(ev)
   local c = child_of(ev.session_id)
   if not (c and c.override) then return end
-  local what = c.override.provider or c.override.model
+  local o = c.override
+  local what = o.model and ((o.provider and (o.provider .. "/") or "") .. o.model) or o.provider
   c.override = nil
   local fallback = spec_for(c).provider or bone.config.provider
   if not fallback then return end
-  c.note = what .. " failed (" .. tostring(ev.error):sub(1, 120) .. "); used " .. fallback
+  local why = tostring(ev.error)
+  if #why > 160 then why = why:sub(1, 160):gsub("%s*%S*$", "") .. "…" end
+  c.note = what .. " failed (" .. why .. "); used " .. fallback
   return { retry = 0, provider = fallback }
 end)
 
