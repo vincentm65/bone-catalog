@@ -251,8 +251,8 @@
     "name": "files",
     "title": "Files",
     "kind": "plugin",
-    "version": "3.6.2",
-    "description": "A file explorer, a file viewer and a text editor in one right-docked sidebar, in the terminal and the desktop app: a folder tree that marks what the agent changed, Git's own markers, search through the folder, and an editor that will not write over a file someone else changed",
+    "version": "3.8.0",
+    "description": "A file manager, a file viewer, a text editor and a CSV table in one docked sidebar, in the terminal and the desktop app: a folder tree kept up to date as files change, copy, move, Trash and undo for several files at once, Git's own markers and what the agent changed, search through the folder, and an editor that will not write over a file someone else changed",
     "min_bone_version": "3.0.4",
     "capabilities": [
       "command",
@@ -264,7 +264,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "1351462e985abd461d716d1c9ca5f4faa7dc217473ad7dd28aec269afd8598db"
+        "sha256": "d5230f9292069069f36c2688a313213191dcc2826e5451e8494d615d46e03c90"
       },
       {
         "path": "core.lua",
@@ -276,15 +276,19 @@
       },
       {
         "path": "lua/files/clip.lua",
-        "sha256": "0529188b002379c20355c91e726ccb527a79fd0863231e98c10c8989f93ff55e"
+        "sha256": "3eb403e3efcc1ec08a0d2402687abd94427dff35832291f855cbee0a8f4bb6ed"
+      },
+      {
+        "path": "lua/files/csv.lua",
+        "sha256": "d8daa832d3385e35812727eb270f204f4297027279ce6be89cffe38d32506e71"
       },
       {
         "path": "lua/files/diff.lua",
-        "sha256": "02a77ff8509ba1c0cebfd0e30d2b55ff341998b37389e2243a4f9bbcd59b25d8"
+        "sha256": "f680d46b733f6742dcfbb1402640f237edf8a07dde8cb9b57d85d6655d6408f5"
       },
       {
         "path": "lua/files/extedit.lua",
-        "sha256": "f5edd1a654d483e2a08120ea26608516e2f55415d116d177adf85d4b221378a1"
+        "sha256": "12520df6d6c8e6211f7c74e3e741eb49f43bf60a2c1a4075088f1b792337bd90"
       },
       {
         "path": "lua/files/ffmpeg.lua",
@@ -316,15 +320,23 @@
       },
       {
         "path": "lua/files/look.lua",
-        "sha256": "e7d7f24e1d7c717f8a2daf312c280d7ba773244e37fbca14264533bfbd9829d7"
+        "sha256": "23d67725d3097830c7a52c609d1e71c4378dcf1e1d1e538c646d79bc3217a22e"
       },
       {
         "path": "lua/files/media.lua",
-        "sha256": "0197938c35da3869d602611bb3692634fdd44b05f2f1b17f3f7ab8054d950b0a"
+        "sha256": "ef843fa949a059e72bf2d87fd050346fbf8c0e7e4743d95c91f91dfe6c4a88e4"
       },
       {
         "path": "lua/files/mesh.lua",
         "sha256": "ad1a496eb334c64ecd84fde7eed8f144d8c01e280b388ecf527c7eb6f9a7a62a"
+      },
+      {
+        "path": "lua/files/ops.lua",
+        "sha256": "a6d67d0967a38aca0d7a30e730f68e3631dfa0c4451cb13480cc4ef6ca83d50f"
+      },
+      {
+        "path": "lua/files/page.lua",
+        "sha256": "d407f4029d5f8b065a13ef30ceff667df1da777e70d8498affd458dc77d4e1ba"
       },
       {
         "path": "lua/files/pdf.lua",
@@ -339,6 +351,10 @@
         "sha256": "1550af1dd0643685bde44aef5d1555266723bc6f23916476c30bc3758fb0236d"
       },
       {
+        "path": "lua/files/sheet.lua",
+        "sha256": "e58e19c709d96b78bbe55d6bda105e3302775ab2f0b6a8aa162342090c92f7ce"
+      },
+      {
         "path": "lua/files/syntax.lua",
         "sha256": "b3f82ea74bd67266fc883fb530f04c9a78c2d3abbfc0ec05a3825a40440d4dec"
       },
@@ -348,15 +364,15 @@
       },
       {
         "path": "lua/files/tlook.lua",
-        "sha256": "8bb0c466db93d9e77c9a13e8ab4152e3bf7c0f98e828c1d92436648e2b48fd3c"
+        "sha256": "e855a161feea293cbe1d44027cfd75203fb479bd8e5de2308a527a337fd11f54"
       },
       {
         "path": "manifest.json",
-        "sha256": "762b6c950f40dd2161a2aaff0c40cf343321e3397e2db8e59a9adb84a2bf70cf"
+        "sha256": "4a09b25e6838d5c95dad4c39b34f57822dd6ab33a0b2e9713444856efeae6ca5"
       },
       {
         "path": "ui.lua",
-        "sha256": "0607b403a771b707f7d341d4ba48e971e960be5b5ad7c337cbb2a21923a7feae"
+        "sha256": "e82cd4e05824db6ab22b34f6f0485f6120225b9f8acd958ea795506eb53fad79"
       }
     ]
   },

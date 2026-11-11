@@ -58,6 +58,9 @@ end
 --- b are the line numbers in the old and new version (0 when there is none).
 local function changes(a, b)
   local head, tail = edges(a, b)
+  -- A few of the lines both share stay in the comparison, so a change at
+  -- either end of the changed part has its lines around it too.
+  head, tail = math.max(0, head - M.KEEP), math.max(0, tail - M.KEEP)
   local old, fresh = {}, {}
   for i = head + 1, #a - tail do old[#old + 1] = a[i] end
   for j = head + 1, #b - tail do fresh[#fresh + 1] = b[j] end
@@ -92,60 +95,151 @@ local function changes(a, b)
   return back, head, tail, false
 end
 
---- The diff widget's rows for the two versions: unchanged stretches folded,
---- an overflow row when there are too many changes to show.
-function M.rows(a, b)
-  local out, head, tail, rough = changes(a or {}, b or {})
-  local rows, folded, held = {}, 0, 0
-  local function keep(row)
-    if held >= M.MAX_ROWS then return false end
-    rows[#rows + 1] = row
-    held = held + 1
-    return true
+--- Inside each run of changed lines, the ones taken out first and the ones
+--- put in after them, as a patch reads.
+local function removals_first(out)
+  local sorted, del, add = {}, {}, {}
+  local function flush()
+    for _, r in ipairs(del) do sorted[#sorted + 1] = r end
+    for _, r in ipairs(add) do sorted[#sorted + 1] = r end
+    del, add = {}, {}
   end
-  for index, row in ipairs(out) do
-    if row.sign == " " then
-      local before, after = out[index - 1], out[index + 1]
-      local edge = (not before or before.sign ~= " ") or (not after or after.sign ~= " ")
-      if edge then folded = 0 end
-      if folded < M.KEEP then
-        keep({ sign = " ", text = row.text, old = row.a, new = row.b })
-        folded = folded + 1
-      elseif folded == M.KEEP then
-        keep({ separator = true })
-        folded = folded + 1
-      end
+  for _, r in ipairs(out) do
+    if r.sign == "-" then del[#del + 1] = r
+    elseif r.sign == "+" then add[#add + 1] = r
     else
-      if not keep({ sign = row.sign, text = row.text, old = row.a, new = row.b }) then
-        rows[#rows + 1] = { text = "… and more changes than this can show" }
-        return rows
-      end
+      flush()
+      sorted[#sorted + 1] = r
     end
   end
-  if tail > 0 and #rows > 0 and held < M.MAX_ROWS then
-    keep({ text = string.format("%d unchanged line%s at the end", tail, tail == 1 and "" or "s") })
-  end
-  if rough then
-    rows[#rows + 1] = { text = "the changed part is too big to show line by line" }
-  end
-  if head > 0 and #rows > 0 then
-    table.insert(rows, 1, { text = string.format("%d unchanged line%s at the top", head, head == 1 and "" or "s") })
-  end
-  return rows
+  flush()
+  return sorted
 end
 
---- How the two versions differ, in words: "no changes", or "3 added, 1
---- removed".
-function M.summary(a, b)
-  a, b = a or {}, b or {}
-  local head, tail = edges(a, b)
-  local removed = #a - head - tail
-  local added = #b - head - tail
+local function continuation(byte) return byte and byte >= 128 and byte <= 191 end
+
+--- Where two versions of one line differ: the bytes from..to of each that
+--- are its own (what is before and after is shared), or nil when they share
+--- too little for that to say anything.
+function M.span(old, new)
+  if old == new or old == "" or new == "" then return nil end
+  local on, nn = #old, #new
+  local p = 0
+  while p < on and p < nn and old:byte(p + 1) == new:byte(p + 1) do p = p + 1 end
+  -- Never inside a character.
+  while p > 0 and (continuation(old:byte(p + 1)) or continuation(new:byte(p + 1))) do p = p - 1 end
+  local q = 0
+  while q < on - p and q < nn - p and old:byte(on - q) == new:byte(nn - q) do q = q + 1 end
+  while q > 0 and (continuation(old:byte(on - q + 1)) or continuation(new:byte(nn - q + 1))) do q = q - 1 end
+  -- Indentation alone is not something shared worth showing.
+  local shared = #(old:sub(1, p):gsub("^%s+", "")) + #(old:sub(on - q + 1):gsub("%s+$", ""))
+  if shared < 3 or shared * 3 < math.min(on, nn) then return nil end
+  return { p + 1, on - q }, { p + 1, nn - q }
+end
+
+--- A run of as many lines put in as taken out is the same lines changed:
+--- each pair is marked with the part of it that differs (row.span).
+local function mark_spans(out)
+  local i, n = 1, #out
+  while i <= n do
+    if out[i].sign == "-" then
+      local d0 = i
+      while i <= n and out[i].sign == "-" do i = i + 1 end
+      local a0 = i
+      while i <= n and out[i].sign == "+" do i = i + 1 end
+      local dels, adds = a0 - d0, i - a0
+      if dels == adds and dels <= 40 then
+        for k = 0, dels - 1 do
+          local d, a = out[d0 + k], out[a0 + k]
+          if d.text and a.text then d.span, a.span = M.span(d.text, a.text) end
+        end
+      end
+    else
+      i = i + 1
+    end
+  end
+end
+
+--- "3 added, 1 removed" for a walk of changes.
+local function words(out)
+  local added, removed = 0, 0
+  for _, r in ipairs(out) do
+    if r.sign == "+" then added = added + 1 elseif r.sign == "-" then removed = removed + 1 end
+  end
   if removed == 0 and added == 0 then return "no changes" end
   local parts = {}
   if added > 0 then parts[#parts + 1] = added .. " added" end
   if removed > 0 then parts[#parts + 1] = removed .. " removed" end
   return table.concat(parts, ", ")
+end
+
+--- The diff widget's rows for the two versions: the lines taken out and put
+--- in, M.KEEP unchanged lines on each side of them, the rest folded (a
+--- separator row between two changes, a count at the top and the end), and
+--- an overflow row when there are too many changes to show.
+function M.rows(a, b)
+  local out, head, tail, rough = changes(a or {}, b or {})
+  out = removals_first(out)
+  mark_spans(out)
+  local n = #out
+  -- How far each unchanged line is from the nearest change.
+  local near, last, any = {}, nil, false
+  for i = 1, n do
+    if out[i].sign ~= " " then last, any = i, true end
+    near[i] = last and (i - last) or math.huge
+  end
+  if not any then return {}, "no changes" end
+  last = nil
+  for i = n, 1, -1 do
+    if out[i].sign ~= " " then last = i end
+    if last then near[i] = math.min(near[i], last - i) end
+  end
+  local rows, held, gap, over = {}, 0, 0, false
+  for i = 1, n do
+    local row = out[i]
+    if row.sign ~= " " or near[i] <= M.KEEP then
+      if gap > 0 then
+        if #rows == 0 then
+          head = head + gap
+        elseif gap == 1 then
+          -- One line is not worth folding: a fold takes a row too.
+          local one = out[i - 1]
+          rows[#rows + 1] = { sign = " ", text = one.text, old = one.a, new = one.b }
+          held = held + 1
+        else
+          rows[#rows + 1] = { separator = true, count = gap }
+        end
+        gap = 0
+      end
+      if held >= M.MAX_ROWS then
+        rows[#rows + 1] = { text = "… and more changes than this can show" }
+        over = true
+        break
+      end
+      rows[#rows + 1] = { sign = row.sign, text = row.text, old = row.a, new = row.b, span = row.span }
+      held = held + 1
+    else
+      gap = gap + 1
+    end
+  end
+  tail = tail + gap
+  if tail > 0 and not over then
+    rows[#rows + 1] = { text = string.format("%d unchanged line%s at the end", tail, tail == 1 and "" or "s") }
+  end
+  if rough then
+    rows[#rows + 1] = { text = "the changed part is too big to show line by line" }
+  end
+  if head > 0 then
+    table.insert(rows, 1, { text = string.format("%d unchanged line%s at the top", head, head == 1 and "" or "s") })
+  end
+  return rows, words(out)
+end
+
+--- How the two versions differ, in words: "no changes", or "3 added, 1
+--- removed" — the lines that really went and came, not the size of the part
+--- they sit in.
+function M.summary(a, b)
+  return words((changes(a or {}, b or {})))
 end
 
 return M

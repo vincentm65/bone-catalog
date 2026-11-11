@@ -15,6 +15,9 @@ local text = require("files.text")
 local kinds = require("files.kinds")
 local syntax = require("files.syntax")
 local media = require("files.media")
+local page = require("files.page")
+local sheet = require("files.sheet")
+local csv = require("files.csv")
 local mesh = require("files.mesh")
 
 local app
@@ -414,6 +417,11 @@ local function row_marks(row, path, size, narrow)
   end
 end
 
+-- A row being dragged onto a folder: where the press was, and whether the
+-- pointer has left the row since.
+local rowdrag = nil
+local drag_ended = 0
+
 --- A name with the filter's letters marked.
 local function name_spans(r)
   if not r.hit then return nil end
@@ -432,19 +440,65 @@ local function tree_row(s, i, narrow, focused)
   local open = r.type == "dir" and (s.listing.open[r.path] or r.unfolded)
   local quiet = r.ignored or r.name:sub(1, 1) == "."
   local spans = name_spans(r)
+  local marked = s.listing.marked[r.path]
+  -- The mark, at the row's left edge: a press there marks the row (as space
+  -- does), for the next copy, cut, move or trash.
+  local mark = { width = 12, height = ROW, shrink = 0, direction = "row", align = "center", justify = "center",
+    cursor = "pointer", tooltip = marked and "Marked (space)" or "Mark it (space)",
+    on_click = function() app.mark(i) end,
+    { width = 7, height = 7, radius = 4, bg = marked and C.accent or nil } }
   local node = {
     direction = "row", align = "center", gap = 6, height = ROW, radius = 7,
-    padding = { 0, 8, 0, 4 + r.depth * INDENT },
-    bg = on and (focused and C.selected or C.selected_quiet) or nil,
-    role = "option", selected = on, opacity = r.ignored and 0.55 or nil,
+    padding = { 0, 8, 0, 0 + r.depth * INDENT },
+    -- A folder a drag would drop into is lit; then the row the keys are on.
+    bg = (s.listing.drop_at == i and C.match_bg) or (on and (focused and C.selected or C.selected_quiet))
+      or (marked and C.selected_quiet) or nil,
+    role = "option", selected = on, opacity = (r.ignored or app.act.is_cut(r.path)) and 0.55 or nil,
+    mark,
     r.type == "dir" and chevron(open, on and focused and C.accent or nil) or { width = 12, shrink = 0 },
     r.type == "dir" and folder_icon() or file_icon(r.name),
     { text = (not spans) and r.name or nil, spans = spans, size = SIZE.text, hl = "Normal", wrap = false,
       text_overflow = "ellipsis", grow = 1, width = 0, color = quiet and C.dim or nil },
   }
   if r.ignored then node.tooltip = "kept out by .gitignore" end
+  -- With room for it, when it last changed.
+  if not narrow then
+    local at = app.when(r.modified)
+    if at then
+      node[#node + 1] = { text = at, size = SIZE.micro, color = C.faint, wrap = false, shrink = 0, width = 58, text_align = "right" }
+    end
+  end
   row_marks(node, r.path, r.type == "file" and app.size_of(r.size) or nil, narrow)
-  press(node, function() app.click_row(i) end, r.name)
+  press(node, function()
+    -- The release that ends a drag is not a press on the row.
+    if os.clock() - drag_ended < 0.3 then return end
+    app.click_row(i)
+  end, r.name)
+  -- Held and taken to a folder, the row (or the marked rows) moves there.
+  node.on_press = function(p)
+    local at = app.act.press_at
+    rowdrag = { i = i, y = p and p.y or 0, wy = at and at[2] or nil, moved = false }
+  end
+  node.on_drag = function(q)
+    local d = rowdrag
+    if not d or d.i ~= i or not d.wy or not q then return end
+    local dy = q.y - d.wy
+    local over = i + math.floor((d.y + dy) / (ROW + 1))
+    if over ~= i and math.abs(dy) > 6 then
+      d.moved = true
+      app.act.drag_over(i, over)
+    elseif d.moved then
+      app.act.drag_over(i, i)
+    end
+  end
+  node.on_release = function()
+    local d = rowdrag
+    rowdrag = nil
+    if d and d.moved then
+      drag_ended = os.clock()
+      app.act.drag_done()
+    end
+  end
   node.on_secondary = function(p)
     local info = bone.gui.scroll_info and bone.gui.scroll_info("files:tree")
     local offset = info and info.offset or 0
@@ -1030,13 +1084,21 @@ end
 
 local function diff_view(rows)
   rows = removals_first(rows)
+  -- What the buffer is set against: Git's last commit, or the file as opened.
+  local against = app.act.changes_label()
   if not rows or #rows == 0 then
-    return { padding = { 20, 16 }, { text = "No changes since the file was opened.", size = SIZE.small, color = C.dim } }
+    return { padding = { 20, 16 }, { text = against .. ": no changes.", size = SIZE.small, color = C.dim } }
   end
+  local can_switch = type(app.state().editor.head) == "table" and not app.state().editor.conflict
   return {
     id = "files:diff", grow = 1, padding = { 6, 0 },
-    list = { count = #rows, estimate = LINE, key = "files:diff", item = function(i)
-      local r = rows[i]
+    list = { count = #rows + 1, estimate = LINE, key = "files:diff", item = function(i)
+      -- The first row says what this is compared with.
+      if i == 1 then
+        return { height = LINE, padding = { 0, 16 }, { text = against .. (can_switch and "  ·  b compares with the other" or ""),
+          size = SIZE.micro, color = C.faint, wrap = false } }
+      end
+      local r = rows[i - 1]
       if r.separator then
         return { height = LINE, padding = { 0, 16 }, { text = "⋯", size = SIZE.small, color = C.faint } }
       end
@@ -1185,6 +1247,8 @@ local function doc_bar(s)
     row[#row + 1] = icon_button(bubble(C.faint), "Name the file (or the selected lines) in the message (ctrl+k)",
       function() app.act.editor_to_chat() end)
     local names, modes = { "Edit", "Changes" }, { "buffer", "changes" }
+    -- A CSV file: its table first, its text beside it.
+    if sheet.is(leaf or rel) then names, modes = { "Table", "Edit", "Changes" }, { "table", "buffer", "changes" } end
     local lower_name = (leaf or rel):lower()
     local is_html = lower_name:match("%.html?$") or lower_name:match("%.xhtml$")
     if syntax.lang(leaf or rel) and syntax.lang(leaf or rel).markdown then
@@ -1193,6 +1257,11 @@ local function doc_bar(s)
     elseif is_html then
       names[3], modes[3] = "Split", "split"
       names[4], modes[4] = "Preview", "html"
+      -- With a browser to draw it: the page itself, beside its content read.
+      if page.browser() then
+        names[4] = "Reader"
+        names[5], modes[5] = "Page", "page"
+      end
       row[#row + 1] = small_button({ { text = "Open in browser", size = SIZE.micro, color = C.dim, wrap = false } },
         function() app.open_externally() end, "The page in the desktop's browser, with its styles and scripts")
     end
@@ -1416,6 +1485,17 @@ local function picture(p, width, height, anim)
       end
       local d = bone.gui.draw
       local out = {}
+      -- The frames to come, a point wide under the picture: the window
+      -- reads a picture when it is first drawn, and these are then there
+      -- when they are due.
+      if playing then
+        local n = #anim.frames
+        local i = anim.shown or 1
+        for k = 1, 2 do
+          local nxt = anim.frames[((i - 1 + k) % n) + 1]
+          if nxt then out[#out + 1] = d.image({ x = math.max(0, x), y = math.max(0, y), w = 1, h = 1, path = nxt.path }) end
+        end
+      end
       if alpha then
         local x0, y0 = math.max(0, x), math.max(0, y)
         local x1, y1 = math.min(W, x + iw), math.min(H, y + ih)
@@ -1887,6 +1967,148 @@ end
 --- block an entry of a list (so a link to #somewhere, or the contents, can go
 --- there). `page` names the page (it keeps its place while you type),
 --- `version` its text.
+--- A CSV file as a table (files.sheet): what the column the keys are on adds
+--- up to, the columns' names, and the rows in a list that scrolls, the cell
+--- under the keys lit. A press on a cell puts the keys there, a second one
+--- edits it. Columns are as wide as what they hold; numbers stand right.
+local function sheet_view(s, e, width, height)
+  local t = app.sheet()
+  if t.too_big then
+    return { padding = { 20, 16 }, { text = "This file is too big to lay out as a table. Edit shows its text.",
+      size = SIZE.small, color = C.dim } }
+  end
+  local focused = s.doc_focused and s.keys_here ~= false
+  -- Widths in characters, from the first rows (kept until the text moves).
+  if not t.chars then
+    t.chars = sheet.widths(t, 1, math.min(#t.view, 400), function(v) return bone.text.width(v) end)
+  end
+  local GUT, CH, PAD, H = 44, 7.6, 16, 26
+  local function px(c) return math.floor((t.chars[c] or 4) * CH + PAD) end
+  -- As many columns as fit from t.left, the one the keys are on among them.
+  local room = math.max(160, width - GUT - 16)
+  t.left = math.max(1, math.min(t.left or 1, math.max(1, t.cols)))
+  if t.c < t.left then t.left = t.c end
+  local function last_from(left)
+    local used, c = 0, left
+    while c <= t.cols do
+      if used + px(c) > room and c > left then break end
+      used = used + px(c)
+      c = c + 1
+    end
+    return c - 1
+  end
+  while t.left < t.c and last_from(t.left) < t.c do t.left = t.left + 1 end
+  local last_col = last_from(t.left)
+
+  local function cell(vr, c, value, opts)
+    local here = t.r == vr and t.c == c
+    local node = { width = px(c), height = H, shrink = 0, direction = "row", align = "center", padding = { 0, 8 },
+      bg = here and (focused and C.selected or C.selected_quiet) or nil, radius = here and 5 or nil,
+      cursor = "pointer", role = "button", label = value }
+    if here and t.edit then
+      node.border, node.border_color = 1, C.accent
+      node[1] = { text = t.edit.value .. "▏", size = SIZE.small, hl = "Normal", wrap = false, grow = 1, width = 0,
+        overflow = "hidden", font = "mono" }
+    else
+      local number = vr ~= 0 and value ~= "" and csv.number(value) ~= nil
+      node[1] = { text = (value:gsub("\n", "⏎")), size = SIZE.small, wrap = false, grow = 1, width = 0, text_overflow = "ellipsis",
+        text_align = number and "right" or nil, font = number and "mono" or nil,
+        bold = opts and opts.bold or nil, color = opts and opts.color or nil, hl = (not (opts and opts.color)) and "Normal" or nil }
+    end
+    node.on_click = function() app.cell(vr, c) end
+    return node
+  end
+
+  local col = { direction = "column", grow = 1, gap = 0, padding = { 6, 8, 0, 8 } }
+  col[#col + 1] = { height = 22, shrink = 0, direction = "row", align = "center", padding = { 0, 6 },
+    { text = sheet.status(t), size = SIZE.micro, color = C.faint, wrap = false, text_overflow = "ellipsis", grow = 1, width = 0 },
+    { text = "enter edits · o row · A column · s sort · f filter · u undo", size = SIZE.micro, color = C.faint, wrap = false, shrink = 0 } }
+  if t.filtering or t.filter ~= "" then
+    col[#col + 1] = { height = 24, shrink = 0, direction = "row", align = "center", gap = 6, padding = { 0, 6 },
+      { text = "≡", size = SIZE.small, color = C.accent, shrink = 0 },
+      { text = t.filter .. (t.filtering and "▏" or ""), size = SIZE.small, hl = "Normal", wrap = false },
+      { text = t.filter == "" and "rows that hold…" or (t.filtering and "enter keeps it · esc clears it" or "esc clears it"),
+        size = SIZE.micro, color = C.faint, wrap = false } }
+  end
+  -- The names of the columns.
+  local head = { direction = "row", align = "center", height = H, shrink = 0, { width = GUT, shrink = 0 } }
+  for c = t.left, last_col do
+    local name = sheet.name(t, c)
+    if t.sorted and t.sorted.c == c then name = name .. (t.sorted.desc and " ▼" or " ▲") end
+    head[#head + 1] = cell(0, c, name, { bold = t.header, color = (not t.header) and C.faint or nil })
+  end
+  if last_col < t.cols then
+    head[#head + 1] = { text = "+" .. (t.cols - last_col) .. " →", size = SIZE.micro, color = C.faint, wrap = false, padding = { 0, 6 } }
+  end
+  col[#col + 1] = head
+  col[#col + 1] = { height = 1, bg = C.line, shrink = 0 }
+  if #t.view == 0 then
+    col[#col + 1] = { padding = { 14, 8 }, { text = t.filter ~= "" and "No row holds that." or "No rows yet: o adds one.",
+      size = SIZE.small, color = C.dim } }
+    return col
+  end
+  if t.r > 0 then app.scroll_to("files:sheet", t.r, tostring(e.path) .. "|" .. t.filter) end
+  col[#col + 1] = {
+    id = "files:sheet", grow = 1,
+    list = { count = #t.view, estimate = H, key = "files:sheet:" .. tostring(e.path) .. ":" .. tostring(e.version) .. ":" .. t.filter
+        .. ":" .. t.r .. ":" .. t.c .. ":" .. t.left .. ":" .. tostring(t.edit and t.edit.value) .. tostring(focused),
+      item = function(vr)
+        local data = t.rows[t.view[vr]] or {}
+        local row = { direction = "row", align = "center", height = H, bg = vr == t.r and C.selected_quiet or nil,
+          { text = tostring(vr), width = GUT, shrink = 0, size = SIZE.micro, color = C.faint, font = "mono", text_align = "right",
+            padding = { 0, 10, 0, 0 } } }
+        for c = t.left, last_col do row[#row + 1] = cell(vr, c, data[c] or "") end
+        return row
+      end },
+  }
+  return col
+end
+
+--- A page as the browser draws it (files.page): its picture, as wide as the
+--- pane, in a list that scrolls. Drawn again a moment after the text
+--- changes; the picture before stays until the new one is there.
+local function page_view(e, width)
+  local W = math.max(320, math.min(1400, math.floor(width - 24)))
+  local st = e.page_shot or {}
+  e.page_shot = st
+  local want = tostring(e.version or 0) .. ":" .. W
+  if st.want ~= want then
+    st.want = want
+    st.token = (st.token or 0) + 1
+    local token = st.token
+    bone.defer(st.shot and 350 or 0, function()
+      if st.token ~= token then return end
+      st.loading = true
+      page.render(text.join(e.lines, e.trailing), (e.path:match("^(.*)/") or "."), W, function(shot, why)
+        if st.token ~= token then return end
+        st.loading = false
+        if shot then st.shot, st.error = shot, nil else st.error = why end
+        pcall(bone.gui.invalidate, 0)
+      end)
+    end)
+  end
+  local shot = st.shot
+  if not shot then
+    return { padding = { 20, 16 }, { size = SIZE.small, color = C.dim,
+      text = st.error and ("The page could not be drawn: " .. tostring(st.error) .. ". Reader shows its content.")
+        or "Drawing the page…" } }
+  end
+  local w = math.min(W, shot.width)
+  local h = math.floor(shot.height * w / shot.width)
+  return {
+    id = "files:page", grow = 1,
+    list = { count = shot.cut and 2 or 1, estimate = h + 28, key = "files:page:" .. tostring(e.path), item = function(i)
+      if i == 2 then
+        return { padding = { 4, 16, 24, 16 }, { text = "The page goes on from here: Open in browser shows all of it.",
+          size = SIZE.micro, color = C.faint } }
+      end
+      return { direction = "row", justify = "center", padding = { 12, 0, 16, 0 },
+        { role = "image", label = "the page", width = w, height = h, shrink = 0, radius = 4, overflow = "hidden",
+          image = { path = shot.path, fit = "contain", width = shot.width, height = shot.height } } }
+    end },
+  }
+end
+
 local function html_view(body, page, version, base, width)
   local doc = html_doc(body, page .. ":" .. tostring(version))
   local col_w = math.max(240, math.min(HTML_WIDTH, width - 64))
@@ -2093,9 +2315,25 @@ local function video_view(p, width, height)
     canvas = { fps = playing and media.FPS or 0, draw = function(ctx)
       local d = bone.gui.draw
       local out = {}
-      local frame, pos = nil, p.position or 0
-      if p.clip then frame, pos = media.tick(p, ctx and ctx.time or 0) end
+      local frame, pos, at = nil, p.position or 0, nil
+      if p.clip then frame, pos, at = media.tick(p, ctx and ctx.time or 0) end
       local pic = frame or p.poster
+      -- The window reads a picture the first time it is drawn and paints
+      -- nothing until it has it; a frame drawn once, when it is due, would
+      -- never show. So the frames to come are drawn first, a point wide
+      -- under the picture, to be read ahead; and the frame before stays
+      -- under the one that is due, which covers it once it is there.
+      if frame and at and p.clip then
+        local frames = p.clip.frames
+        for k = 1, 3 do
+          if frames[at + k] then out[#out + 1] = d.image({ x = x0, y = y0, w = 1, h = 1, path = frames[at + k] }) end
+        end
+        local before = p.frame_shown
+        if before and before ~= frame then out[#out + 1] = d.image({ x = x0, y = y0, w = iw, h = ih, path = before }) end
+        if p.frame_due ~= frame then p.frame_shown, p.frame_due = p.frame_due, frame end
+      elseif not frame then
+        p.frame_shown, p.frame_due = nil, nil
+      end
       if pic then out[#out + 1] = d.image({ x = x0, y = y0, w = iw, h = ih, path = pic }) end
       -- The position, along the bottom.
       if dur > 0 then
@@ -2111,7 +2349,12 @@ local function video_view(p, width, height)
       end
       return out
     end } }
-  stage.on_click = function()
+  stage.on_click = function(at)
+    -- Along the bottom, the bar: a press there goes to that moment.
+    if at and dur > 0 and at.y and at.y >= H - 18 then
+      media.seek(p, dur * math.max(0, math.min(1, (at.x or 0) / W)))
+      return
+    end
     if p.playing then media.pause(p) else media.play(p) end
   end
   stage.on_double_click = function() media.open_player(p.path) end
@@ -2263,6 +2506,10 @@ local function doc_column(s, width, height)
       surface[#surface + 1] = diff_view(app.editor_changes())
     elseif e.shown == "markdown" then
       surface[#surface + 1] = markdown_view(text.join(e.lines, e.trailing))
+    elseif e.shown == "table" then
+      surface[#surface + 1] = sheet_view(s, e, width - 18, height)
+    elseif e.shown == "page" then
+      surface[#surface + 1] = page_view(e, width - 18)
     elseif e.shown == "html" then
       surface[#surface + 1] = html_view(text.join(e.lines, e.trailing), e.path, e.version or 0,
         (e.path:match("^(.*)/") or "."), width - 18)
@@ -2439,7 +2686,8 @@ end
 
 --- A menu, at (top, left) in the box it is drawn in.
 menu_card = function(m, room_w, room_h)
-  local w = 236
+  -- A menu of names and values (places, properties) asks for more room.
+  local w = m.width and math.max(236, math.min(m.width * 8, (room_w or 400) - 8)) or 236
   local h = 12
   for _, it in ipairs(m.items) do h = h + (it.separator and 9 or 26) end
   local top = m.top or 0
@@ -2455,7 +2703,8 @@ menu_card = function(m, room_w, room_h)
         bg = on and C.selected or nil, opacity = it.off and 0.45 or nil,
         { text = it.label, size = SIZE.small, color = it.danger and C.bad or nil, hl = (not it.danger) and "Normal" or nil,
           grow = 1, width = 0, wrap = false },
-        it.key and { text = it.key, size = SIZE.micro, color = C.faint, font = "mono", wrap = false, shrink = 0 } or nil,
+        it.key and { text = it.key, size = SIZE.micro, color = C.faint, font = "mono", wrap = false,
+          shrink = 1, text_overflow = "ellipsis" } or nil,
       }
       if it.off then
         row.role = "option"
@@ -2512,10 +2761,18 @@ function M.view(ctx)
   s.room_h = H - 120
   if s.doc then
     local side = math.min(SIDE, math.floor(W * 0.34))
-    body[#body + 1] = doc_column(s, W - side - 1, H - 36)
-    body[#body + 1] = { width = 1, bg = C.line, shrink = 0 }
+    -- The tree on the left and the file on the right, as editors have it
+    -- (the tree_side setting puts it back at the window's edge).
+    if s.tree_left then
+      body[#body + 1] = side_column(s, side, true)
+      body[#body + 1] = { width = 1, bg = C.line, shrink = 0 }
+      body[#body + 1] = doc_column(s, W - side - 1, H - 36)
+    else
+      body[#body + 1] = doc_column(s, W - side - 1, H - 36)
+      body[#body + 1] = { width = 1, bg = C.line, shrink = 0 }
+      body[#body + 1] = side_column(s, side, true)
+    end
     s.room_h = H - 120
-    body[#body + 1] = side_column(s, side, true)
   else
     body[#body + 1] = side_column(s, W, false)
   end

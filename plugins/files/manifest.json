@@ -1,7 +1,7 @@
 {
   "title": "Files",
-  "version": "3.6.2",
-  "description": "A file explorer, a file viewer and a text editor in one right-docked sidebar, in the terminal and the desktop app: a folder tree that marks what the agent changed, Git's own markers, search through the folder, and an editor that will not write over a file someone else changed",
+  "version": "3.8.0",
+  "description": "A file manager, a file viewer, a text editor and a CSV table in one docked sidebar, in the terminal and the desktop app: a folder tree kept up to date as files change, copy, move, Trash and undo for several files at once, Git's own markers and what the agent changed, search through the folder, and an editor that will not write over a file someone else changed",
   "capabilities": [
     "command",
     "ui",
@@ -19,6 +19,17 @@
       "min": 20,
       "max": 80,
       "desc": "The sidebar's share of the window; the editor takes a little more"
+    },
+    {
+      "key": "tree_side",
+      "label": "File tree",
+      "type": "string",
+      "choices": [
+        "left",
+        "right"
+      ],
+      "default": "left",
+      "desc": "With a file open beside it, which side the tree takes: left, as editors have it, or right, at the window's edge"
     },
     {
       "key": "editor",
@@ -39,6 +50,17 @@
       "type": "string",
       "default": "",
       "desc": "With Text editor set to custom: the command, {file} and {line} filled in, e.g. hx {file}:{line} or micro +{line} {file}"
+    },
+    {
+      "key": "html_view",
+      "label": "HTML files open as",
+      "type": "string",
+      "choices": [
+        "page",
+        "reader"
+      ],
+      "default": "page",
+      "desc": "In the desktop app: page, the file drawn by the browser that is installed (Firefox or a Chromium, run without a window, in a profile of its own) with its styles and scripts; reader, its content read by the plugin, which loads nothing from the web until you say so"
     },
     {
       "key": "preview_limit",

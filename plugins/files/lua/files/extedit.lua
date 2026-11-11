@@ -60,9 +60,11 @@ function M.running()
   return job ~= nil and job:running() and bone.ui.panel.get(M.PANEL) ~= nil
 end
 
---- Open `path` at `line` in the editor. `done()` runs once the program has
---- ended (its panel closed). Returns true, or nil and why it could not.
-function M.open(kind, custom, path, line, done)
+--- Open `path` at `line` in the editor. `tree_left`: the editor's panel takes
+--- the window's edge, the files panel (the tree) to its left; else the tree
+--- keeps the edge. `done()` runs once the program has ended (its panel
+--- closed). Returns true, or nil and why it could not.
+function M.open(kind, custom, path, line, tree_left, done)
   local term = M.terminal()
   if not term then
     return nil, "there is no terminal here to run it in (in a terminal, the term plugin gives one)"
@@ -85,7 +87,12 @@ function M.open(kind, custom, path, line, done)
   local dir = path:match("^(.*)/[^/]+$") or "."
   local name = path:match("[^/]+$") or path
   local ok, opened = pcall(term.open, {
-    id = M.PANEL, dock = "right", size = 0.45, order = 1, focus = true,
+    -- The files panel spans the window's height at its edge (order 0). To
+    -- stand at the edge with the tree on its left, the editor spans it too,
+    -- with a lower order (the lower one is nearer the edge); else it sits
+    -- inside, beside the chat.
+    id = M.PANEL, dock = "right", size = 0.45, focus = true,
+    order = tree_left and -1 or 1, full_height = tree_left and true or nil,
     title = (program or "editor") .. " · " .. name,
   }, { cmd = M.command(kind, custom, path, line), cwd = dir })
   if not ok then return nil, tostring(opened) end

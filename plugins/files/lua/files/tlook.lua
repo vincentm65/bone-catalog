@@ -13,6 +13,7 @@ local M = {}
 
 local text = require("files.text")
 local syntax = require("files.syntax")
+local sheet = require("files.sheet")
 local kinds = require("files.kinds")
 
 local app
@@ -83,6 +84,18 @@ local function caret_group()
   if not made[name] then
     local n, a = resolve("Normal"), resolve("Accent")
     bone.hl.set(name, { fg = n.bg or "black", bg = a.fg or "white", bold = true })
+    made[name] = true
+  end
+  return name
+end
+
+--- The part of a changed line that differs: on the line's own ground, bold
+--- and underlined, so it shows in any scheme.
+local function emph(ground)
+  local name = "FilesTXEmph_" .. tostring(ground)
+  if not made[name] then
+    local n, b = resolve("Normal"), resolve(ground)
+    bone.hl.set(name, { fg = n.fg, bg = b.bg, bold = true, underline = true })
     made[name] = true
   end
   return name
@@ -173,13 +186,18 @@ local function beside(left, right_rows, height, lw, rw)
     local r = row(lw + 1 + rw)
     for _, s in ipairs(a.spans) do r.spans[#r.spans + 1] = s end
     for _, h in ipairs(a.hits) do r.hits[#r.hits + 1] = h end
+    -- A short row on the left is filled to the bar, or the right one slides.
+    if (a.used or lw) < lw then r.spans[#r.spans + 1] = { string.rep(" ", lw - a.used), "Normal" } end
     r.used = lw
     put(r, "│", "FilesTSep")
     local base = r.used
     for _, s in ipairs(b.spans) do r.spans[#r.spans + 1] = s end
     for _, h in ipairs(b.hits) do r.hits[#r.hits + 1] = { from = h.from + base, to = h.to + base, run = h.run, x0 = base } end
     r.used = lw + 1 + rw
-    r.tree_i, r.tree_x = b.tree_i, base
+    -- The tree's rows are on whichever side the tree is: where they start
+    -- and (on the left) stop, for a press to find its row.
+    if a.tree_i then r.tree_i, r.tree_x, r.tree_end = a.tree_i, 0, lw
+    else r.tree_i, r.tree_x = b.tree_i, base end
     out[i] = r
   end
   return out
@@ -187,7 +205,9 @@ end
 
 -- ---- pieces ------------------------------------------------------------------
 
-local function crumbs(r, s)
+--- The folder's path as crumbs: its last four parts, or fewer when `room`
+--- (cells) is all there is for them — a note beside them comes first.
+local function crumbs(r, s, room)
   local root, home = s.listing.root, s.home
   local parts = {}
   local rest = root
@@ -209,6 +229,14 @@ local function crumbs(r, s)
     parts[#parts + 1] = { part, at }
   end
   local first = math.max(1, #parts - 3)
+  if room then
+    while first < #parts do
+      local w = 1 + (first > 1 and 4 or 0)
+      for i = first, #parts do w = w + width(parts[i][1]) + (i < #parts and 3 or 0) end
+      if w <= room then break end
+      first = first + 1
+    end
+  end
   put(r, " ")
   if first > 1 then put(r, "… › ", "Dim") end
   for i = first, #parts do
@@ -221,7 +249,9 @@ end
 
 local function header(s, cells)
   local r = row(cells)
-  crumbs(r, s)
+  -- A note about what just happened has its room before the path does.
+  local said = s.listing.error or s.listing.note
+  crumbs(r, s, said and math.max(12, cells - math.min(width(said) + 3, math.floor(cells * 0.62))) or nil)
   local tail = {}
   if s.listing.git_state == "loading" then tail[#tail + 1] = { "git… ", "Dim" } end
   if s.following then tail[#tail + 1] = { "◉ following ", "Accent" } end
@@ -295,17 +325,23 @@ local function tree_rows(s, cells, height, focused, narrow)
   for i = L.ttop, math.min(#rows, L.ttop + height - 1) do
     local rw = rows[i]
     local on_it = i == L.selected
-    local ground = on_it and (focused and "FilesTSelect" or "FilesTLine") or nil
+    local marked = L.marked[rw.path]
+    -- A folder a drag would drop into is lit like find's matches.
+    local ground = (L.drop_at == i and "FilesTMatch") or (on_it and (focused and "FilesTSelect" or "FilesTLine")) or nil
     local function g(name) return on(name, ground) end
     local r = row(cells)
-    put(r, string.rep("  ", rw.depth + 0) .. " ", g("Normal"), function() app.click_row(i) end)
+    -- The first cell is the mark: a press there marks the row (as space does).
+    put(r, marked and "●" or " ", g("Accent"), function() app.mark(i) end)
+    put(r, string.rep("  ", rw.depth + 0), g("Normal"), function() app.click_row(i) end)
     if rw.type == "dir" then
       local open = L.open[rw.path] or rw.unfolded
       put(r, open and "▾ " or "▸ ", g("Dim"), function() app.click_row(i) end)
     else
       put(r, "  ", g("Normal"))
     end
-    local name_group = rw.ignored and "Dim" or (rw.type == "dir" and "FilesTDir" or (rw.name:sub(1, 1) == "." and "Dim" or "Normal"))
+    local name_group = (rw.ignored or app.act.is_cut(rw.path)) and "Dim"
+      or (rw.type == "dir" and "FilesTDir" or (rw.name:sub(1, 1) == "." and "Dim" or "Normal"))
+    if marked then name_group = bold(name_group) end
     if rw.hit then
       local a, b = rw.hit[1], rw.hit[2]
       put(r, rw.name:sub(1, a - 1), g(name_group), function() app.click_row(i) end)
@@ -319,6 +355,11 @@ local function tree_rows(s, cells, height, focused, narrow)
     if b.mark then tail[#tail + 1] = { "● ", g("WarningMsg") } end
     if b.sign then tail[#tail + 1] = { (b.sign == "?" and "U" or b.sign) .. " ", g(sign_group(b.sign)) }
     elseif b.inside then tail[#tail + 1] = { "· ", g("Dim") } end
+    -- With room for it, when it last changed; then a file's size.
+    if not narrow and cells >= 64 then
+      local at = app.when(rw.modified)
+      if at then tail[#tail + 1] = { string.format("%8s ", at), g("Dim") } end
+    end
     if not narrow and rw.type == "file" then
       local size = app.size_of(rw.size)
       if size then tail[#tail + 1] = { string.format("%8s ", size), g("Dim") } end
@@ -430,50 +471,76 @@ end
 
 local TABS = { "Files", "Search", "Changed" }
 
-local function side_column(s, cells, height, narrow)
+local tab_strip
+
+--- The tree, the search or what changed. `alone`: the open file is not
+--- beside it (a terminal too narrow for both), so the open files are named
+--- over it, each one a press away, with a dot on unsaved work.
+local function side_column(s, cells, height, narrow, alone)
   local focused = s.keys_here ~= false and not s.doc_focused
   local out = {}
+  local strip = alone and tab_strip(s, cells, 1, "open") or nil
+  if strip then out[#out + 1] = strip end
   local tabs = row(cells)
   put(tabs, " ")
   segments(tabs, TABS, s.tab, function(i) app.tab(i) end, { 0, 0, app.changed_count() })
-  out[1] = tabs
-  local filtering = s.tab == 1 and (s.listing.filter ~= "" or s.listing.filter_typing)
-  local body_h = height - 2 - (filtering and 1 or 0)
-  local body
-  if s.tab == 2 then body = search_rows(s, cells, body_h, focused)
-  elseif s.tab == 3 then body = changed_rows(s, cells, body_h, focused)
-  else body = tree_rows(s, cells, body_h, focused, narrow) end
-  for i = 1, body_h do out[#out + 1] = body[i] or pad(row(cells), cells) end
-  if filtering then
+  out[#out + 1] = tabs
+  -- The filter sits under the tabs, over the names it filters.
+  if s.tab == 1 and (s.listing.filter ~= "" or s.listing.filter_typing) then
     local f = row(cells)
     put(f, " ≡ ", "Accent")
     put(f, s.listing.filter, "Normal")
     if s.listing.filter_typing then put(f, " ", caret_group()) end
     if s.listing.filter == "" then put(f, " names that hold…", "Dim") end
+    if s.listing.filter_typing then right(f, { { "enter keeps it · esc clears it ", "Dim" } }) end
     out[#out + 1] = f
   end
+  local body_h = height - #out - 1
+  local body
+  if s.tab == 2 then body = search_rows(s, cells, body_h, focused)
+  elseif s.tab == 3 then body = changed_rows(s, cells, body_h, focused)
+  else body = tree_rows(s, cells, body_h, focused, narrow) end
+  for i = 1, body_h do out[#out + 1] = body[i] or pad(row(cells), cells) end
   local keys
   if not focused then keys = { { "tab", "the tree" } }
   elseif s.tab == 2 then keys = { { "↑↓", "results" }, { "enter", "open" }, { "esc", "back" } }
-  elseif s.doc then keys = { { "↑↓", "move" }, { "←→", "fold" }, { "tab", "the file" }, { "esc", "close file" }, { "p", "go to" } }
-  else keys = { { "↑↓", "move" }, { "←→", "fold" }, { "enter", "open" }, { "p", "go to file" }, { "f", "filter" }, { "/", "search" }, { "a", "new" }, { "q", "close" } } end
+  elseif s.tab == 3 then keys = { { "↑↓", "move" }, { "enter", "what changed" }, { "r", "read again" }, { "esc", "back" } }
+  elseif s.tab == 1 and app.act.marked_count() > 0 then
+    keys = { { tostring(app.act.marked_count()), "marked" }, { "ctrl+c", "copy" }, { "ctrl+x", "cut" }, { "delete", "trash" },
+      { "z", "zip" }, { "D", "duplicate" }, { "esc", "clear" } }
+  elseif s.tab == 1 and app.ops.clip then
+    local n = #app.ops.clip.paths
+    keys = { { "ctrl+v", (app.ops.clip.cut and "move " or "paste ") .. n .. (n == 1 and " item" or " items") .. " here" },
+      { "↑↓", "move" }, { "space", "mark" }, { "g", "places" }, { "ctrl+z", "take back" } }
+    if s.doc then keys[#keys + 1] = { "tab", "the file" } end
+  elseif s.doc then
+    -- esc closes the open file, unless it holds unsaved work: then it only
+    -- hands the keys to the prompt.
+    local shown = s.docs[s.doc_at]
+    local unsaved = shown and shown.kind == "edit" and shown.ed.dirty
+    keys = { { "↑↓", "move" }, { "←→", "fold" }, { "tab", "the file" }, { "esc", unsaved and "the prompt" or "close file" }, { "p", "find a file" }, { "/", "search" } }
+  else keys = { { "↑↓", "move" }, { "enter", "open" }, { "space", "mark" }, { "ctrl+c", "copy" }, { "g", "places" }, { "S", "sort" }, { "d", "changes" }, { "p", "find a file" }, { "/", "search" }, { "i", "properties" }, { "a", "new" }, { "q", "close" } } end
   out[#out + 1] = hints(cells, keys)
   return out
 end
 
 -- ---- the open file -------------------------------------------------------------
 
-local function tab_strip(s, cells)
-  if #s.docs < 2 then return nil end
+tab_strip = function(s, cells, least, label)
+  if #s.docs < (least or 2) then return nil end
   local r = row(cells)
   put(r, " ")
+  if label then put(r, label .. " ", "Dim") end
   for i, t in ipairs(s.docs) do
     local path = t.kind == "edit" and t.ed.path or t.path
     local name = path:match("[^/]+$") or path
     local cur = i == s.doc_at
     local dirty = t.kind == "edit" and t.ed.dirty
     local g = cur and on(bold("Normal"), "FilesTSelect") or "Dim"
-    put(r, " " .. name .. (dirty and " ●" or "") .. " ", g, function() app.tab_click(i) end)
+    -- alt+1…9 goes to that file: its number leads its name while there
+    -- are several.
+    local n = (#s.docs > 1 and i <= 9) and (i .. " ") or ""
+    put(r, " " .. n .. name .. (dirty and " ●" or "") .. " ", g, function() app.tab_click(i) end)
     put(r, " ")
   end
   return r
@@ -496,9 +563,10 @@ local function doc_bar(s, cells)
   if editing then
     local e = s.editor
     if e.saving then tail[#tail + 1] = { "Saving…  ", "Dim" }
-    elseif e.status then tail[#tail + 1] = { cut(e.status, 28) .. "  ", "Dim" } end
+    elseif e.status and not e.confirm then tail[#tail + 1] = { cut(e.status, 28) .. "  ", "Dim" } end
     tail[#tail + 1] = { "Ln " .. e.line .. ", Col " .. (e.col + 1) .. "  ", "Dim" }
     local names, modes = { "Edit", "Changes" }, { "buffer", "changes" }
+    if sheet.is(leaf or rel) then names, modes = { "Table", "Edit", "Changes" }, { "table", "buffer", "changes" } end
     local lower = (leaf or rel):lower()
     if (syntax.lang(leaf or rel) or {}).markdown or lower:match("%.html?$") then
       names[3], modes[3] = "Split", "split"
@@ -642,26 +710,153 @@ end
 
 local function diff_rows(s, cells, height)
   local out = {}
-  local rows = app.editor_changes() or {}
+  local rows, summary, base = app.changes()
+  rows = rows or {}
+  local e = s.editor
+  -- What it is compared with, how much changed, and the other comparison.
+  local head = row(cells)
+  put(head, " " .. app.act.changes_label(base), "Accent")
+  if #rows > 0 then put(head, "  " .. tostring(summary or ""), "Dim") end
+  if type(e.head) == "table" and not e.conflict then
+    local other = function() app.act.changes_switch() end
+    right(head, { { "b", "Accent", other }, { base == "head" and " since it was opened " or " since the last commit ", "Dim", other } })
+  end
+  out[1] = head
   if #rows == 0 then
-    out[1] = put(row(cells), "  No changes since the file was opened.", "Dim")
+    if base ~= "pending" then out[2] = put(row(cells), "  No changes.", "Dim") end
     return out
   end
-  local e = s.editor
+  height = height - 1
   e.dtop = math.max(1, math.min(e.dtop or 1, math.max(1, #rows - height + 1)))
   for i = e.dtop, math.min(#rows, e.dtop + height - 1) do
     local d = rows[i]
     local r = row(cells)
-    if d.separator then put(r, "   ⋯", "Dim")
+    if d.separator then put(r, "   ⋯" .. (d.count and ("  " .. d.count .. " unchanged lines") or ""), "Dim")
     elseif not d.sign then put(r, "   " .. tostring(d.text or ""), "Dim")
     else
       local ground = d.sign == "+" and "DiffAdd" or d.sign == "-" and "DiffDelete" or nil
       local function num(n) return (tonumber(n) or 0) > 0 and tostring(n) or "" end
       put(r, string.format("%5s %5s ", num(d.old), num(d.new)), on("Dim", ground))
       put(r, (d.sign == " " and " " or d.sign) .. " ", on(d.sign == "+" and "Success" or d.sign == "-" and "ErrorMsg" or "Dim", ground))
-      put(r, tostring(d.text or ""), on("Normal", ground))
+      local t = tostring(d.text or "")
+      local sp = d.span
+      if sp and ground and sp[2] >= sp[1] then
+        -- The same line before and after: the part that differs stands out.
+        put(r, t:sub(1, sp[1] - 1), on("Normal", ground))
+        put(r, t:sub(sp[1], sp[2]), emph(ground))
+        put(r, t:sub(sp[2] + 1), on("Normal", ground))
+      else
+        put(r, t, on("Normal", ground))
+      end
       pad(r, cells, ground)
     end
+    out[#out + 1] = r
+  end
+  return out
+end
+
+--- A CSV file as a table (files.sheet): what stands over it, the names of
+--- its columns, then its rows, the cell the keys are on lit. Columns are as
+--- wide as what they hold (to 28 cells); numbers stand on the right.
+local function sheet_rows(s, cells, height)
+  local out = {}
+  local t = app.sheet()
+  if t.too_big then
+    out[1] = put(row(cells), "  This file is too big to lay out as a table · e shows its text", "Dim")
+    return out
+  end
+  out[1] = put(row(cells), " " .. sheet.status(t), "Dim")
+  if t.filtering or t.filter ~= "" then
+    local f = row(cells)
+    put(f, " ≡ ", "Accent")
+    put(f, t.filter, "Normal")
+    if t.filtering then put(f, " ", caret_group()) end
+    if t.filter == "" then put(f, " rows that hold…", "Dim") end
+    right(f, { { t.filtering and "enter keeps it · esc clears it " or "esc clears it ", "Dim" } })
+    out[#out + 1] = f
+  end
+  local body_h = math.max(1, height - #out - 1)
+  -- The row the keys are on stays in view.
+  t.top = math.max(1, t.top or 1)
+  if t.r > 0 then
+    if t.r < t.top then t.top = t.r end
+    if t.r >= t.top + body_h then t.top = t.r - body_h + 1 end
+  end
+  t.top = math.max(1, math.min(t.top, math.max(1, #t.view - body_h + 1)))
+  local last_row = math.min(#t.view, t.top + body_h - 1)
+  local widths = sheet.widths(t, t.top, last_row, width)
+  local gutter = #tostring(math.max(1, #t.view)) + 2
+  -- And the column: as many as fit from t.left, t.c among them.
+  t.left = math.max(1, math.min(t.left or 1, math.max(1, t.cols)))
+  if t.c < t.left then t.left = t.c end
+  local function last_from(left)
+    local used, c = gutter, left
+    while c <= t.cols do
+      local w = widths[c] + 2
+      if used + w > cells and c > left then break end
+      used = used + w
+      c = c + 1
+    end
+    return c - 1
+  end
+  while t.left < t.c and last_from(t.left) < t.c do t.left = t.left + 1 end
+  local last_col = last_from(t.left)
+  local focused = s.doc_focused and s.keys_here ~= false
+
+  --- One cell: `value` in `w` cells (cut with … when longer), a number on
+  --- the right; under the keys it is lit, and being typed it shows the caret.
+  local function cell(r, vr, c, value, base, ground)
+    local w = widths[c]
+    local here = t.r == vr and t.c == c
+    local press = function() app.cell(vr, c) end
+    if here and t.edit then
+      local v = t.edit.value
+      if width(v) > w - 1 then
+        -- The end of what is typed, where the caret is.
+        local tail = v
+        while width(tail) > w - 2 and #tail > 0 do tail = tail:gsub("^[%z\1-\127\194-\244][\128-\191]*", "", 1) end
+        v = "…" .. tail
+      end
+      put(r, v, on("Normal", "FilesTSelect"))
+      put(r, " ", caret_group())
+      put(r, string.rep(" ", math.max(0, w - width(v) - 1)), on("Normal", "FilesTSelect"))
+    else
+      local v = value:gsub("\n", "⏎")
+      if width(v) > w then v = cut(v, w - 1) .. "…" end
+      local gap = string.rep(" ", math.max(0, w - width(v)))
+      local g = here and on(base, focused and "FilesTSelect" or "FilesTLine") or on(base, ground)
+      local number = value ~= "" and require("files.csv").number(value) ~= nil and vr ~= 0
+      put(r, number and (gap .. v) or (v .. gap), g, press)
+    end
+    put(r, "  ", on("Normal", ground))
+  end
+
+  -- The names of the columns.
+  local head = row(cells)
+  put(head, string.rep(" ", gutter), "Dim")
+  for c = t.left, last_col do
+    local name = sheet.name(t, c)
+    if t.sorted and t.sorted.c == c then name = name .. (t.sorted.desc and " ▼" or " ▲") end
+    if width(name) > widths[c] then widths[c] = math.min(28, width(name)) end
+  end
+  for c = t.left, last_col do
+    local name = sheet.name(t, c)
+    if t.sorted and t.sorted.c == c then name = name .. (t.sorted.desc and " ▼" or " ▲") end
+    cell(head, 0, c, name, t.header and bold("Normal") or "Dim", nil)
+  end
+  if last_col < t.cols then right(head, { { "+" .. (t.cols - last_col) .. " → ", "Dim" } }) end
+  out[#out + 1] = head
+  if #t.view == 0 then
+    out[#out + 1] = put(row(cells), "  " .. (t.filter ~= "" and "No row holds that." or "No rows yet · o adds one"), "Dim")
+    return out
+  end
+  for vr = t.top, last_row do
+    local data = t.rows[t.view[vr]] or {}
+    local ground = (vr == t.r) and "FilesTLine" or nil
+    local r = row(cells)
+    put(r, string.format("%" .. (gutter - 2) .. "d  ", vr), on("Dim", ground))
+    for c = t.left, last_col do cell(r, vr, c, data[c] or "", "Normal", ground) end
+    pad(r, cells, ground)
     out[#out + 1] = r
   end
   return out
@@ -796,10 +991,11 @@ local function doc_column(s, cells, height)
   local body_h = height - #out - 1
   local body
   if s.doc == "edit" then
-    if e.shown == "changes" then body = diff_rows(s, cells, body_h)
-    elseif e.shown == "markdown" or e.shown == "html" then
+    if e.shown == "table" then body = sheet_rows(s, cells, body_h)
+    elseif e.shown == "changes" then body = diff_rows(s, cells, body_h)
+    elseif e.shown == "markdown" or e.shown == "html" or e.shown == "page" then
       local whole = text.join(e.lines, e.trailing)
-      if e.shown == "html" then whole = require("files.html").to_markdown(require("files.html").parse(whole)) end
+      if e.shown ~= "markdown" then whole = require("files.html").to_markdown(require("files.html").parse(whole)) end
       body, e.ptop = prose_rows(whole, cells, body_h, e.ptop)
     elseif e.shown == "split" then
       local lw = math.floor((cells - 1) / 2)
@@ -821,7 +1017,15 @@ local function doc_column(s, cells, height)
   local keys
   if not focused then keys = { { "tab", "the file" } }
   elseif s.doc == "edit" and (e.shown == "buffer" or e.shown == "split") then
-    keys = { { "ctrl+s", "save" }, { "ctrl+f", "find" }, { "ctrl+l", "line" }, { "ctrl+k", "chat" }, { "ctrl+g", "changes" }, { "ctrl+w", "close" }, { "esc", "files" } }
+    keys = { { "ctrl+s", "save" }, { "ctrl+g", "changes" }, { "ctrl+f", "find" }, { "ctrl+c", "copy" }, { "ctrl+v", "paste" }, { "ctrl+k", "chat" }, { "ctrl+w", "close" }, { "esc", "files" } }
+    if #s.docs > 1 then table.insert(keys, 3, { "alt+1…" .. math.min(#s.docs, 9), "other file" }) end
+  elseif s.doc == "edit" and e.shown == "table" then
+    local t = app.sheet()
+    if t.edit then keys = { { "enter", "keep, next row" }, { "tab", "keep, next column" }, { "esc", "leave it" } }
+    else keys = { { "enter", "edit" }, { "o", "row" }, { "A", "column" }, { "D", "del row" }, { "X", "del column" }, { "s", "sort" },
+      { "f", "filter" }, { "u", "undo" }, { "ctrl+s", "save" }, { "e", "text" }, { "esc", "files" } } end
+  elseif s.doc == "edit" and e.shown == "changes" then
+    keys = { { "e", "edit" }, { "↑↓", "scroll" }, { "b", "compare with" }, { "esc", "back" } }
   elseif s.doc == "edit" then keys = { { "e", "edit" }, { "↑↓", "scroll" }, { "esc", "files" } }
   else keys = { { "↑↓", "scroll" }, { "o", "open outside" }, { "e", "edit" }, { "ctrl+w", "close" }, { "esc", "files" } } end
   out[#out + 1] = hints(cells, keys)
@@ -929,15 +1133,25 @@ local function ask_card(s, W)
     body[2] = { spans = { { "", "Normal" } } }
     body[3] = { spans = { { "y", "Accent" }, { " " .. (a.button or "yes"):lower() .. "   ", "Dim" }, { "any other key", "Accent" }, { " leaves it", "Dim" } } }
   else
-    body[1] = { spans = { { a.value, "Normal" }, { " ", caret_group() } } }
+    -- A file's extension waits after the caret, dim, until right or end
+    -- takes the caret into it.
+    if a.suffix then
+      body[1] = { spans = { { a.value, "Normal" }, { a.suffix:sub(1, 1), caret_group() }, { a.suffix:sub(2), "Dim" } } }
+    else
+      body[1] = { spans = { { a.value, "Normal" }, { " ", caret_group() } } }
+    end
     if a.error then body[2] = { spans = { { a.error, "ErrorMsg" } } } end
-    body[#body + 1] = { spans = { { "enter", "Accent" }, { " makes it   ", "Dim" }, { "esc", "Accent" }, { " leaves it", "Dim" } } }
+    local keys = { { "enter", "Accent" }, { " " .. (a.verb or "makes it") .. "   ", "Dim" } }
+    if a.suffix then keys[#keys + 1] = { "→", "Accent" } keys[#keys + 1] = { " the extension   ", "Dim" } end
+    keys[#keys + 1] = { "esc", "Accent" }
+    keys[#keys + 1] = { " leaves it", "Dim" }
+    body[#body + 1] = { spans = keys }
   end
   return card_rows(a.title, w, body), w
 end
 
 local function menu_card(m, W)
-  local w = 34
+  local w = math.max(20, math.min(m.width or 34, W - 2))
   local body = {}
   for i, it in ipairs(m.items) do
     if it.separator then body[#body + 1] = { spans = { { string.rep("─", w - 4), "FilesTBorder" } } }
@@ -946,6 +1160,8 @@ local function menu_card(m, W)
       local g = sel and "FilesTSelect" or "FilesTCard"
       local label = it.label
       local key = it.key or ""
+      -- What does not fit is cut at the value's end: its start says most.
+      if width(label) + width(key) + 1 > w - 4 then key = cut(key, math.max(0, w - 5 - width(label) - 1)) .. "…" end
       local gap = math.max(1, w - 4 - width(label) - width(key))
       body[#body + 1] = { spans = { { label, on(it.danger and "ErrorMsg" or (it.off and "Dim" or "Normal"), g) },
         { string.rep(" ", gap), on("Normal", g) }, { key, on("Dim", g) } }, run = (not it.off) and it.run or nil }
@@ -989,13 +1205,19 @@ function M.render(ctx)
     local dw = W - sw - 1
     local doc = doc_column(s, dw, body_h)
     local side = side_column(s, sw, body_h, true)
-    body = beside(doc, side, body_h, dw, sw)
-    M.layout = { split = true, doc_w = dw, side_x = dw + 1, side_w = sw }
+    if s.tree_left then
+      -- The tree on the left and the file on the right, as editors have it.
+      body = beside(side, doc, body_h, sw, dw)
+      M.layout = { split = true, doc_x = sw + 1, doc_w = dw, side_x = 0, side_w = sw }
+    else
+      body = beside(doc, side, body_h, dw, sw)
+      M.layout = { split = true, doc_x = 0, doc_w = dw, side_x = dw + 1, side_w = sw }
+    end
   elseif s.doc and s.doc_focused then
     body = doc_column(s, W, body_h)
     M.layout = { split = false, doc_w = W, doc_only = true }
   else
-    body = side_column(s, W, body_h, W < 50)
+    body = side_column(s, W, body_h, W < 50, true)
     M.layout = { split = false, side_x = 0, side_w = W, side_only = true }
   end
   for i = 1, body_h do rows[#rows + 1] = body[i] or pad(row(W), W) end
@@ -1038,7 +1260,7 @@ end
 function M.tree_at(line, col)
   local r = cache.rows and cache.rows[line]
   if not r or not r.tree_i then return nil end
-  if (col - 1) < (r.tree_x or 0) then return nil end
+  if (col - 1) < (r.tree_x or 0) or (r.tree_end and (col - 1) >= r.tree_end) then return nil end
   return r.tree_i
 end
 
@@ -1047,8 +1269,8 @@ function M.editor_at(line, col, editor)
   local g = M.editor_geom
   local lay = M.layout
   if not g or not lay or not editor then return nil end
-  local x = col - 1
-  if lay.split and x >= lay.doc_w then return nil end
+  local x = col - 1 - (lay.doc_x or 0)
+  if x < 0 or (lay.split and x >= lay.doc_w) then return nil end
   if lay.side_only then return nil end
   local body_line = line - 1 - (M.doc_body_top or 2)
   if body_line < 1 then return nil end

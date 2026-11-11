@@ -14,6 +14,8 @@ local clip = require("files.clip")
 local quick = require("files.quick")
 local gutter = require("files.gutter")
 local fileops = require("files.fileops")
+local ops = require("files.ops")
+local sheet = require("files.sheet")
 local media = require("files.media")
 local extedit = require("files.extedit")
 local platform = require("files.platform")
@@ -83,8 +85,13 @@ local SETTINGS = {
   follow = setting("follow_agent", false) and true or false,
   link_files = setting("link_files", true) and true or false,
   tui_look = tostring(setting("tui_look", "drawn")),
+  -- With a file open beside it, the tree's side: left (as editors have it) or right.
+  tree_left = tostring(setting("tree_side", "left")) ~= "right",
   -- built-in | nvim | vim | custom (editor_command, with {file} and {line})
   editor = tostring(setting("editor", "built-in")),
+  -- How an HTML file opens in the desktop app: page (a browser's drawing of
+  -- it, when a browser is installed) or reader (its content, read here).
+  html_view = tostring(setting("html_view", "page")),
   editor_command = tostring(setting("editor_command", "")),
 }
 if not GUI and SETTINGS.tui_look ~= "elements" then
@@ -136,6 +143,13 @@ local function home()
   if ok and type(session) == "table" and session.cwd and session.cwd ~= "" then
     return platform.norm(session.cwd)
   end
+  -- A chat with no message yet has no session: it will start in the folder
+  -- bone was started in (or /cd moved to), so that is where the panel opens.
+  local found, cwd = pcall(function() return bone.api.cwd() end)
+  if found and type(cwd) == "string" and cwd ~= "" then return platform.norm(cwd) end
+  -- A bone from before /cd has no such call: the folder it was started in.
+  local pwd = os.getenv("PWD")
+  if pwd and pwd ~= "" and bone.fs.list(pwd) ~= nil then return platform.norm(pwd) end
   return platform.home()
 end
 
@@ -169,6 +183,9 @@ local listing = {
   read = {},
   selected = 1,
   selected_key = nil,
+  marked = {},       -- a path -> true: the rows chosen for the next action (space, shift+arrows)
+  sort = "name",     -- name | modified | size | kind: how a folder's entries are ordered
+  sort_desc = false, -- the other way round
   changed_selected = 1,
   hit_selected = 1,  -- the search keeps its own: the tree re-reads under it
   hidden = false,
@@ -186,7 +203,7 @@ local listing = {
 
 --- A path the way the sidebar writes it: ~ for the home folder.
 local function display(path)
-  local house = home()
+  local house = platform.home()
   if house ~= "" and house ~= "/" and path:sub(1, #house) == house then
     return "~" .. path:sub(#house + 1)
   end
@@ -199,6 +216,17 @@ local function relative(path)
   local prefix = root:sub(-1) == "/" and root or root .. "/"
   if root ~= "" and path:sub(1, #prefix) == prefix then return path:sub(#prefix + 1) end
   return path
+end
+
+--- When something last changed, as a file list says it: the time today,
+--- the day this year, the month before that.
+local function when_of(at)
+  at = tonumber(at)
+  if not at or at <= 0 then return nil end
+  local now = os.time()
+  if os.date("%Y%j", at) == os.date("%Y%j", now) then return os.date("%H:%M", at) end
+  if os.date("%Y", at) == os.date("%Y", now) then return (os.date("%b %e", at):gsub("  ", " ")) end
+  return os.date("%b %Y", at)
 end
 
 --- A file's bytes as one short word, for the right edge of a row. Rows are
@@ -379,11 +407,53 @@ local function read_sizes(dir, entries)
         end
         local any = false
         for _, entry in ipairs(entries) do
-          entry.size = bytes[entry.name]
-          any = any or entry.size ~= nil
+          if bytes[entry.name] ~= nil and entry.size ~= bytes[entry.name] then
+            entry.size = bytes[entry.name]
+            any = true
+          end
         end
-        if any then build_rows(false) redraw() end
+        if any then
+          if listing.sort == "size" then act.sort_entries(entries) end
+          build_rows(false)
+          redraw()
+        end
       end })
+end
+
+--- A folder's entries in the order asked for (listing.sort): folders
+--- first, then by name, by when they last changed (the newest first), by
+--- size (the biggest first) or by kind (the extension); sort_desc turns it
+--- round. Names settle what the rest leaves equal.
+function act.sort_entries(entries)
+  local by, desc = listing.sort, listing.sort_desc
+  local function ext(name) return (name:match("%.([^.]+)$") or ""):lower() end
+  table.sort(entries, function(a, b)
+    if a.type ~= b.type then return a.type == "dir" end
+    local x, y
+    if by == "modified" then x, y = -(tonumber(a.modified) or 0), -(tonumber(b.modified) or 0)
+    elseif by == "size" then x, y = -(tonumber(a.size) or 0), -(tonumber(b.size) or 0)
+    elseif by == "kind" then x, y = ext(a.name), ext(b.name) end
+    if x ~= y and x ~= nil then
+      if desc then return x > y end
+      return x < y
+    end
+    local an, bn = a.name:lower(), b.name:lower()
+    if an == bn then return a.name < b.name end
+    if desc and by == "name" then return an > bn end
+    return an < bn
+  end)
+end
+
+--- Order the tree another way: every folder read so far, again.
+function act.sort_by(by)
+  if listing.sort == by then listing.sort_desc = not listing.sort_desc
+  else listing.sort, listing.sort_desc = by, false end
+  for _, entries in pairs(listing.read) do act.sort_entries(entries) end
+  build_rows()
+  local words = { name = "name", modified = "last changed", size = "size", kind = "kind" }
+  note("Sorted by " .. (words[listing.sort] or listing.sort) .. (listing.sort_desc and ", the other way round" or ""))
+  if act.save_soon then act.save_soon() end
+  redraw()
 end
 
 --- What is in `dir`, folders first: read once and kept, so expanding a folder
@@ -396,14 +466,12 @@ local function read_dir(dir, force)
   local entries, files = {}, false
   for _, entry in ipairs(list) do
     if listing.hidden or entry.name:sub(1, 1) ~= "." then
-      entries[#entries + 1] = { name = entry.name, type = entry.type }
+      entries[#entries + 1] = { name = entry.name, type = entry.type, size = entry.type == "file" and entry.size or nil,
+        modified = entry.modified }
       files = files or entry.type == "file"
     end
   end
-  table.sort(entries, function(a, b)
-    if a.type ~= b.type then return a.type == "dir" end
-    return a.name:lower() < b.name:lower()
-  end)
+  act.sort_entries(entries)
   listing.read[dir] = entries
   if files then read_sizes(dir, entries) end
   return entries, nil
@@ -491,7 +559,10 @@ end
 --- The tree as the keys see it: one flat list of rows, a folder's children
 --- straight after it while it is open.
 build_rows = function(force)
-  if force then listing.read = {} end
+  if force then
+    listing.read, act.polled = {}, nil
+    if (act.poll_every or 4) > 1000 then act.poll_every = 4 end -- r, or another folder: look again
+  end
   local rows, error, cut = {}, nil, false
   -- Only the folders you opened are walked, and the row cap stops the walk:
   -- that is the limit, so no folder is out of reach because of how deep it
@@ -513,7 +584,7 @@ build_rows = function(force)
       local path = join(dir, entry.name)
       local off = dim or ignored[path] or false
       rows[#rows + 1] = { type = entry.type, name = entry.name, path = path, depth = depth,
-        size = entry.size, ignored = off }
+        size = entry.size, modified = entry.modified, ignored = off }
       if entry.type == "dir" and listing.open[path] then
         walk(path, depth + 1, off)
       end
@@ -567,6 +638,14 @@ build_rows = function(force)
   listing.truncated = cut
   -- An expansion that ran into the row cap says so, instead of doing nothing.
   if cut and not was_cut then note(ROW_LIMIT .. " rows is as deep as this goes") end
+  -- A mark on a row that is no longer shown is not acted on unseen.
+  if next(listing.marked) then
+    local shown_rows = {}
+    for _, row in ipairs(rows) do shown_rows[row.path] = true end
+    for path in pairs(listing.marked) do
+      if not shown_rows[path] then listing.marked[path] = nil end
+    end
+  end
   restore_selection()
   return rows
 end
@@ -584,7 +663,11 @@ end
 --- Is this file, or a folder above it, one of the dotfiles the tree keeps out
 --- unless ctrl+h asks for them? The Changed pane obeys the same rule.
 local function hidden_path(path)
-  return path:match("/%.") ~= nil or name_of(path):sub(1, 1) == "."
+  -- Only the part under the folder shown counts: a project that itself
+  -- lives in ~/.config or ~/.bone is not hidden from its own panel.
+  local rel = relative(path)
+  if rel == path then return name_of(path):sub(1, 1) == "." end -- not under it
+  return rel:sub(1, 1) == "." or rel:match("/%.") ~= nil
 end
 
 --- The marks an entry carries: this session's write, or Git's own letter.
@@ -683,7 +766,7 @@ fetch_git = function()
   git_job = bone.job.start(
     'root=$(git --no-pager rev-parse --show-toplevel 2>/dev/null) || exit 1\n'
       .. 'printf "%s\\n" "$root"\n'
-      .. 'git --no-pager -C "$root" status --porcelain=v1 --untracked-files=all --ignored=matching',
+      .. 'git --no-pager -C "$root" status --porcelain=v1 -z --untracked-files=all --ignored=matching',
     { name = "files: git status", cwd = listing.root, timeout = 6000, buffer = true,
       on_exit = function(result)
         if token ~= git_generation or not panel or not panel:is_open() then return end
@@ -691,17 +774,23 @@ fetch_git = function()
         local status, known = {}, result and result.code == 0
         local ignored = {}
         if known then
-          local root = ""
-          for line in (result.stdout or ""):gmatch("[^\n]+") do
-            if root == "" then
-              root = platform.norm((line:gsub("\r$", "")))
-            elseif line:sub(1, 2) == "!!" then
-              local path = line:sub(4):gsub("/+$", "")
+          -- The root on a line of its own, then Git's entries, each ended by
+          -- a NUL (-z): a name with a space or an accent comes as it is, not
+          -- quoted. A rename is followed by the name it had, which is skipped.
+          local out = result.stdout or ""
+          local first, rest = out:match("^([^\n]*)\n(.*)$")
+          local root = platform.norm(((first or out):gsub("\r$", "")))
+          local skip = false
+          for entry in (rest or ""):gmatch("[^%z]+") do
+            if skip then
+              skip = false
+            elseif entry:sub(1, 2) == "!!" then
+              local path = entry:sub(4):gsub("/+$", "")
               ignored[(root == "" and path or root .. "/" .. path)] = true
             else
-              local code, path = line:sub(1, 2), line:sub(4)
-              if code:match("R") then path = path:match("%->%s*(.+)$") or path end
-              if path and path ~= "" then
+              local code, path = entry:sub(1, 2), entry:sub(4)
+              if code:match("[RC]") then skip = true end
+              if path ~= "" then
                 status[(root == "" and path or root .. "/" .. path)] =
                   (code:match("^#") and "?") or code:match("%S")
               end
@@ -996,7 +1085,7 @@ function act.external_open(path, line)
     note("No editor_command set · using the built-in editor")
     return false
   end
-  local ok, why = extedit.open(kind, SETTINGS.editor_command, path, line, function()
+  local ok, why = extedit.open(kind, SETTINGS.editor_command, path, line, SETTINGS.tree_left, function()
     -- The editor has closed: the tree, Git's marks and the sizes again.
     act.ext_on = false
     if listing.note and listing.note:find("^Editing ") then listing.note = nil end
@@ -1087,7 +1176,10 @@ function act.close_tab(i, force)
   local t = docs[i]
   if not t then return false end
   if t.kind == "edit" and t.ed.dirty and not force and not t.ed.confirm then
-    if i ~= doc_at then act.show_tab(i) set_pane(EDIT) end
+    -- The question is asked in the file's own pane: a terminal showing the
+    -- tree alone would otherwise ask it where nobody reads it.
+    if i ~= doc_at then act.show_tab(i) set_pane(EDIT)
+    elseif not GUI and pane ~= EDIT then set_pane(EDIT) end
     t.ed.confirm = true
     t.ed.status = "Unsaved changes · close again to leave them · ctrl+s saves them"
     redraw()
@@ -1114,6 +1206,30 @@ function act.cycle(dir)
   act.show_tab(i)
   set_pane(docs[i].kind == "edit" and EDIT or PREVIEW)
   redraw()
+end
+
+--- Tab `i`, shown and given the keys.
+function act.go_tab(i)
+  if not docs[i] then return false end
+  act.show_tab(i)
+  set_pane(docs[i].kind == "edit" and EDIT or PREVIEW)
+  redraw()
+  return true
+end
+
+--- The keys that go through the open files. ctrl+tab is the usual one, but
+--- tmux and many terminals send a plain tab for it, so ctrl+pagedown and
+--- ctrl+pageup, alt+. and alt+, and alt+1…9 (that file) do the same.
+function act.tab_key(k)
+  local lower = k:lower()
+  if lower == "ctrl+tab" or lower == "ctrl+pagedown" or lower == "alt+." then act.cycle(1) return true end
+  if lower == "ctrl+shift+tab" or lower == "ctrl+pageup" or lower == "alt+," then act.cycle(-1) return true end
+  local n = lower:match("^alt%+(%d)$")
+  if n and tonumber(n) >= 1 and #docs > 0 then
+    act.go_tab(math.min(tonumber(n), #docs))
+    return true
+  end
+  return false
 end
 
 --- Open a file in the preview pane.
@@ -1275,6 +1391,31 @@ local function redo_edit()
   editor_note("Redone")
 end
 
+--- What the table (files.sheet) asks of the editor: say the text changed,
+--- say a word, the clipboard, and taking a step back.
+function act.sheet_env()
+  return {
+    changed = function() changed() end,
+    note = function(msg) editor_note(msg) end,
+    copy = function(value)
+      clip.copy(value, function(ok, _, where)
+        editor_note(ok and (where == "tmux" and "Copied to tmux" or "Copied") or "Copied in bone only")
+        redraw()
+      end)
+    end,
+    paste = function(put)
+      local ed = editor
+      clip.paste(function(value)
+        if editor ~= ed or doc ~= "edit" then return end
+        put(value)
+        redraw()
+      end)
+    end,
+    undo = function() undo_edit() end,
+    redo = function() redo_edit() end,
+  }
+end
+
 local function move_cursor(rows, cols)
   buffer.move(editor, rows, cols, false)
 end
@@ -1397,7 +1538,9 @@ open_editor = function(path, line)
   }
   if tonumber(line) then ed.col = #(text.leading(lines[ed.line] or "")) end
   -- A page opens as it reads (Preview); the Edit beside it is the text.
-  if kinds.of(name_of(path)) == "html" and not tonumber(line) then ed.shown = "html" end
+  if kinds.of(name_of(path)) == "html" and not tonumber(line) then ed.shown = act.html_mode() end
+  -- A CSV file opens as a table; Edit beside it is its text.
+  if sheet.is(name_of(path)) and not tonumber(line) and (GUI or tlook) then ed.shown = "table" end
   local entry = { kind = "edit", ed = ed }
   if at then docs[at] = entry else at = act.push_tab(entry) end
   act.show_tab(at)
@@ -1409,18 +1552,100 @@ open_editor = function(path, line)
   redraw()
 end
 
---- The buffer against the file it came from. Built again only when one side or
---- the other moved.
+--- How an HTML file is shown when it is not its text: "page", a browser's
+--- drawing of it (the desktop app, with a browser installed and the
+--- html_view setting not saying reader), or "html", its content read here.
+function act.html_mode()
+  if GUI and SETTINGS.html_view ~= "reader" and require("files.page").browser() then return "page" end
+  return "html"
+end
+
+--- What the Changes view sets the buffer against: "head", the file as Git's
+--- last commit has it (the question a changed file raises), or "opened", the
+--- file as it was read (what a save would write). Git's version when Git has
+--- one and nothing says otherwise; "pending" while Git is being asked.
+function act.changes_base()
+  local e = editor
+  if e.conflict or e.diff_base == "opened" then return "opened" end
+  if type(e.head) == "table" then return "head" end
+  if e.head == nil and e.head_asked then return "pending" end
+  return "opened"
+end
+
+--- The other thing to compare with, when there are two.
+function act.changes_switch()
+  local e = editor
+  if type(e.head) ~= "table" then
+    e.status = "Git has no earlier version of this file"
+  else
+    e.diff_base = act.changes_base() == "head" and "opened" or nil
+    e.dtop = 1
+  end
+  redraw()
+end
+
+--- What the view compares with, in words.
+function act.changes_label(base)
+  base = base or act.changes_base()
+  if base == "head" then
+    return #editor.head == 0 and "Not in the last commit: all of it is new" or "Since the last commit"
+  end
+  if base == "pending" then return "Asking Git…" end
+  return "Since the file was opened"
+end
+
+--- The buffer against Git's last commit, or against the file it came from.
+--- Built again only when one side or the other moved.
 local function editor_changes()
+  local base = act.changes_base()
   local body = text.join(editor.lines, editor.trailing)
-  local key = tostring(editor.disk_hash or "") .. "|" .. tostring(hash_of(body) or "")
+  local key = base .. "|" .. tostring(editor.head) .. "|" .. tostring(editor.disk_hash or "")
+    .. "|" .. tostring(hash_of(body) or "")
   if editor.diff_key ~= key then
     editor.diff_key = key
-    local before, after = text.split(editor.original), text.split(body)
-    editor.diff_rows = linediff.rows(before, after)
-    editor.diff_summary = linediff.summary(before, after)
+    local before, after
+    if base == "head" then
+      -- An empty file is no lines, not one empty line.
+      before, after = editor.head, body == "" and {} or text.split(body)
+    else
+      before, after = text.split(editor.original), text.split(body)
+    end
+    editor.diff_rows, editor.diff_summary = linediff.rows(before, after)
   end
-  return editor.diff_rows, editor.diff_summary
+  return editor.diff_rows, editor.diff_summary, base
+end
+
+--- A changed file, opened on what changed in it: what enter (or a press) on
+--- a row of Changed does in a terminal, where esc then comes back to the
+--- list. The desktop goes to the file in the tree, the file beside it. A
+--- binary file or a folder has no lines to compare: the tree goes there.
+function act.open_change(item)
+  if not item then return end
+  if GUI then return reveal(item.path) end
+  if not act.show_changes(item.path) then reveal(item.path) end
+end
+
+--- `path` in the panel's own editor, on what changed in it since the last
+--- commit (`d` in the tree; whatever the `editor` setting says, the changes
+--- are read here). False when there are no lines to compare: a folder, a
+--- binary file. A file that is gone says so.
+function act.show_changes(path)
+  if bone.fs.list(path) ~= nil then return false end
+  local f = io.open(path, "rb")
+  if not f then
+    note(relative(path) .. " is no longer on disk")
+    redraw()
+    return true
+  end
+  local head = f:read(8192) or ""
+  f:close()
+  if text.is_binary(head) then return false end
+  open_editor(path)
+  if doc == "edit" and editor.path == path then
+    editor.shown, editor.dtop, editor.diff_base = "changes", 1, nil
+  end
+  redraw()
+  return true
 end
 
 -- ---- the panes -------------------------------------------------------------
@@ -1664,7 +1889,7 @@ local function changed_pane()
   held_list.on_select = function(i) listing.changed_selected, held_list.selected = i, i end
   held_list.on_press = function(i)
     local item = changed_rows[i]
-    if item then reveal(item.path) end
+    if item then act.open_change(item) end
   end
   return { kind = "column",
     { kind = "text", tone = "dim",
@@ -1815,7 +2040,7 @@ local function edit_pane(columns)
   if editor.shown == "changes" then
     local rows, summary = editor_changes()
     out[#out + 1] = { kind = "text", tone = editor.conflict and "warning" or "dim",
-      text = "Changes · " .. tostring(summary or "")
+      text = act.changes_label() .. " · " .. tostring(summary or "")
         .. (editor.conflict and "  ·  against the file as it was opened: the one on disk has changed (ctrl+r reads it)" or "") }
     if rows and #rows > 0 then
       out[#out + 1] = { kind = "diff", rows = rows, numbers = true }
@@ -1829,7 +2054,7 @@ local function edit_pane(columns)
     out[#out + 1] = { kind = "markdown", text = text.join(editor.lines, editor.trailing) }
     return out
   end
-  if editor.shown == "html" then
+  if editor.shown == "html" or editor.shown == "page" then
     out[#out + 1] = { kind = "text", tone = "dim", text = "The page, read · e or enter edits it · o opens it in the browser" }
     out[#out + 1] = { kind = "markdown", text = html.to_markdown(html.parse(text.join(editor.lines, editor.trailing))) }
     return out
@@ -2008,21 +2233,27 @@ function act.copy(cut_too)
   elseif cut_too then
     buffer.delete_selection(editor)
   end
-  clip.copy(what, function(ok, why)
-    if not ok then bone.notify("Could not copy: " .. brief(why or "no clipboard"), "error") end
+  -- Said once the clipboard has answered, and said as it is: with no
+  -- clipboard to reach the text is still held here, and ctrl+v pastes it.
+  local word = cut_too and "Cut" or "Copied"
+  clip.copy(what, function(ok, _, where)
+    if not ok then editor_note(word .. " in bone only")
+    elseif where == "tmux" then editor_note(word .. " to tmux")
+    else editor_note(word) end
+    redraw()
   end)
-  editor_note(cut_too and "Cut" or "Copied")
   redraw()
 end
 
 function act.paste()
   local ed = editor
   clip.paste(function(value, why)
-    if not value then
-      bone.notify("Nothing to paste: " .. brief(why or "the clipboard is empty"), "info")
+    if editor ~= ed or doc ~= "edit" then return end
+    if not value or value == "" then
+      editor_note("Nothing to paste")
+      redraw()
       return
     end
-    if editor ~= ed or doc ~= "edit" then return end
     buffer.insert(ed, value)
     editor_note("Pasted")
     redraw()
@@ -2034,7 +2265,7 @@ function act.copy_path(path, whole)
   if not path or path == "" then return end
   local value = whole and path or relative(path)
   clip.copy(value, function(ok)
-    if ok then note("Copied " .. value) else bone.notify("Could not copy the path", "error") end
+    note(ok and ("Copied " .. value) or ("No system clipboard: " .. value .. " is kept for ctrl+v in the editor"))
     redraw()
   end)
 end
@@ -2070,8 +2301,15 @@ end
 
 --- Ask for a name over the panel: `title`, the name to start from, and what
 --- to do with the answer (it returns an error to show, or nothing).
-function act.ask(title, value, done, select_stem)
-  ask = { title = title, value = value or "", done = done, error = nil, select_stem = select_stem, fresh = true }
+function act.ask(title, value, done, select_stem, verb)
+  ask = { title = title, value = value or "", done = done, error = nil, select_stem = select_stem, fresh = true,
+    verb = verb }
+  -- A terminal's field types at its end: a file's name starts there before
+  -- the extension, which waits after the caret (right or end takes it in).
+  if not GUI and select_stem then
+    local stem, ext = ask.value:match("^(.+)(%.[^./]+)$")
+    if stem then ask.value, ask.suffix = stem, ext end
+  end
   redraw()
   if GUI then bone.defer(30, function() pcall(bone.gui.focus, "files:ask") end) end
 end
@@ -2177,62 +2415,557 @@ function act.rename(row)
     moved(row.path, path)
     refreshed(path)
     note("Renamed to " .. name_of(path))
-  end, row.type == "file")
+  end, row.type == "file", "renames it")
 end
 
-function act.duplicate(row)
-  row = row or listing.rows[listing.selected]
+-- ---- several files at once ---------------------------------------------------------
+
+--- The rows the next action is for: the marked ones, in the tree's order
+--- (one inside a marked folder goes with its folder), else the row the
+--- keys are on.
+function act.targets()
+  local out = {}
+  if next(listing.marked) then
+    for _, row in ipairs(listing.rows) do
+      if listing.marked[row.path] then
+        local inside = false
+        for _, held in ipairs(out) do
+          if row.path:sub(1, #held.path + 1) == held.path .. "/" then inside = true break end
+        end
+        if not inside then out[#out + 1] = row end
+      end
+    end
+  end
+  if #out == 0 then
+    local row = listing.rows[listing.selected]
+    if row then out[1] = row end
+  end
+  return out
+end
+
+local function paths_of(rows)
+  local out = {}
+  for i, row in ipairs(rows) do out[i] = row.path end
+  return out
+end
+
+function act.marked_count()
+  local n = 0
+  for _ in pairs(listing.marked) do n = n + 1 end
+  return n
+end
+
+--- Mark row `i` (the one the keys are on), or take its mark away.
+function act.mark_toggle(i, stay)
+  local row = listing.rows[i or listing.selected]
   if not row then return end
-  fileops.duplicate(row.path, function(path, why)
-    if not path then bone.notify("Could not duplicate: " .. brief(why), "error") return end
-    refreshed(path)
-    note("Made " .. name_of(path))
-    redraw()
+  if listing.marked[row.path] then listing.marked[row.path] = nil else listing.marked[row.path] = true end
+  if not stay then move(1) end
+  redraw()
+end
+
+--- Mark the row the keys are on and the one they go to (shift and an arrow).
+function act.mark_move(by)
+  local row = listing.rows[listing.selected]
+  if row then listing.marked[row.path] = true end
+  move(by)
+  row = listing.rows[listing.selected]
+  if row then listing.marked[row.path] = true end
+  redraw()
+end
+
+function act.mark_all()
+  for _, row in ipairs(listing.rows) do listing.marked[row.path] = true end
+  redraw()
+end
+
+function act.mark_clear()
+  listing.marked = {}
+  redraw()
+end
+
+--- A batch says how far it is in the panel's note.
+ops.on_change = function()
+  local b = ops.busy
+  if b then
+    listing.note = b.label .. (b.total > 1 and (" " .. b.at .. " of " .. b.total) or "") .. " · " .. tostring(b.name or "")
+  end
+  redraw()
+end
+
+--- After files came, went or moved: every folder read again, Git asked
+--- again, and `select` (a path) under the keys.
+function act.reread(select)
+  if select then
+    -- The folders on the way to it are opened, so it is in view.
+    local up = parent(select)
+    while up and #up > #listing.root and up:sub(1, #listing.root) == listing.root do
+      listing.open[up] = true
+      local next_up = parent(up)
+      if next_up == up then break end
+      up = next_up
+    end
+    listing.selected_key = select
+  end
+  quick.stale(listing.root)
+  build_rows(true)
+  fetch_git()
+  redraw()
+end
+
+--- What a batch did, in a note: "Copied 3 items to src · 1 could not: why".
+local function report(done_word, result, tail)
+  local parts = {}
+  local made = #(result.made or {})
+  if made > 0 then parts[#parts + 1] = done_word .. " " .. ops.count(made, "item") .. (tail or "") end
+  if (result.skipped or 0) > 0 then parts[#parts + 1] = ops.count(result.skipped, "was", "were") .. " already there" end
+  if (result.renamed or 0) > 0 then parts[#parts + 1] = "a name was taken: both kept" end
+  local failed = result.failed or {}
+  if #failed > 0 then
+    parts[#parts + 1] = ops.count(#failed, "item") .. " could not: " .. brief(failed[1].why or "", 60)
+  end
+  if #parts == 0 then parts[1] = "Nothing to do" end
+  note(table.concat(parts, " · "))
+end
+
+--- Copy (or cut) the chosen files, for a paste into another folder. Their
+--- paths go to the clipboard too, a line each.
+function act.copy_files(cut)
+  local rows = act.targets()
+  if #rows == 0 then return end
+  ops.clip = { paths = paths_of(rows), cut = cut and true or false }
+  clip.copy(table.concat(ops.clip.paths, "\n"), function() end)
+  note((cut and "Cut " or "Copied ") .. (#rows == 1 and rows[1].name or ops.count(#rows, "item"))
+    .. " · ctrl+v in a folder puts " .. (#rows == 1 and "it" or "them") .. " there")
+  listing.marked = {}
+  redraw()
+end
+
+--- Whether `path` is waiting to be moved by a paste (drawn dimmed).
+function act.is_cut(path)
+  local c = ops.clip
+  if not c or not c.cut then return false end
+  for _, p in ipairs(c.paths) do if p == path then return true end end
+  return false
+end
+
+--- Into `dest`: copy or move `paths` there, the tabs of what moved going
+--- with it, then the tree read again with the first of them selected.
+function act.transfer(paths, dest, move_them)
+  ops.transfer(paths, dest, move_them, function(result)
+    if move_them then
+      for _, m in ipairs(result.made) do moved(m.from, m.to) end
+    end
+    report(move_them and "Moved" or "Copied", result, " to " .. (name_of(dest) ~= "" and name_of(dest) or dest)
+      .. (#result.made > 0 and " · ctrl+z takes it back" or ""))
+    if dest ~= listing.root and dest:sub(1, #listing.root) == listing.root then listing.open[dest] = true end
+    act.reread(result.made[1] and result.made[1].to or nil)
   end)
 end
 
-function act.trash(row)
-  row = row or listing.rows[listing.selected]
-  if not row then return end
-  -- An open tab with unsaved work in it is not thrown away with its file.
-  for _, t in ipairs(docs) do
-    if t.kind == "edit" and t.ed.dirty and (t.ed.path == row.path or t.ed.path:sub(1, #row.path + 1) == row.path .. "/") then
-      note(name_of(t.ed.path) .. " has unsaved changes · save or close it first")
+--- Put what was copied or cut into the folder the keys are in.
+function act.paste_files()
+  local c = ops.clip
+  if not c or #c.paths == 0 then
+    note("Nothing copied yet · ctrl+c on a file copies it, ctrl+x cuts it")
+    redraw()
+    return
+  end
+  local dest = target_dir()
+  act.transfer(c.paths, dest, c.cut)
+  if c.cut then ops.clip = nil end
+end
+
+--- Files dropped on the window, or dragged onto a folder: into `dest`.
+function act.drop_files(paths, dest, move_them)
+  if not paths or #paths == 0 then return end
+  act.transfer(paths, dest or target_dir(), move_them and true or false)
+end
+
+--- A row dragged over another: where a release would put it. The folder
+--- under the pointer, or the folder of the file under it; nothing when
+--- that is where the dragged things already are, or inside one of them.
+function act.drag_over(from, to)
+  local a, b = listing.rows[from], listing.rows[to]
+  listing.drop_at, listing.drop_dest, listing.drop_paths = nil, nil, nil
+  if a and b and from ~= to then
+    local dest = b.type == "dir" and b.path or parent(b.path)
+    local rows = listing.marked[a.path] and act.targets() or { a }
+    local ok = false
+    for _, r in ipairs(rows) do
+      if dest == r.path or dest:sub(1, #r.path + 1) == r.path .. "/" then ok = false break end
+      if parent(r.path) ~= dest then ok = true end
+    end
+    if ok then
+      listing.drop_dest, listing.drop_paths = dest, paths_of(rows)
+      listing.drop_at = b.type == "dir" and to or nil
+      if not listing.drop_at then
+        for i, r in ipairs(listing.rows) do if r.path == dest then listing.drop_at = i break end end
+      end
+      listing.drop_at = listing.drop_at or 0 -- the folder shown itself
+    end
+  end
+  redraw()
+  return listing.drop_dest ~= nil
+end
+
+--- The button let go: what was dragged moves there (ctrl+z takes it back).
+function act.drag_done()
+  local dest, paths = listing.drop_dest, listing.drop_paths
+  local was = listing.drop_at ~= nil
+  listing.drop_at, listing.drop_dest, listing.drop_paths = nil, nil, nil
+  if dest and paths then
+    listing.marked = {}
+    act.drop_files(paths, dest, true)
+  else
+    redraw()
+  end
+  return was
+end
+
+--- Take the last file operation back.
+function act.undo_files()
+  ops.undo(function(label, result)
+    if not label then
+      note(result == "nothing to take back" and "Nothing to take back" or tostring(result))
       redraw()
       return
     end
-  end
-  local function gone(how)
-    for i = #docs, 1, -1 do
-      local t = docs[i]
-      local p = t.kind == "edit" and t.ed.path or t.path
-      if p == row.path or p:sub(1, #row.path + 1) == row.path .. "/" then act.close_tab(i, true) end
+    for _, m in ipairs(result.made or {}) do
+      if m.from and m.to then moved(m.from, m.to) end
     end
-    moved(row.path, nil)
-    listing.read[parent(row.path)] = nil
-    listing.open[row.path] = nil
-    quick.stale(listing.root)
-    build_rows()
-    fetch_git()
-    note(how)
-    redraw()
+    local failed = result.failed or {}
+    note("Took back: " .. label .. (#failed > 0 and (" · " .. ops.count(#failed, "item") .. " could not: " .. brief(failed[1].why or "", 50)) or ""))
+    local first = result.made and result.made[1]
+    act.reread(first and first.to or nil)
+  end)
+end
+
+function act.duplicate(row)
+  local rows = row and { row } or act.targets()
+  if #rows == 0 then return end
+  local left, last = #rows, nil
+  for _, r in ipairs(rows) do
+    fileops.duplicate(r.path, function(path, why)
+      left = left - 1
+      if not path then bone.notify("Could not duplicate: " .. brief(why), "error") else
+        last = path
+        ops.remember("Duplicated " .. r.name, function(after) ops.discard({ path }, after) end)
+      end
+      if left == 0 and last then
+        listing.marked = {}
+        note(#rows == 1 and ("Made " .. name_of(last)) or ("Made " .. ops.count(#rows, "copy", "copies")))
+        act.reread(last)
+      end
+    end)
   end
-  fileops.trash(row.path, function(ok, why)
-    if not ok and fileops.no_trash(why) then
-      -- No Trash here (a system folder such as /tmp): only for good, and
+end
+
+--- The chosen files to the Trash (ctrl+z puts them back). A place with no
+--- Trash asks before deleting for good.
+function act.trash(row)
+  local rows = row and { row } or act.targets()
+  if #rows == 0 then return end
+  local function under(p, dir) return p == dir or p:sub(1, #dir + 1) == dir .. "/" end
+  -- An open tab with unsaved work in it is not thrown away with its file.
+  for _, r in ipairs(rows) do
+    for _, t in ipairs(docs) do
+      if t.kind == "edit" and t.ed.dirty and under(t.ed.path, r.path) then
+        note(name_of(t.ed.path) .. " has unsaved changes · save or close it first")
+        redraw()
+        return
+      end
+    end
+  end
+  local function gone(paths)
+    for _, path in ipairs(paths) do
+      for i = #docs, 1, -1 do
+        local t = docs[i]
+        local p = t.kind == "edit" and t.ed.path or t.path
+        if under(p, path) then act.close_tab(i, true) end
+      end
+      moved(path, nil)
+      listing.open[path] = nil
+    end
+  end
+  local what = #rows == 1 and rows[1].name or ops.count(#rows, "item")
+  ops.trash(paths_of(rows), function(result)
+    local went = {}
+    for _, m in ipairs(result.made) do went[#went + 1] = m.from end
+    gone(went)
+    listing.marked = {}
+    if #result.no_trash > 0 then
+      -- No Trash there (a system folder such as /tmp): only for good, and
       -- only when you say so.
-      act.confirm("Delete “" .. row.name .. "” for good?",
+      local n = #result.no_trash
+      act.confirm("Delete " .. (n == 1 and ("“" .. name_of(result.no_trash[1]) .. "”") or ops.count(n, "item")) .. " for good?",
         "This place has no Trash, so it cannot be undone.", "Delete", function()
-          fileops.delete(row.path, function(done, err)
-            if not done then bone.notify("Could not delete it: " .. brief(err), "error") return end
-            gone("Deleted " .. row.name)
+          ops.delete(result.no_trash, function(r)
+            local deleted = {}
+            for _, m in ipairs(r.made) do deleted[#deleted + 1] = m.from end
+            gone(deleted)
+            report("Deleted", r)
+            act.reread()
           end)
         end)
+    end
+    if #went > 0 then
+      note("Moved " .. (#went == #rows and what or ops.count(#went, "item")) .. " to the Trash"
+        .. (ops.can_restore() and " · ctrl+z puts it back" or ""))
+    elseif #result.failed > 0 then
+      bone.notify("Could not move it to the Trash: " .. brief(result.failed[1].why), "error")
+    end
+    act.reread()
+  end)
+end
+
+--- What lies in the Trash, back where it came from.
+function act.put_back(row)
+  local rows = row and { row } or act.targets()
+  ops.put_back(paths_of(rows), function(result)
+    report("Put back", result)
+    listing.marked = {}
+    act.reread()
+  end)
+end
+
+function act.empty_trash()
+  act.confirm("Empty the Trash?", "Everything in it is deleted for good.", "Empty", function()
+    ops.empty_trash(function(ok, why)
+      note(ok and "The Trash is empty" or ("The Trash could not be emptied: " .. brief(why or "")))
+      act.reread()
+    end)
+  end)
+end
+
+--- An archive, extracted into a folder of its own beside it; or the chosen
+--- files, into a .zip beside them.
+function act.extract(row)
+  row = row or listing.rows[listing.selected]
+  if not row then return end
+  ops.extract(row.path, function(folder, why)
+    if not folder then
+      note("Could not extract " .. row.name .. ": " .. brief(why or "", 70))
+      redraw()
       return
     end
-    if not ok then bone.notify("Could not move it to the Trash: " .. brief(why), "error") return end
-    gone("Moved " .. row.name .. " to the Trash")
+    listing.open[folder] = true
+    note("Extracted to " .. name_of(folder) .. " · ctrl+z takes it back")
+    act.reread(folder)
   end)
+end
+
+function act.compress(row)
+  local rows = row and { row } or act.targets()
+  if #rows == 0 then return end
+  ops.compress(paths_of(rows), function(zip, why)
+    if not zip then
+      note("Could not compress: " .. brief(why or "", 70))
+      redraw()
+      return
+    end
+    listing.marked = {}
+    note("Made " .. name_of(zip) .. " · ctrl+z takes it back")
+    act.reread(zip)
+  end)
+end
+
+-- ---- places, sorting, what a file is, and what opens it ----------------------------
+
+--- A menu over the tree, from the keys (g, S, O, i): its items at the top.
+function act.menu_open(items, width)
+  menu = { items = items, top = 2, left = 2, where = "tree", at = 1, width = width }
+  if items[1] and items[1].separator then menu.at = 2 end
+  redraw()
+end
+
+--- The folders a file manager keeps a press away: home, the project, the
+--- desktop's own folders (from user-dirs.dirs), what is mounted, the Trash.
+function act.places()
+  local items, seen = {}, {}
+  local function add(label, path, key)
+    path = platform.norm(path)
+    if seen[path] or bone.fs.list(path) == nil then return end
+    seen[path] = true
+    -- As a path is written everywhere: ~ for the home folder.
+    local shown = path
+    local own = platform.home()
+    if own ~= "" and own ~= "/" and (path == own or path:sub(1, #own + 1) == own .. "/") then shown = "~" .. path:sub(#own + 1) end
+    items[#items + 1] = { label = label, key = key or shown, run = function()
+      listing.chosen = true
+      open_folder(path)
+    end }
+  end
+  local house = platform.home()
+  add("Home", house, "~")
+  if home() ~= house then add("This chat's folder", home()) end
+  -- The desktop's folders, as it names them: XDG_DOWNLOAD_DIR="$HOME/Downloads".
+  local config = os.getenv("XDG_CONFIG_HOME")
+  if not config or config == "" then config = house .. "/.config" end
+  local dirs = io.open(config .. "/user-dirs.dirs", "r")
+  local named = {}
+  if dirs then
+    for line in dirs:lines() do
+      local which, value = line:match('^XDG_(%u+)_DIR="(.-)"')
+      if which then named[which] = (value:gsub("^%$HOME", house)) end
+    end
+    dirs:close()
+  end
+  for _, which in ipairs({ "DESKTOP", "DOCUMENTS", "DOWNLOAD", "PICTURES", "VIDEOS", "MUSIC" }) do
+    local path = named[which] or (house .. "/" .. ({ DESKTOP = "Desktop", DOCUMENTS = "Documents", DOWNLOAD = "Downloads",
+      PICTURES = "Pictures", VIDEOS = "Videos", MUSIC = "Music" })[which])
+    if path ~= house then add(name_of(path), path) end
+  end
+  items[#items + 1] = { separator = true }
+  add("Computer", "/", "/")
+  -- What is mounted: disks, sticks, shares. Not the system's own corners.
+  local mounts = io.open("/proc/mounts", "r")
+  if mounts then
+    local real = { ext4 = 1, ext3 = 1, ext2 = 1, btrfs = 1, xfs = 1, f2fs = 1, vfat = 1, exfat = 1, ntfs = 1, ntfs3 = 1,
+      fuseblk = 1, nfs = 1, nfs4 = 1, cifs = 1, smb3 = 1, zfs = 1, iso9660 = 1, udf = 1, ["fuse.sshfs"] = 1, ["fuse.rclone"] = 1 }
+    for line in mounts:lines() do
+      local _, where, kind = line:match("^(%S+) (%S+) (%S+)")
+      if where and real[kind] then
+        where = where:gsub("\\(%d%d%d)", function(o) return string.char(tonumber(o, 8)) end)
+        local system = where == "/" or where == "/home" or where:match("^/boot") or where:match("^/efi")
+          or where:match("^/nix") or where:match("^/var/") or where:match("^/snap") or where:match("^/sys")
+          or where:match("^/proc") or where:match("^/dev") or where:match("^/run/user") or where:match("^/tmp")
+        if not system then add(name_of(where), where) end
+      end
+    end
+    mounts:close()
+  end
+  items[#items + 1] = { separator = true }
+  local trash = ops.trash_dir()
+  if bone.fs.list(trash) then
+    items[#items + 1] = { label = "Trash", key = "put back from here", run = function()
+      listing.chosen = true
+      open_folder(trash)
+      note("The Trash · right click (or u) puts a file back where it was")
+    end }
+    items[#items + 1] = { label = "Empty the Trash…", danger = true, run = function() act.empty_trash() end }
+  end
+  act.menu_open(items, 46)
+end
+
+function act.sort_menu()
+  local items = {}
+  for _, by in ipairs({ { "name", "Name" }, { "modified", "Last changed" }, { "size", "Size" }, { "kind", "Kind" } }) do
+    local on_it = listing.sort == by[1]
+    items[#items + 1] = { label = (on_it and "● " or "  ") .. by[2], key = on_it and (listing.sort_desc and "↑ turn round" or "↓ turn round") or "",
+      run = function() act.sort_by(by[1]) end }
+  end
+  act.menu_open(items)
+end
+
+--- What a row is, asked of the system: kind, size (a folder's, counted),
+--- dates, who may do what. Each line is a press away from the clipboard.
+function act.properties(row)
+  row = row or listing.rows[listing.selected]
+  if not row then return end
+  local qp = quoted(row.path)
+  local items = {
+    { label = "Name", key = row.name },
+    { label = "Where", key = display(parent(row.path)) },
+    { label = "Reading…", key = "", off = true },
+  }
+  local function show()
+    for _, it in ipairs(items) do
+      if not it.off and not it.separator and not it.run then
+        local value = it.value or it.key
+        it.run = function()
+          clip.copy(value, function() end)
+          note("Copied " .. brief(value, 60))
+        end
+      end
+    end
+    act.menu_open(items, 58)
+  end
+  show()
+  local shown = menu
+  -- GNU stat; what it cannot say is left out.
+  bone.job.start("stat -c 'kind\t%F\nbytes\t%s\nchanged\t%y\nmode\t%A (%a)\nowner\t%U:%G\nlinks\t%h' -- " .. qp .. " 2>/dev/null; "
+    .. "printf 'mime\t%s\n' \"$(file -b --mime-type -- " .. qp .. " 2>/dev/null)\"; "
+    .. "[ -L " .. qp .. " ] && printf 'target\t%s\n' \"$(readlink -- " .. qp .. ")\"; "
+    .. "[ -d " .. qp .. " ] && { printf 'holds\t%s\n' \"$(find " .. qp .. " -mindepth 1 2>/dev/null | head -n 200000 | wc -l)\"; "
+    .. "printf 'disk\t%s\n' \"$(du -sh -- " .. qp .. " 2>/dev/null | cut -f1)\"; }; true",
+    { name = "files: properties", timeout = 20000, buffer = true, on_exit = function(r)
+      if menu ~= shown then return end
+      local got = {}
+      for line in ((r and r.stdout) or ""):gmatch("[^\n]+") do
+        local k, v = line:match("^(%w+)\t(.*)$")
+        if k then got[k] = v end
+      end
+      items = { items[1], items[2] }
+      local function add(label, value, full)
+        if value and value ~= "" then items[#items + 1] = { label = label, key = value, value = full } end
+      end
+      add("Kind", got.kind and (got.kind .. ((got.mime and got.mime ~= "") and (" · " .. got.mime) or "")) or got.mime)
+      if got.disk then
+        add("Size", got.disk .. " on disk · " .. tostring(got.holds or "?") .. " items inside")
+      elseif got.bytes then
+        add("Size", (size_of(tonumber(got.bytes)) or "") .. " (" .. got.bytes .. " bytes)", got.bytes)
+      end
+      add("Changed", got.changed and got.changed:gsub("%.%d+", "") or nil)
+      add("Permissions", got.mode)
+      add("Owner", got.owner)
+      add("Points to", got.target)
+      if row.type == "file" then
+        local w, h = image.size(row.path)
+        if w and h then add("Picture", w .. " × " .. h) end
+      end
+      local sign, mark = sign_of(row.path), mark_of(row.path)
+      if sign then add("Git", sign == "?" and "not tracked" or sign) end
+      if mark then add("This session", "written " .. (mark.writes or 1) .. " time" .. ((mark.writes or 1) == 1 and "" or "s")) end
+      items[#items + 1] = { separator = true }
+      items[#items + 1] = { label = "Copy full path", key = "Y", run = function() act.copy_path(row.path, true) end }
+      show()
+    end })
+end
+
+--- The applications that open a file's kind, the desktop's default first.
+function act.open_with(row)
+  row = row or listing.rows[listing.selected]
+  if not row or row.type ~= "file" then return end
+  local qp = quoted(row.path)
+  note("Asking what opens " .. row.name .. "…")
+  redraw()
+  -- The kind, the default, then every application registered for it with
+  -- the name its .desktop file gives it.
+  bone.job.start("mime=$(xdg-mime query filetype " .. qp .. " 2>/dev/null); [ -n \"$mime\" ] || mime=$(file -b --mime-type -- " .. qp .. "); "
+    .. "printf 'mime\t%s\n' \"$mime\"; printf 'default\t%s\n' \"$(xdg-mime query default \"$mime\" 2>/dev/null)\"; "
+    .. "ids=$(gio mime \"$mime\" 2>/dev/null | sed -n 's/^[[:space:]]\\{1,\\}\\(.*\\.desktop\\)$/\\1/p' | awk '!seen[$0]++'); "
+    .. "dirs=\"${XDG_DATA_HOME:-$HOME/.local/share}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}\"; "
+    .. "for id in $ids; do name=; old=$IFS; IFS=:; for d in $dirs; do f=\"$d/applications/$id\"; "
+    .. "if [ -f \"$f\" ]; then name=$(sed -n 's/^Name=//p' \"$f\" | head -n 1); break; fi; done; IFS=$old; "
+    .. "printf 'app\t%s\t%s\n' \"$id\" \"${name:-$id}\"; done",
+    { name = "files: open with", timeout = 8000, buffer = true, on_exit = function(r)
+      local default, items = nil, {}
+      for line in ((r and r.stdout) or ""):gmatch("[^\n]+") do
+        local id, name = line:match("^app\t([^\t]+)\t(.*)$")
+        if id then
+          items[#items + 1] = { label = name, id = id, run = function()
+            bone.job.start("d=; command -v setsid >/dev/null 2>&1 && d='setsid -f'; $d gtk-launch " .. quoted(id) .. " " .. qp
+              .. " >/dev/null 2>&1 </dev/null &", { name = "files: launch", timeout = 5000, buffer = true })
+            note("Opened " .. row.name .. " with " .. name)
+          end }
+        else
+          default = line:match("^default\t(.+)$") or default
+        end
+      end
+      table.sort(items, function(x, y)
+        if (x.id == default) ~= (y.id == default) then return x.id == default end
+        return x.label:lower() < y.label:lower()
+      end)
+      for _, it in ipairs(items) do if it.id == default then it.key = "default" end end
+      listing.note = nil
+      if #items == 0 then
+        note("Nothing here says it opens " .. row.name .. " · o tries the desktop's own choice")
+        redraw()
+        return
+      end
+      act.menu_open(items, 44)
+    end })
 end
 
 -- ---- quick open -----------------------------------------------------------------
@@ -2304,21 +3037,46 @@ function act.tree_menu(i, top, left)
       add("Open in the built-in editor", "E", function() open_editor(row.path) end)
     end
     add("Open with the desktop's app", "o", function() open_externally() end)
+    add("Open with…", "O", function() act.open_with(row) end)
+    add("Show changes", "d", function() act.show_changes(row.path) end)
     add("Add to chat", "ctrl+k", function() act.to_chat(row.path) end)
   else
     add(listing.open[row.path] and "Close folder" or "Open folder", "→", function() activate(i) end)
     add("Show in this panel only", nil, function() listing.chosen = true open_folder(row.path) end)
   end
+  -- With several rows marked and this one among them, the menu is theirs.
+  local many = listing.marked[row.path] and act.marked_count() > 1
+  local these = many and nil or row
+  local n = many and (" " .. act.marked_count() .. " items") or ""
+  line()
+  if ops.in_trash(row.path) then
+    add("Put back" .. n, "u", function() act.put_back(these) end)
+    line()
+  end
+  add("Cut" .. n, "ctrl+x", function() if not many then listing.marked = { [row.path] = true } end act.copy_files(true) end)
+  add("Copy" .. n, "ctrl+c", function() if not many then listing.marked = { [row.path] = true } end act.copy_files(false) end)
+  if ops.clip then
+    add("Paste " .. ops.count(#ops.clip.paths, "item") .. " here", "ctrl+v", function() act.paste_files() end)
+  end
+  if #ops.journal > 0 then
+    add("Take back: " .. brief(ops.journal[#ops.journal].label, 18), "ctrl+z", function() act.undo_files() end)
+  end
   line()
   add("New file…", "a", function() act.new_file() end)
   add("New folder…", "A", function() act.new_folder() end)
   line()
+  if not many and row.type == "file" and ops.archive_stem(row.name) then
+    add("Extract here", "x", function() act.extract(row) end)
+  end
+  add("Compress" .. n .. " to .zip", "z", function() act.compress(these) end)
+  add("Properties", "i", function() act.properties(row) end)
+  line()
   add("Copy path", "y", function() act.copy_path(row.path, false) end)
   add("Copy full path", "Y", function() act.copy_path(row.path, true) end)
   line()
-  add("Rename…", "R", function() act.rename(row) end)
-  add("Duplicate", "D", function() act.duplicate(row) end)
-  add("Move to Trash", "delete", function() act.trash(row) end)
+  if not many then add("Rename…", "R", function() act.rename(row) end) end
+  add("Duplicate" .. n, "D", function() act.duplicate(these) end)
+  add("Move" .. n .. " to Trash", "delete", function() act.trash(these) end)
   items[#items].danger = true
   menu = { items = items, top = top, left = left, where = "tree" }
   redraw()
@@ -2374,7 +3132,10 @@ end
 -- the window's).
 --- The wheel over the panel: what is under it scrolls, the caret stays.
 function act.wheel(by)
-  if pane == EDIT and doc == "edit" and (editor.shown == "buffer" or editor.shown == "split") then
+  if pane == EDIT and doc == "edit" and editor.shown == "table" then
+    local t = sheet.of(editor)
+    if not t.edit then sheet.move(t, by, 0) end
+  elseif pane == EDIT and doc == "edit" and (editor.shown == "buffer" or editor.shown == "split") then
     editor.ttop = math.max(1, math.min((editor.ttop or 1) + by, #editor.lines))
     editor.tscrolled = true
   elseif pane == EDIT or pane == PREVIEW then
@@ -2426,6 +3187,13 @@ local function tui_mouse(ev)
       redraw()
       return true
     end
+    -- A row of the tree: the press is taken on release, so that holding it
+    -- and going to a folder drags the row there instead.
+    local over = pane ~= SEARCH and side == FILES and tlook.tree_at(line, col) or nil
+    if over and ev.button == "left" and not listing.filter_typing then
+      act.row_drag = { from = over, line = line, col = col, moved = false }
+      return true
+    end
     if tlook.press(line, col) then tdrag = nil return true end
     local li, byte = tlook.editor_at(line, col, editor)
     if li and doc == "edit" then
@@ -2443,6 +3211,20 @@ local function tui_mouse(ev)
       tdrag = { line = li, col = byte }
       redraw()
     end
+    return true
+  elseif ev.action == "drag" and act.row_drag then
+    local over = tlook.tree_at(line, col)
+    if over and over ~= act.row_drag.from then
+      act.row_drag.moved = true
+      act.drag_over(act.row_drag.from, over)
+    elseif act.row_drag.moved then
+      act.drag_over(act.row_drag.from, act.row_drag.from)
+    end
+    return true
+  elseif ev.action == "up" and act.row_drag then
+    local d = act.row_drag
+    act.row_drag = nil
+    if d.moved then act.drag_done() else tlook.press(d.line, d.col) end
     return true
   elseif ev.action == "drag" and tdrag and doc == "edit" then
     local li, byte = tlook.editor_at(line, col, editor)
@@ -2664,6 +3446,8 @@ end
 --- its tab: the desktop shows it beside the column, a terminal (one pane at a
 --- time) has it a tab or ctrl+tab away.
 local function leave_editor()
+  -- The question about unsaved work goes with the pane it was asked in.
+  if editor.confirm then editor.status = nil end
   editor.confirm = false
   set_pane(side)
   if side == FILES then build_rows() end
@@ -2674,8 +3458,7 @@ end
 local function common_key(k)
   local lower = k:lower()
   if lower == "ctrl+p" then act.quick_open() return true end
-  if lower == "ctrl+tab" or lower == "ctrl+pagedown" then act.cycle(1) return true end
-  if lower == "ctrl+shift+tab" or lower == "ctrl+pageup" then act.cycle(-1) return true end
+  if act.tab_key(k) then return true end
   if lower == "ctrl+w" and doc then act.close_tab() return true end
   return false
 end
@@ -2720,17 +3503,33 @@ end
 local function edit_key(k)
   local lower = k:lower()
   if not GUI and field_key(k) then redraw() return true end
-  if lower == "ctrl+tab" or lower == "ctrl+pagedown" then act.cycle(1) return true end
-  if lower == "ctrl+shift+tab" or lower == "ctrl+pageup" then act.cycle(-1) return true end
+  if act.tab_key(k) then return true end
   if lower == "ctrl+w" then act.close_tab() return true end
   if lower == "ctrl+p" then act.quick_open() return true end
   if lower == "ctrl+k" then act.editor_to_chat() return true end
   if lower == "alt+z" and GUI then act.toggle_wrap() return true end
+  if lower == "alt+t" and sheet.is(name_of(editor.path)) and (GUI or tlook) then
+    editor.shown = editor.shown == "table" and "buffer" or "table"
+    redraw()
+    return true
+  end
+  if editor.shown == "table" then
+    -- The table's own keys first; what it leaves (save, the ways out) below.
+    if sheet.key(editor, k, act.sheet_env()) then redraw() return true end
+    if k == "ctrl+s" then save_editor(false) redraw() return true end
+    if k == "ctrl+o" then save_editor(true) redraw() return true end
+    if k == "ctrl+g" then editor.shown = "changes" redraw() return true end
+    if k == "e" then editor.shown = "buffer" redraw() return true end
+    if k == "esc" or k == "q" then leave_editor() return true end
+    return false
+  end
   if editor.shown ~= "buffer" and editor.shown ~= "split" then
     if tlook and READ_KEYS[k] then act.scroll_reading(READ_KEYS[k]) return true end
     -- Reading rather than typing: only the ways back, and saving.
     if k == "ctrl+g" then
       editor.shown = "buffer"
+    elseif k == "b" and editor.shown == "changes" then
+      act.changes_switch()
     elseif lower == "ctrl+shift+v" or k == "alt+m" then
       editor.shown = "buffer"
     elseif k == "e" or k == "enter" then
@@ -2787,7 +3586,12 @@ local function edit_key(k)
   elseif k == "ctrl+g" then
     editor.shown = editor.shown == "changes" and "buffer" or "changes"
   elseif lower == "ctrl+shift+v" or k == "alt+m" then
-    editor.shown = kinds.of(name_of(editor.path)) == "html" and "html" or "markdown"
+    local kind = kinds.of(name_of(editor.path))
+    if kind == "html" or kind == "markdown" then
+      editor.shown = kind == "html" and act.html_mode() or kind
+    else
+      editor_note("Not Markdown or HTML")
+    end
   elseif k == "ctrl+a" then
     buffer.select_all(editor)
   elseif k == "ctrl+c" or lower == "ctrl+insert" then
@@ -3021,6 +3825,31 @@ local function tree_key(k)
     return true
   end
   local row = listing.rows[listing.selected]
+  local lower = k:lower()
+  -- Several rows at once: space marks one, shift and an arrow a run.
+  if k == "space" or k == " " then act.mark_toggle() return true end
+  if lower == "shift+down" then act.mark_move(1) return true end
+  if lower == "shift+up" then act.mark_move(-1) return true end
+  if lower == "ctrl+a" then act.mark_all() return true end
+  if k == "esc" and next(listing.marked) then act.mark_clear() return true end
+  if lower == "ctrl+c" then
+    -- While the agent is working ctrl+c stops it, as everywhere: only an
+    -- idle chat leaves the key to the files.
+    local ok, session = pcall(function() return bone.chat.session() end)
+    if ok and type(session) == "table" and session.running then return false end
+    act.copy_files(false)
+    return true
+  end
+  if lower == "ctrl+x" then act.copy_files(true) return true end
+  if lower == "ctrl+v" or lower == "shift+insert" then act.paste_files() return true end
+  if lower == "ctrl+z" then act.undo_files() return true end
+  if k == "g" then act.places() return true end
+  if k == "S" then act.sort_menu() return true end
+  if k == "O" then act.open_with() return true end
+  if k == "i" then act.properties() return true end
+  if k == "u" and row and ops.in_trash(row.path) then act.put_back() return true end
+  if k == "x" and row and row.type == "file" and ops.archive_stem(row.name) then act.extract() return true end
+  if k == "z" then act.compress() return true end
   if k == "q" then
     close_panel()
     return true
@@ -3029,8 +3858,19 @@ local function tree_key(k)
   if k == "L" then act.pick_named() return true end
   if k == "a" then act.new_file() return true end
   if k == "A" then act.new_folder() return true end
-  if k == "R" or k == "f2" then act.rename() return true end
+  if k == "R" or k == "f2" then
+    if act.marked_count() > 1 then note("Rename takes one file at a time · esc clears the marks") redraw() return true end
+    act.rename()
+    return true
+  end
   if k == "D" then act.duplicate() return true end
+  if k == "d" then
+    if row and row.type == "file" and not act.show_changes(row.path) then
+      note(row.name .. " has no lines to compare")
+      redraw()
+    end
+    return true
+  end
   if k == "delete" or k == "ctrl+backspace" then act.trash() return true end
   if k == "y" or k == "Y" then
     if row then act.copy_path(row.path, k == "Y") end
@@ -3063,6 +3903,15 @@ local function tree_key(k)
     return true
   end
   if k == "esc" and doc then
+    -- In a terminal the tree may be all that shows: esc closes a file with
+    -- nothing unsaved, and leaves one with unsaved work open (ctrl+w is how
+    -- that one is closed, in its own pane, where it asks).
+    local t = docs[doc_at]
+    if not GUI and t and t.kind == "edit" and t.ed.dirty then
+      note(name_of(t.ed.path) .. " has unsaved changes · tab goes back to it")
+      redraw()
+      return false -- the keyboard goes to the prompt, the file stays
+    end
     return close_doc()
   end
   if k == "ctrl+s" and doc == "edit" then
@@ -3146,8 +3995,7 @@ local function desktop_move(k)
       return true
     end
     if k == "enter" or k == "space" or k == "right" then
-      local item = changed_rows[listing.changed_selected]
-      if item then reveal(item.path) end
+      act.open_change(changed_rows[listing.changed_selected])
       return true
     end
     return nil
@@ -3187,7 +4035,7 @@ local function desktop_move(k)
         open_folder(up)
       end
     end
-  elseif k == "enter" or k == "space" then
+  elseif k == "enter" then
     activate(listing.selected)
   else
     return nil
@@ -3236,7 +4084,13 @@ local function on_key(k)
       return true
     end
     if not GUI then
-      if k == "enter" then act.answer(ask.value) return true end
+      if k == "enter" then act.answer(ask.value .. (ask.suffix or "")) return true end
+      if ask.suffix and (k == "right" or k == "end" or k == "delete") then
+        -- Into the extension: the whole name is the field from here on.
+        ask.value, ask.suffix = ask.value .. (k == "delete" and "" or ask.suffix), nil
+        redraw()
+        return true
+      end
       local v = bone.text.edit(ask.value, k)
       if v then ask.value, ask.error = v, nil redraw() end
     end
@@ -3390,9 +4244,80 @@ end
 
 --- There is no session-switch event: watch the session while the panel is open,
 --- and start again when its folder is a different one.
+--- What a folder holds, as one word: its names, kinds, sizes and times.
+local function folder_mark(list)
+  local parts = {}
+  for i, e in ipairs(list) do
+    parts[i] = e.name .. "\0" .. e.type .. "\0" .. tostring(e.size) .. "\0" .. tostring(e.modified)
+  end
+  return table.concat(parts, "\1")
+end
+
+local POLL_DIRS = 40     -- the most folders looked at each time
+local POLL_ENTRIES = 3000 -- a folder with more than this is left to `r`
+
+--- Live refresh: every folder the tree has read is listed again and set
+--- against what it held; one that changed (a file made, removed, renamed or
+--- written by anything: the agent, a build, another program) is read again,
+--- with Git's markers. Cheap, and it backs off by itself when it is not:
+--- act.poll_every grows when a look took long.
+function act.poll()
+  if ops.busy or ask or listing.filter_typing or quick_on then return end
+  local t0 = os.clock()
+  local changed, looked = false, 0
+  for dir, entries in pairs(listing.read) do
+    if looked >= POLL_DIRS then break end
+    if #entries <= POLL_ENTRIES then
+      looked = looked + 1
+      local list = bone.fs.list(dir)
+      if list then
+        local now = folder_mark(list)
+        act.polled = act.polled or {}
+        local before = act.polled[dir]
+        act.polled[dir] = now
+        if before and before ~= now then
+          listing.read[dir] = nil
+          changed = true
+        end
+      elseif dir ~= listing.root then
+        -- The folder itself went.
+        listing.read[dir], listing.open[dir] = nil, nil
+        if act.polled then act.polled[dir] = nil end
+        changed = true
+      end
+    end
+  end
+  local took = os.clock() - t0
+  act.poll_every = took > 0.02 and math.min(20, (act.poll_every or 4) * 2) or math.max(4, (act.poll_every or 4) - 1)
+  -- A folder that takes a quarter of a second to list (a share over a slow
+  -- line) would make the panel stutter: there the looking stops, and says so.
+  if took > 0.25 then
+    act.poll_every = 1e9
+    note("Live refresh is off here: this folder is slow to list · r reads it again")
+  end
+  if changed then
+    quick.stale(listing.root)
+    build_rows()
+    redraw()
+    -- Git once per burst of changes, a moment after the last of them.
+    act.git_due = (act.git_due or 0) + 1
+    local due = act.git_due
+    bone.defer(700, function()
+      if due == act.git_due and panel and panel:is_open() then fetch_git() end
+    end)
+  end
+end
+
 local function watch(token)
   bone.defer(500, function()
     if token ~= watcher or not panel or not panel:is_open() then return end
+    -- Every fourth look (two seconds), or less often when looking is slow.
+    act.poll_tick = (act.poll_tick or 0) + 1
+    if act.poll_tick >= (act.poll_every or 4) then
+      act.poll_tick = 0
+      local ok, why = pcall(act.poll)
+      if not ok and not act.poll_failed then act.poll_failed = true bone.notify("files: live refresh stopped: " .. tostring(why), "error") end
+    end
     local where = home()
     if where ~= listing.root then
       -- A folder you asked for stays yours, and so does one a reveal moved
@@ -3454,10 +4379,23 @@ local bridge = {
         search_note = search_note, search_error = search_error, keys_here = keys_here,
         home = platform.home(), leaf = name_of(listing.root), relative = relative,
         docs = docs, doc_at = doc_at, quick_on = quick_on, quick_q = quick_q, quick_sel = quick_sel,
-        ask = ask, menu = menu, following = act.following,
+        ask = ask, menu = menu, following = act.following, tree_left = SETTINGS.tree_left,
       }
     end,
     act = act,
+    ops = ops,
+    mark = function(i) act.mark_toggle(i, true) end,
+    sheet = function() return sheet.of(editor) end,
+    -- A press on a cell puts the keys there; a second one on it edits it.
+    cell = function(r, c)
+      local t = sheet.of(editor)
+      local again = t.r == r and t.c == c and pane == EDIT and not t.edit
+      sheet.go(editor, r, c)
+      if again then t.edit = { value = sheet.value(t) } end
+      set_pane(EDIT)
+      redraw()
+    end,
+    when = when_of,
     -- The editor, changed by `fn(editor)` (a press, a drag), then drawn again.
     edit = function(fn)
       fn(editor)
@@ -3584,8 +4522,7 @@ local bridge = {
     end,
     open_changed = function(i)
       listing.changed_selected = i
-      local item = changed_rows[i]
-      if item then reveal(item.path) end
+      act.open_change(changed_rows[i])
     end,
     changed_items = changed_items,
     changed_count = function()
@@ -3606,6 +4543,7 @@ local bridge = {
     save = function(force) save_editor(force) end,
     reload_editor = function() reload_editor() end,
     editor_changes = function() return (editor_changes()) end,
+    changes = function() return editor_changes() end,
     open_externally = function() open_externally() end,
     pdf_view = function(v)
       preview.pdf_view = v
@@ -3621,6 +4559,32 @@ local bridge = {
 }
 if look then look.setup(bridge) end
 if tlook then tlook.setup(bridge) end
+
+--- Files dropped on the window from another program. The window does not
+--- say where they fell, so the tree takes them when it has the keys (they
+--- are copied into the folder the keys are in; ctrl+z takes it back), and
+--- the message gets them otherwise, as before.
+function act.takes_drop(paths)
+  if not (panel and panel:is_open()) or keys_here == false or pane ~= FILES or type(paths) ~= "table" or #paths == 0 then
+    return false
+  end
+  local list = {}
+  for _, p in ipairs(paths) do list[#list + 1] = platform.norm(tostring(p)) end
+  act.drop_files(list, target_dir(), false)
+  return true
+end
+if GUI then
+  local ok, attach = pcall(require, "bone.desktop.attach")
+  if ok and type(attach) == "table" and type(attach.add) == "function" and not attach.files_takes then
+    local add = attach.add
+    attach.files_takes = true
+    attach.add = function(paths, ...)
+      local took, did = pcall(act.takes_drop, paths)
+      if took and did then return end
+      return add(paths, ...)
+    end
+  end
+end
 
 open = function()
   if bone.ui.panel.get(ID) then bone.ui.panel.close(ID) end
@@ -3638,10 +4602,10 @@ open = function()
       -- before the deferred save runs, so it does not count as closing.
       bone.defer(300, function()
         if panel then return end
-        local ok, saved = pcall(bone.state.load, SESSION)
-        if ok and type(saved) == "table" then
+        local saved = act.session()
+        if type(saved) == "table" then
           saved.shown = false
-          pcall(bone.state.save, SESSION, saved)
+          act.keep_session(saved)
         end
       end)
     end,
@@ -3785,8 +4749,10 @@ bone.cmd.create("editor", function(c)
   local path, line = rest:match("^(.-)%s+(%d+)$")
   if not path then path, line = rest, nil end
   if not (panel and panel:is_open()) then open() else take_keys_soon() end
-  if not act.external_open(absolute(path), line) then open_editor(absolute(path), line) end
-end, { desc = "edit a file in the sidebar, at a line if you give one",
+  -- Text goes to the editor; a picture, a PDF, a video or any file with no
+  -- text in it opens in the preview instead of being refused as binary.
+  open_file(absolute(path), line)
+end, { desc = "open a file in the sidebar: text in the editor (at a line if you give one), anything else in the preview",
   aliases = { "edit" }, complete = complete_paths })
 
 -- ---- paste -------------------------------------------------------------------
@@ -3795,6 +4761,21 @@ end, { desc = "edit a file in the sidebar, at a line if you give one",
 -- turns ctrl+v into a paste (not a key), and a terminal's own paste arrives
 -- the same way.
 bone.on("paste", function(ev)
+  -- In the tree a paste is the files that were copied or cut.
+  if panel and panel:is_open() and keys_here ~= false and pane == FILES and ops.clip and not ask and not quick_on
+    and not listing.filter_typing then
+    act.paste_files()
+    return true
+  end
+  if panel and panel:is_open() and keys_here ~= false and pane == EDIT and doc == "edit" and editor.shown == "table"
+    and ev and type(ev.text) == "string" then
+    local t = sheet.of(editor)
+    if t.edit then t.edit.value = t.edit.value .. (ev.text:gsub("[\r\n]+$", ""):gsub("[\r\n\t]", " "))
+    elseif t.filtering then t.filter = t.filter .. ev.text:gsub("[\r\n\t]", " ")
+    else sheet.paste(editor, ev.text, act.sheet_env()) end
+    redraw()
+    return true
+  end
   if not (panel and panel:is_open()) or keys_here == false or pane ~= EDIT or doc ~= "edit"
     or (editor.shown ~= "buffer" and editor.shown ~= "split") or not ev or type(ev.text) ~= "string" then
     return
@@ -3815,8 +4796,8 @@ end)
 
 --- This process: its id and when it started (Linux). A reload keeps the
 --- process; a new start of bone does not, so this tells the two apart.
-local function process_mark()
-  local f = io.open("/proc/self/stat", "r")
+local function process_mark(of)
+  local f = io.open("/proc/" .. tostring(of or "self") .. "/stat", "r")
   if not f then return nil end
   local line = f:read("*l") or ""
   f:close()
@@ -3829,6 +4810,38 @@ local function process_mark()
   return pid .. ":" .. tostring(fields[20])
 end
 local SESSION_TEXT = 2 * 1024 * 1024 -- the most unsaved text kept per tab
+
+--- The panels kept for a reload, one per bone process: several bones share
+--- this state (two terminals, a terminal and the desktop app), and a reload
+--- in one must not bring back the other's tabs and unsaved text.
+function act.sessions()
+  local ok, saved = pcall(bone.state.load, SESSION)
+  if not ok or type(saved) ~= "table" then return {} end
+  if type(saved.by_process) == "table" then return saved.by_process end
+  -- Before 3.7 there was one panel: whichever process saved last.
+  if saved.root then return { [saved.process or "any"] = saved } end
+  return {}
+end
+
+--- This process's own name among them ("any" where there is no /proc).
+function act.session_key() return process_mark() or "any" end
+
+--- What this process saved, or nil.
+function act.session() return act.sessions()[act.session_key()] end
+
+--- Keep `data` (nil: forget it) as this process's panel. Panels of
+--- processes that have ended, or a day old, go.
+function act.keep_session(data)
+  local all, mine, now = act.sessions(), act.session_key(), os.time()
+  for key, held in pairs(all) do
+    local pid = tostring(key):match("^(%d+):")
+    if key ~= mine and ((pid and process_mark(pid) ~= key) or now - (tonumber(held.at) or 0) > 86400) then
+      all[key] = nil
+    end
+  end
+  all[mine] = data
+  pcall(bone.state.save, SESSION, { by_process = all })
+end
 
 function act.save_now()
   if not (panel and panel:is_open()) then return end
@@ -3849,16 +4862,16 @@ function act.save_now()
     end
   end
   local data = {
-    shown = true, process = process_mark(), root = listing.root, chosen = listing.chosen or false, hidden = listing.hidden,
+    shown = true, process = act.session_key(), root = listing.root, chosen = listing.chosen or false, hidden = listing.hidden,
     open = open_dirs, side = side, pane = pane, docs = tabs, doc_at = doc_at,
-    following = act.following or false,
+    following = act.following or false, sort = listing.sort, sort_desc = listing.sort_desc,
   }
   -- Written only when it says something new.
   local ok, encoded = pcall(bone.json.encode, data)
   if ok and encoded == act.saved_as then return end
   act.saved_as = ok and encoded or nil
   data.at = os.time()
-  pcall(bone.state.save, SESSION, data)
+  act.keep_session(data)
 end
 
 --- A save a second after the first change, taking every change made by then
@@ -3874,14 +4887,18 @@ end
 
 --- Put back what was saved, after the panel opened again.
 function act.restore()
-  local ok, saved = pcall(bone.state.load, SESSION)
-  if not ok or type(saved) ~= "table" or not saved.root or os.time() - (saved.at or 0) > 86400 then return end
+  local saved = act.session()
+  if type(saved) ~= "table" or not saved.root or os.time() - (saved.at or 0) > 86400 then return end
   listing.hidden = saved.hidden and true or false
   listing.chosen = saved.chosen and true or false
   open_folder(saved.root)
   for _, dir in ipairs(saved.open or {}) do listing.open[dir] = true end
   build_rows()
   act.following = saved.following and true or false
+  if saved.sort and saved.sort ~= listing.sort or (saved.sort_desc and true or false) ~= listing.sort_desc then
+    listing.sort, listing.sort_desc = saved.sort or "name", saved.sort_desc and true or false
+    build_rows(true)
+  end
   for _, t in ipairs(saved.docs or {}) do
     if t.kind == "edit" and t.path and fileops.exists(t.path) then
       open_editor(t.path, t.line)
@@ -4204,9 +5221,8 @@ bone.on("ready", function(ev)
   -- The desktop's ready says nothing: the saved session says whether this
   -- panel was open, and in this very process (a reload, not a new start).
   if not back then
-    local ok, saved = pcall(bone.state.load, SESSION)
-    local mark = process_mark()
-    back = ok and type(saved) == "table" and saved.shown == true and mark ~= nil and saved.process == mark
+    local saved = process_mark() and act.session()
+    back = type(saved) == "table" and saved.shown == true
   end
   if back and not (panel and panel:is_open()) then
     panel = nil

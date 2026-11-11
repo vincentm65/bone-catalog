@@ -264,13 +264,15 @@ function M.pause(p)
 end
 
 --- Where a playing preview is, at canvas time `now` (seconds): the frame,
---- and the position in the video; at the end of its part, the next part.
+--- the position in the video, and the frame's place in its part (so the
+--- look can have the next ones read before they are due); at the end of its
+--- part, the next part.
 function M.tick(p, now)
   local c = p.clip
   if not c then return nil end
   if not p.playing then
     local i = math.max(1, math.min(#c.frames, math.floor(((p.position or c.start) - c.start) * c.fps) + 1))
-    return c.frames[i], p.position or c.start
+    return c.frames[i], p.position or c.start, i
   end
   if not c.t0 then c.t0 = now - math.max(0, (p.position or c.start) - c.start) end
   local elapsed = now - c.t0
@@ -282,14 +284,40 @@ function M.tick(p, now)
     if next_from < dur - 0.2 and not p.buffering then
       bone.defer(0, function() M.play(p, next_from) end)
     elseif not p.buffering then
+      -- The end: back to the start, on the poster (this part's frames are
+      -- the video's last seconds, not its first).
       p.playing = false
       p.position = 0
-      c.t0 = nil
+      p.clip = nil
+      bone.defer(0, redraw)
+      return nil, 0
     end
-    return c.frames[#c.frames], c.start + #c.frames / c.fps
+    return c.frames[#c.frames], c.start + #c.frames / c.fps, #c.frames
   end
   p.position = c.start + elapsed
-  return c.frames[i], p.position
+  return c.frames[i], p.position, i
+end
+
+--- Go to `at` seconds: playing from there, or (paused) showing that moment
+--- once its part is made.
+function M.seek(p, at)
+  if not p.info or not p.dir then return end
+  local dur = p.info.duration or 0
+  at = math.max(0, math.min(at or 0, math.max(0, dur - 0.1)))
+  local c = p.clip
+  -- Inside the part that is loaded: nothing to make.
+  if c and at >= c.start and at < c.start + #c.frames / c.fps then
+    p.position = at
+    c.t0 = nil
+    redraw()
+    return
+  end
+  local was_playing = p.playing
+  M.play(p, at)
+  if not was_playing then
+    -- Paused it stays, on the new moment.
+    p.playing = false
+  end
 end
 
 -- ---- 3D ----------------------------------------------------------------------

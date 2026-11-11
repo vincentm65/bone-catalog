@@ -1,6 +1,6 @@
 # Files
 
-A file explorer, a file viewer and a text editor, in one sidebar docked at the
+A file manager, a file viewer, a text editor and a table for CSV files, in one sidebar docked at the
 right of the chat — in the terminal and the desktop app alike. `/files` opens it:
 the conversation's folder as a tree you expand in place, a search, and a list of what
 changed. Three tabs (Files, Search, Changed) sit above the content. Opening a
@@ -12,17 +12,19 @@ half the window (the `width` setting says otherwise).
 surface with hairlines between its parts: the folder's last two breadcrumbs (press one
 to go there; `…` goes up and shows the whole path), a tree with drawn chevrons and file-type icons,
 and Git's letters and this session's edits as small marks at the right. An open file
-takes the room on the left, with line numbers, the current line lit, syntax colors
-and a caret you can place with a click; the tree narrows to a column on the right,
-showing the open file, and the panel widens by a tenth. `esc` in the file gives the
+takes the room on the right, with line numbers, the current line lit, syntax colors
+and a caret you can place with a click; the tree narrows to a column on its left, as
+editors have it, showing the open file, and the panel widens by a tenth (the
+`tree_side` setting set to `right` keeps the tree at the window's edge instead). `esc` in the file gives the
 keys to the tree (the file stays open), `tab` gives them back, and `esc` in the tree
 closes the file. The search groups its results under their file and marks the term.
 The file bar keeps to the name: where the caret is shows once it has moved, *Edit ·
 Changes* once there are changes (Markdown and HTML always have their *Preview* and
 *Split*), and the keys are behind the `?` in the header rather than under every pane.
 **In a terminal** the panel draws its own lines (`files.tlook`), in the
-colorscheme's colors: breadcrumbs, the file beside the tree when the terminal is wide
-enough (90 columns and more; one of them when it is not), tabs and the file bar,
+colorscheme's colors: breadcrumbs, the file beside the tree — the tree on the left —
+when the panel is wide enough (90 columns and more; one of them when it is not), tabs
+and the file bar,
 syntax colors, the caret's line, a selection drawn as one, find's matches, the
 bracket pair, Git's change bars in color, and quick open, a name to give and the
 menus as cards over the panel. The mouse places the caret, drags a selection, takes a word
@@ -47,29 +49,52 @@ list; the folders read so far while it is read); what `.gitignore` keeps out is 
 app the folder the top row sits in stays pinned over the list while you scroll, and
 `f` opens Go to file: a name is found in one place there, and the contents in Search.
 
+**Where it opens.** In the conversation's folder; a chat with no message yet has no
+session, so the panel opens where its session will start: the folder bone was started
+in (or `/cd` moved to), not your home folder. `ctrl+k` names files from there too.
+
 **After a reload.** The panel keeps what it holds as it changes (`bone.state`): the
 folder, the folders open in it, the tabs with their carets, and the text of a tab with
 unsaved work. When the plugin reloads (its files changed, `/plugins`) in the same bone
 process, the panel opens again as it was, unsaved text and all; a file that moved
-meanwhile says so. A new start of bone begins fresh.
+meanwhile says so. Each bone process keeps its own: with two terminals open (or a
+terminal and the desktop app), a reload in one brings back its own tabs, never the
+other's. A new start of bone begins fresh.
 
 **Tabs.** Each file you open is a tab, and keeps its own unsaved work, caret and undo:
 `ctrl+tab` and `ctrl+shift+tab` go through them, `ctrl+w` closes one (twice when it
 holds unsaved work), a middle click too. Twenty at most; the oldest one with nothing
-unsaved makes room.
+unsaved makes room. tmux and many terminals send a plain `tab` for `ctrl+tab` (which
+the editor types into the file), so the same moves have keys every terminal sends:
+`ctrl+pagedown` and `ctrl+pageup`, `alt+.` and `alt+,`, and `alt+1`…`alt+9` for that
+file — its number leads its name in the strip. In a terminal too narrow for the file
+beside the tree, the tree names the open files in a row over it (`open  1 app.lua ●
+2 notes.md`), a dot on unsaved work, each a press away.
+
+**Unsaved work is not thrown away by `esc`.** In a terminal `esc` in the tree closes
+the open file only when it has nothing unsaved; with unsaved work it says so and hands
+the keys to the prompt, the file still open. `ctrl+w` is how such a file is closed: it
+shows the file, asks there, and the second `ctrl+w` leaves the changes.
 
 **The editor.** Shift and the arrows (or a drag) select; `ctrl+shift+arrows` and
 `ctrl+arrows` go by words (a drag past the top or the bottom keeps selecting as the
 view follows), `home` goes to the line's first character and then its
 start, a double click selects a word, `ctrl+a` all of it. Copy, cut and paste go
 through the system clipboard (`wl-copy`, `xclip` or `xsel`): `ctrl+c` `ctrl+x`
-`ctrl+v`. The desktop app hands a focused panel its copy and cut as those keys from
+`ctrl+v`. A shell that lost `WAYLAND_DISPLAY` (a tmux window opened after the variable
+was dropped) still reaches the desktop's clipboard: the compositor's socket is looked
+for beside it. With no desktop to reach — over ssh — the text goes to tmux's buffer
+(`Copied to tmux`), else to the terminal itself (OSC 52). And whatever happens outside,
+the last text copied is kept in the plugin, so copy and paste inside the editor work
+everywhere; when it went no further the editor says `Copied in bone only`. The desktop app hands a focused panel its copy and cut as those keys from
 bone's build of 6 November 2026 on; in an older one `ctrl+c` and `ctrl+x` never reach
 the panel, and `ctrl+insert`, `shift+delete` and the right-click menu do the same
 anywhere.
 **Neovim, Vim or your own (in a terminal).** With the `editor` setting on `nvim`,
 `vim` or `custom`, a text file opens in that program instead, in the term plugin's
-terminal panel beside the tree, at the line asked for, with your own config. The
+terminal panel beside the tree — at the window's edge, the tree on its left (with
+`tree_side` on `right`, between the chat and the tree) — at the line asked for, with
+your own config. The
 desktop app always uses its own editor. A second file goes to the same Neovim or Vim (`:hide e`, so
 unsaved work stays in its buffer). `ctrl+]` gives the keys back to the prompt; a click
 on the tree opens the next file there. When the program ends its panel closes, the tree
@@ -98,13 +123,84 @@ header's button, or `F`) opens each file the agent writes as it writes it. `ctrl
 names the file in the message you are writing — `src/app.lua`, or with lines selected
 `src/app.lua:12-40` — for the agent to read.
 
+**Several files at once.** `space` marks the row the keys are on (a dot at its left
+edge; a press on that edge does the same), `shift` and an arrow mark a run, `ctrl+a`
+all of them, `esc` clears the marks. What comes next is for the marked rows, or for
+the one row when none is marked: `ctrl+c` copies and `ctrl+x` cuts (a cut row is
+dimmed until it is pasted), `ctrl+v` puts them into the folder the keys are in —
+copied, or moved — `delete` sends them to the Trash, `D` duplicates, `z` makes a
+`.zip` of them. Nothing that is already there is written over: a name that is taken
+gets “copy” after it and both are kept, and the note says so. A batch says how far it
+is (*Copying 3 of 12 · name*). While the agent is working `ctrl+c` still stops it; an
+idle chat leaves the key to the files.
+
+**Taking it back.** `ctrl+z` in the tree takes back the last thing done to files: a
+move goes back where it came from, a copy (or a duplicate, an extracted folder, an
+archive just made) goes to the Trash, and what went to the Trash is put back where it
+was (through `gio`). Thirty steps are kept, until the plugin is loaded again.
+
+**Dragging.** Hold a row and take it to a folder (or to a file in it): the folder
+lights up, and letting go moves the row there — or every marked row, when the one
+held is marked. In a terminal and the desktop app alike; `ctrl+z` takes it back.
+Files dropped on the desktop app's window from another program are copied into the
+folder the keys are in when the tree has the keys, and go to the message otherwise
+(the window does not say where they fell).
+
+**Kept up to date.** Every two seconds the folders the tree has read are listed again
+and set against what they held: a file made, removed, renamed or written by anything
+— the agent, a build, another program — shows without `r`, with Git's markers asked
+again a moment after the last change. Up to forty folders are looked at, none with
+more than 3000 entries, and the looks grow further apart by themselves when one
+takes long.
+
+**In what order.** `S` orders the tree by name, by when a file last changed (the
+newest first), by size or by kind; choosing the same again turns it round. Folders
+stay first. With room for it each row says when it last changed — the time today,
+the day this year, the month before that — beside its size.
+
+**Places.** `g` lists the folders a file manager keeps a press away: home, this
+chat's folder, the desktop's own (Desktop, Documents, Downloads, Pictures, Videos,
+Music, as `user-dirs.dirs` names them), what is mounted (disks, sticks, shares),
+and the Trash. In the Trash `u` (or the right-click menu) puts a file back where it
+came from, and *Empty the Trash…* asks before it deletes.
+
+**What a file is, and what opens it.** `i` shows a row's properties — kind, size (a
+folder's is counted), when it changed, who may do what, where a link points, a
+picture's size — each a press away from the clipboard. `O` lists the applications
+registered for the file's kind, the desktop's default first, and opens it with the
+one you choose (`o` is still the default one). `x` extracts an archive (zip, tar and
+its squeezed forms, 7z, rar, through `bsdtar`) into a folder of its own name beside
+it, so an archive of loose files makes one folder.
+
 **Files.** `a` makes a file in the selected folder (a name with slashes makes the
-folders on the way), `A` a folder, `R` (or `f2`) renames, `D` duplicates ("name
+folders on the way), `A` a folder, `R` (or `f2`) renames — the caret starts before the
+extension, which `→` or `end` takes it into — `D` duplicates ("name
 copy.ext"), `delete` moves to the desktop's Trash (`gio trash`, else trash-cli); where there
 is no Trash (a system folder such as `/tmp`) it asks whether to delete for good —
 only `y` (or the red button) does, any other key leaves it — `y`
-copies the path and `Y` the full one. In the desktop app a right click on a row, or in
-the editor, opens a menu of the same.
+copies the path and `Y` the full one. A right click on a row of the tree opens a menu
+of the same (and *Show changes*, *Add to chat*, *Open with the desktop's app*); a right
+click in the editor opens its own: cut, copy, paste, select all, add to chat, find, go
+to a line, show changes. In the desktop app and in a terminal alike.
+
+**CSV files, as a table.** A `.csv` or `.tsv` file opens as *Table* (beside *Edit*,
+its text, and *Changes*; `alt+t` goes between the two): the columns' names over the
+rows, each column as wide as what it holds, numbers on the right, the cell under the
+keys lit. What separates the values (a comma, a semicolon, a tab, a bar) is found
+from the file. Over the table stands where the keys are, how many rows there are,
+and — when the column holds numbers — its sum, average, smallest and largest.
+Arrows, `tab`, `home`, `end`, the page keys and a press move; `enter` (or `i`)
+edits the cell, `c` clears it and edits, a digit starts a new value, `enter` keeps it
+and goes down, `tab` keeps it and goes right, `esc` leaves it as it was; `x` empties
+a cell. `o` and `O` add a row under and over, `A` a column after this one, `D` and
+`X` take the row and the column out. `s` orders the rows by this column (numbers by
+size, then words; again turns it round), `f` shows only the rows that hold a word,
+`H` says whether the first row is the columns' names. `y` copies the cell, `Y` its
+row, `p` pastes — a block copied from a sheet (tabs and lines) fills the cells from
+here on. The table is the editor's own text seen another way: every change is
+written back as CSV, a value that was in quotes staying in quotes, so `u` (or
+`ctrl+z`) takes a step back, `ctrl+s` saves after the same check as any file, and
+*Changes* shows exactly the cells that differ. A file over 4 MB is left as text.
 
 **Pictures and PDFs.** A picture can be zoomed (`+` `−`, `0` fits it, `1` is its own
 pixels, ctrl and the wheel, a double click) and, once larger than the pane, dragged
@@ -113,8 +209,23 @@ same way (`w` the column's width), wider than the column too — then a drag, or
 and the wheel, moves them sideways — and the page field over them (`g`) goes to a
 page. Its pages are drawn twenty at a time, the next twenty as the list nears its end.
 
-**HTML pages.** An `.html` file opens as it reads — the editor's *Preview*, beside
-*Edit* and *Changes* — drawn by the plugin in a column the width of a page:
+**HTML pages, as a browser draws them.** In the desktop app, with Firefox (or a
+Chromium) installed, an `.html` file opens as *Page*: the browser, run without a
+window, draws the file — its styles, its layout, what its scripts make — and the panel
+shows that picture, as wide as the pane, scrolling. It is the text as it stands in the
+editor (a stylesheet or a picture beside the file is found from where the file is),
+drawn again a moment after you type; a page taller than 8000 points is drawn to
+there. The browser runs in a profile of its own in the plugin's cache
+(`~/.cache/bone/files/page`): none of your history, cookies or sign-ins, and it loads
+what the page asks for, as a browser does. It is a picture: its links are not pressed
+here (*Open in browser* is the page itself). *Reader*, beside it, is the plugin's own
+reading of the page, described next, which loads nothing from the web until you say
+so; the `html_view` setting set to `reader` opens pages that way, and so does a
+machine with no browser.
+
+**HTML pages, read.** *Reader* (called *Preview* where there is no browser) is the
+page's content — beside *Edit* and *Changes* — drawn by the plugin in a column the
+width of a page:
 headings, paragraphs with their bold, italics, code, strike-through and highlights,
 lists (nested and numbered), quotes, code blocks, tables (a header row, stripes, the
 caption), rules, and pictures — beside the page, absolute, or `data:` URLs; one on
@@ -149,7 +260,9 @@ reads the GIF itself, in Lua, and keeps its frames as PNGs in its cache, so noth
 has to be installed for it. A video shows its poster, a row of twelve pictures along
 it (press one to play from there) and what it is — codec, size, length, frame rate,
 whether it has sound — and plays a silent preview in the panel, twelve frames a
-second, made twenty seconds at a time; **Open in player** (or `o`) hands it to mpv
+second, made twenty seconds at a time (each frame is read a few frames before it is
+due and the one before stays under it, so the picture never goes black between
+frames); a press on the bar along the bottom of the picture goes to that moment; **Open in player** (or `o`) hands it to mpv
 (else Celluloid or VLC, else the desktop's own app) to watch with sound. A 3D model
 (STL, OBJ, PLY, glTF or GLB, read in Lua) is drawn lit, and turns as you drag it (or
 with the arrow keys); the wheel zooms, `w` shows its wires, a double click or `0`
@@ -211,9 +324,11 @@ Changed tab names them newest first, with the tool and the time — pressing one
 the sidebar there, expanding the folders above it. The preview carries the same badge.
 The marks live in the plugin's state, so they survive a reload.
 
-**What Git thinks.** `git status --porcelain` runs in the folder, from the
-repository's own root so its paths match, and its markers ride along in the tree and
-the Changed tab: `M` changed, `?` not tracked, `A` added, `D` deleted — the files
+**What Git thinks.** `git status --porcelain -z` runs in the folder, from the
+repository's own root so its paths match (a name with a space or an accent included),
+and its markers ride along in the tree and the Changed tab — also for a project that
+itself lives under a dot-folder (`~/.config/…`): only what is hidden *inside* the
+folder shown is kept out until `ctrl+h`: `M` changed, `?` not tracked, `A` added, `D` deleted — the files
 themselves, and where they sit in this folder, which the Git sidebar cannot show you.
 The patch itself stays `/diff`'s job.
 
@@ -236,10 +351,19 @@ two hundred shown at a time. A line longer than the panel is drawn in part, arou
 caret, with `…` at the ends where text was dropped. `home` is the line's real
 beginning, indentation and all, and `pageup` `pagedown` move the caret a page (fifty
 lines) so the lines shown follow it instead of the pane scrolling away from it.
-`ctrl+g` stands the changes in place of the text — the
-buffer against the file as it was opened, marked with line numbers, unchanged
-stretches folded; `ctrl+p` shows the Markdown it renders to instead. In the desktop
-app the Edit · Changes · Preview switch over the file does the same.
+`ctrl+g` stands the changes in place of the text: the buffer against the file as
+Git's last commit has it (*Since the last commit · 6 added, 3 removed*), so a file
+Git marks `M` shows what changed in it, your unsaved edits included. `b` compares
+with the file as it was opened instead (what a save would write), and back; a file
+outside a repository, or one being settled after it changed on disk, is compared
+that way from the start. The lines taken out come before the ones put in, three
+unchanged lines stand on each side of a change, longer stretches are folded with
+their count, and where a line was changed rather than replaced, the part of it that
+differs is bold and underlined. `d` in the tree (or *Show changes* on the right-click
+menu) opens a file straight on its changes, in the panel's own editor whatever the
+`editor` setting says; in a terminal so does `enter` on a row of Changed, and `esc`
+comes back to the list. `alt+m` shows a Markdown or HTML file as it reads. In the
+desktop app the Edit · Changes · Preview switch over the file does the same.
 
 **It will not write over someone else's work.** `ctrl+s` first asks the core what the
 file hashes to. If it is not the file the editor read, the agent or another editor got
@@ -250,15 +374,17 @@ your version over theirs, `ctrl+r` reads theirs instead.
 
 | Pane | Its keys |
 |---|---|
-| Everywhere | `ctrl+p` go to a file · `ctrl+tab` `ctrl+shift+tab` the open files · `ctrl+w` close the one shown · `ctrl+k` add it to the message |
-| Files | `↑` `↓` through the tabs and the tree (past the end, scroll) · `enter` open or close a folder, or open a file (text in the editor) · `e` edit (in a terminal, in the `editor` setting's program) · `E` the built-in editor · `o` open with the desktop's app · `v` the preview, read fresh |
-| Files | `p` go to a file · `f` filter (in the desktop app, go to a file) · `a` new file · `A` new folder · `R` `f2` rename · `D` duplicate · `delete` to the Trash · `y` `Y` copy the path · `F` follow the agent |
-| Files (desktop) | `→` opens a folder or steps into it, `←` closes it or steps out to the one above · `home` `end` `pageup` `pagedown` · `tab` the open file · `esc` closes the open file (twice if unsaved) · `ctrl+s` saves it |
+| Everywhere | `ctrl+p` go to a file · `ctrl+tab` `ctrl+shift+tab` the open files (in tmux: `ctrl+pagedown` `ctrl+pageup`, `alt+.` `alt+,`, `alt+1`…`9`) · `ctrl+w` close the one shown · `ctrl+k` add it to the message |
+| Files | `↑` `↓` through the tabs and the tree (past the end, scroll) · `enter` open or close a folder, or open a file (text in the editor; `space` marks) · `e` edit (in a terminal, in the `editor` setting's program) · `E` the built-in editor · `o` open with the desktop's app · `v` the preview, read fresh |
+| Files | `space` mark · `shift+↑` `shift+↓` mark a run · `ctrl+a` all · `ctrl+c` copy · `ctrl+x` cut · `ctrl+v` paste here · `ctrl+z` take the last file operation back · `z` zip · `x` extract · `g` places · `S` sort · `i` properties · `O` open with… · `u` put back (in the Trash) |
+| Files | `d` what changed in the file · `p` go to a file · `f` filter (in the desktop app, go to a file) · `a` new file · `A` new folder · `R` `f2` rename · `D` duplicate · `delete` to the Trash · `y` `Y` copy the path · `F` follow the agent |
+| Files (desktop) | `→` opens a folder or steps into it, `←` closes it or steps out to the one above · `home` `end` `pageup` `pagedown` · `tab` the open file · `esc` closes the open file (twice if unsaved; in a terminal a file with unsaved work stays open) · `ctrl+s` saves it |
 | Files | `s` or `/` search · `c` the Changed tab · `r` read the folder, the marks and Git again · `backspace` `←` close the deepest open folder, or go to the folder above · `ctrl+h` hidden · `q` close the sidebar · `esc` hand the keyboard to the prompt — the panel's top row then carries a dim `keys: prompt` badge, and a click, `tab` or `focus_next` give them back |
 | Search | typing edits the term · `backspace` a letter (and leaves it when empty) · `↑` `↓` the hits · `enter` opens a hit at its line · `esc` back |
-| Changed | `↑` `↓` · `enter` goes to that file · `r` read it all again · `esc` or `←` back |
+| Changed | `↑` `↓` · `enter` what changed in that file (in the desktop app, goes to it) · `r` read it all again · `esc` or `←` back |
+| Table | arrows `tab` `home` `end` `pageup` `pagedown` move · `enter` `i` edit · `c` clear and edit · `x` empty · `o` `O` row under, over · `A` column · `D` `X` remove the row, the column · `s` sort · `f` filter · `H` header · `y` `Y` `p` copy, copy the row, paste · `u` undo · `ctrl+s` save · `e` or `alt+t` its text |
 | Preview | `+` `−` `0` `1` zoom, fit, actual size · `g` a PDF's page · `w` its width · `t` a PDF's pages or its text (desktop) · `e` edit · `o` open outside · `v` (or `r`) read it again · `esc` or `←` back. 600 lines shown, the rest named |
-| Editor | `ctrl+s` save (after checking the file on disk) · `ctrl+o` save over a file someone else changed · `ctrl+r` read it as it is on disk now · `ctrl+z` undo · `ctrl+y` (or `ctrl+shift+z`) redo · `ctrl+g` the changes · `ctrl+shift+v` or `alt+m` read it as Markdown |
+| Editor | `ctrl+s` save (after checking the file on disk) · `ctrl+o` save over a file someone else changed · `ctrl+r` read it as it is on disk now · `ctrl+z` undo · `ctrl+y` (or `ctrl+shift+z`) redo · `ctrl+g` the changes (`b` there: since the last commit, or since it was opened) · `ctrl+shift+v` or `alt+m` read a Markdown or HTML file as it reads |
 | Editor | `shift`+arrows, `home` `end` `pageup` `pagedown` select · `ctrl+←` `ctrl+→` by word · `ctrl+home` `ctrl+end` the ends · `ctrl+a` all · `ctrl+d` the word · `ctrl+c` `ctrl+x` `ctrl+v` (desktop: `ctrl+insert` `shift+delete` `ctrl+v`) · `ctrl+f` find · `f3` `shift+f3` again · `ctrl+l` go to line · `ctrl+backspace` a word back |
 | Editor | `enter` newline (indented) · `backspace` (a step of indentation at a time) `delete` · `tab` `shift+tab` indent · `esc` closes find, then the selection, then goes back to the folder with the file still open in its tab |
 
@@ -271,7 +397,7 @@ that pane's keys.
 |---|---|
 | `/files [path]` | open the sidebar (at `path`, or in the conversation's folder); again with no path, it closes |
 | `/files search <term>` | open the sidebar with the folder searched |
-| `/editor <path> [line]` | open the sidebar on that file, at a line if you give one |
+| `/editor <path> [line]` | open the sidebar on that file, at a line if you give one; a picture, a PDF or a video opens in the preview |
 | `/explorer` · `/edit` | the same as `/files` · the same as `/editor` |
 
 **`tab` finishes a path.** On these commands the first word is completed from the
@@ -285,6 +411,8 @@ offers `search`) and `/editor`'s is a line number. A name matches in its own cas
 | Setting | Default | What it changes |
 |---|---|---|
 | `width` | 50 | the sidebar's share of the window, in percent (20–80); the editor takes a little more |
+| `tree_side` | left | with a file open beside it, the side the tree takes: `left`, or `right` (the window's edge) |
+| `html_view` | page | how an HTML file opens in the desktop app: `page`, drawn by the installed browser, or `reader`, its content read by the plugin |
 | `preview_limit` | 256 | how much of a file the preview reads (KB); the rest is not shown |
 | `mark_changes` | on | the badges, and the Changed tab |
 | `show_git` | on | Git's markers in the tree and the Changed tab |
@@ -328,9 +456,14 @@ are mapped nowhere.
 - `find` for the size at the end of a file's row (`find -printf`; without it the
   rows simply say nothing about size)
 - Git, for the markers and the editor's change bars
-- `wl-copy`/`wl-paste` (or `xclip`, `xsel`) for the clipboard
-- `gio` (or trash-cli) for moving to the Trash
+- `wl-copy`/`wl-paste` (or `xclip`, `xsel`) for the system clipboard; without them tmux's
+  buffer, the terminal (OSC 52), and the plugin's own copy
+- `gio` (or trash-cli) for moving to the Trash; `gio` for putting back from it, emptying it, and
+  the list of applications that open a kind of file (with `xdg-mime` and `gtk-launch`)
+- `bsdtar`, for extracting an archive and making a `.zip`
 - Ghostscript (`gs`), for a PDF's pages in the desktop app (its text is shown without it)
+- Firefox (tried here) or a Chromium, for an HTML file drawn as a page in the desktop app
+  (without one, the plugin's own reader)
 - ffmpeg and ffprobe, for videos (offered when missing: installed, or fetched for the panel)
 - mpv, Celluloid or VLC to open a video with sound (else the desktop's own app)
 - Neovim or Vim, for the `editor` setting in a terminal, and the term plugin for it
