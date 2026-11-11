@@ -31,13 +31,16 @@ local function visible(id)
     { name = "read_file" },
   } })
   assert(result.tools[#result.tools].name == "read_file", "other tools remain available")
-  return result.tools[1].name == "subagent"
+  -- Too deep to start agents, a child keeps the tool only to message others.
+  local t = result.tools[1]
+  return t.name == "subagent" and not t.description:find("cannot start new", 1, true)
 end
+local function done(result) return type(result) == "string" and result:match("^done\n\n%[agent ") ~= nil end
 local function spawn(id, allowed)
   local before = created
   local result, err = tool.run({ task = "test", prompt = "test" }, { session_id = id })
   if allowed then
-    assert(result == "done", err)
+    assert(done(result), err)
     return "child" .. created
   end
   assert(result == nil and err:find("this deep", 1, true))
@@ -104,7 +107,7 @@ settings.agents = { reviewer = {
   description = "Review bugs", system = "Review carefully", provider = "precise",
   model = "large-model", tools = { "read_file" },
 } }
-assert(tool.run({ name = "reviewer", prompt = "test" }, { session_id = "root" }) == "done")
+assert(done(tool.run({ name = "reviewer", prompt = "test" }, { session_id = "root" })))
 local reviewer = "child" .. created
 local review_request = hooks.request({ session_id = reviewer, tools = { { name = "read_file" }, { name = "shell" } } })
 assert(review_request.provider == "precise" and review_request.model == "large-model")
@@ -134,7 +137,7 @@ local co = coroutine.create(function() return tool.run({ prompt = "test" }, { se
 local ok, running = coroutine.resume(co)
 assert(ok and coroutine.status(co) == "suspended")
 bone.sleep = function() assert(coroutine.resume(co)); run_impl = function() return { text = "done", outcome = { status = "completed" } } end; return true end
-assert(tool.run({ prompt = "test" }, { session_id = "other-root" }) == "done")
+assert(done(tool.run({ prompt = "test" }, { session_id = "other-root" })))
 assert(coroutine.status(co) == "dead")
 
 -- Errors/cancellation do not leak the reserved slot.
@@ -162,15 +165,15 @@ spawn("root", true)
 
 -- Named specs are snapshots; explicit wildcard and deny-all override defaults.
 bone.config.subagents.legacy = { tools = { "read_file" } }
-assert(tool.run({ name = "legacy", prompt = "test" }, { session_id = "root" }) == "done")
+assert(done(tool.run({ name = "legacy", prompt = "test" }, { session_id = "root" })))
 local legacy = "child" .. created
 bone.config.subagents.legacy.tools[1] = "*"
 assert(hooks.tool_call({ session_id = legacy, name = "shell" }).deny)
 settings.tools = "read_file"
 settings.agents = { all = { tools = { "*" } }, none = { tools = {} } }
-assert(tool.run({ name = "all", prompt = "test" }, { session_id = "root" }) == "done")
+assert(done(tool.run({ name = "all", prompt = "test" }, { session_id = "root" })))
 assert(hooks.tool_call({ session_id = "child" .. created, name = "shell" }) == nil)
-assert(tool.run({ name = "none", prompt = "test" }, { session_id = "root" }) == "done")
+assert(done(tool.run({ name = "none", prompt = "test" }, { session_id = "root" })))
 assert(hooks.tool_call({ session_id = "child" .. created, name = "read_file" }).deny)
 settings.tools, settings.agents = nil, nil
 

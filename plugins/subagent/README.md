@@ -8,6 +8,30 @@ Several calls in one reply run at the same time; sub-agents may start
 sub-agents two levels deep by default. Bone's TUI lists running sub-agents under the
 prompt; click one (or select it and press enter) to open its transcript.
 
+## Following up, messaging and background work
+
+Every answer ends with the agent's handle, e.g. `[agent 1a2b3c4d]`.
+
+- **Follow up:** pass the handle as `session` to give an idle agent another
+  task. It keeps everything it learned the first time.
+- **Message:** if that agent is still working, the message is slipped into its
+  current turn and the call returns at once. Agents working for the same
+  top-level session see each other's handles and can message each other the
+  same way. An agent too deep to start new agents can still message.
+- **Background:** `background = true` returns at once; the answer arrives in
+  the calling session as a message when the agent is done.
+- **Failures** return what the agent wrote before it stopped, plus its handle,
+  so it can be resumed.
+
+## Choosing the provider and model
+
+The model may pass `provider` and `model` when you ask for them ("use the fast
+provider for this"); the tool lists your configured providers. The call wins
+over the named agent's settings, which win over the defaults below. A provider
+that isn't configured, or one that fails while the agent runs, falls back to
+those defaults, and the answer says so. The choice is kept for the run only:
+after a core restart the agent returns to its defaults.
+
 ## Defaults
 
 Configure defaults in `/config` → **Subagents**. Settings are saved under
