@@ -1098,7 +1098,7 @@
     "name": "usage",
     "title": "Usage",
     "kind": "plugin",
-    "version": "1.3.1",
+    "version": "1.3.2",
     "description": "Full-screen usage dashboard: tokens, models, tools, activity",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -1112,15 +1112,15 @@
       },
       {
         "path": "lua/usage/nodes.lua",
-        "sha256": "75a1b3afa90b19ea864fc691777a4f1a46dfdc6bbc864cb8f84dfa2d89fa96a9"
+        "sha256": "fcb3be0fb73f609da47b219e03785f09a34f9c0f9176818e89ed2df14db94cb5"
       },
       {
         "path": "manifest.json",
-        "sha256": "c463cc32c9865f2abe9dffa30775a2d7124c58cfee9159d9e51e06ad5d088c45"
+        "sha256": "c834b80c2a6251f8cd192581fd3bd89d984fbbeceaf567d58e5de4206f7d0f66"
       },
       {
         "path": "ui.lua",
-        "sha256": "76a35d626e912469c83cf23c37b78e2a8c1c933b73c33b8dd34ecda613d31568"
+        "sha256": "766615328269155bd3561a413f5c9dd196f9ed0967d80ad6e58f1eb339377f57"
       }
     ]
   },

@@ -819,6 +819,30 @@ local function open(period, custom)
     end
   end
 
+  -- The desktop app scrolls the page itself (the wheel, the scrollbar), in
+  -- pixels: the keys move it from where it is. The terminal counts rows.
+  local BODY, ROW = "usage:body", 20
+  local function desktop()
+    return bone.has_capability and bone.has_capability("gui.nodes") and bone.gui and bone.gui.scroll and true or false
+  end
+  -- `rows` down (up when negative), "page"/"-page", or to the "top"/"end".
+  local function scroll(rows)
+    if not desktop() then
+      if rows == "top" then st.scroll = 0
+      elseif rows == "end" then st.scroll = st.max_scroll or 0
+      else st.scroll = math.max(0, st.scroll + (rows == "page" and 10 or (rows == "-page" and -10 or rows))) end
+      return
+    end
+    if rows == "top" or rows == "end" then return pcall(bone.gui.scroll, BODY, rows) end
+    local info = bone.gui.scroll_info and bone.gui.scroll_info(BODY) or {}
+    local by = type(rows) == "number" and rows * ROW or (info.viewport or 400) * 0.9 * (rows == "page" and 1 or -1)
+    pcall(bone.gui.scroll, BODY, math.max(0, math.min((info.offset or 0) + by, info.max or math.huge)))
+  end
+  local function to_top()
+    st.scroll = 0
+    if desktop() then pcall(bone.gui.scroll, BODY, "top") end
+  end
+
   local function load(refresh)
     st.focus = nil
     st.gen = st.gen + 1
@@ -1040,7 +1064,8 @@ local function open(period, custom)
 
   local function set_period(p)
     if p and (p ~= st.period or st.custom) then
-      st.period, st.custom, st.scroll = p, nil, 0
+      st.period, st.custom = p, nil
+      to_top()
       load()
     end
   end
@@ -1061,7 +1086,7 @@ local function open(period, custom)
       else st.filters[a.remove] = nil end
     elseif a.model then st.filters.model = a.model
     elseif a.session then st.filters.session = a.session end
-    st.scroll = 0
+    to_top()
     load()
   end
   local SHORT = { d = "today", w = "week", m = "month", y = "year", a = "all" }
@@ -1071,7 +1096,8 @@ local function open(period, custom)
       if k == "enter" then
         local c = parse_range(st.input)
         if c then
-          st.custom, st.input, st.scroll = c, nil, 0
+          st.custom, st.input = c, nil
+          to_top()
           load()
         else
           st.note = "dates: YYYY-MM-DD..YYYY-MM-DD, start on or before end"
@@ -1085,9 +1111,6 @@ local function open(period, custom)
         st.input = ""
       elseif k:match("^[%d%.%-]$") and #st.input < 24 then
         st.input = st.input .. k
-      end
-      if bone.has_capability and bone.has_capability("gui.nodes") and bone.gui and bone.gui.scroll then
-        pcall(bone.gui.scroll, "usage:body", (st.scroll or 0) * 20)
       end
       return true
     end
@@ -1126,20 +1149,17 @@ local function open(period, custom)
     elseif k == "r" then
       load(true)
     elseif k == "down" or k == "j" or k == "wheeldown" then
-      st.scroll = st.scroll + (k == "wheeldown" and 3 or 1)
+      scroll(k == "wheeldown" and 3 or 1)
     elseif k == "up" or k == "k" or k == "wheelup" then
-      st.scroll = math.max(0, st.scroll - (k == "wheelup" and 3 or 1))
+      scroll(k == "wheelup" and -3 or -1)
     elseif k == "pagedown" or k == "space" then
-      st.scroll = st.scroll + 10
+      scroll("page")
     elseif k == "pageup" then
-      st.scroll = math.max(0, st.scroll - 10)
+      scroll("-page")
     elseif k == "home" or k == "g" then
-      st.scroll = 0
+      scroll("top")
     elseif k == "end" or k == "G" then
-      st.scroll = st.max_scroll or 0
-    end
-    if bone.has_capability and bone.has_capability("gui.nodes") and bone.gui and bone.gui.scroll then
-      pcall(bone.gui.scroll, "usage:body", (st.scroll or 0) * 20)
+      scroll("end")
     end
     return true
   end
@@ -1170,6 +1190,14 @@ local function open(period, custom)
   local mouse, closed
   mouse = bone.on("mouse", function(ev)
     if ev.popup ~= id or not ev.popup_focused then return end
+    -- The desktop app's page is made of nodes, which take the pointer
+    -- themselves: a move, press or wheel answered here never reaches them.
+    if desktop() then return end
+    if ev.action == "wheel" then
+      scroll(ev.button == "up" and -3 or 3)
+      redraw()
+      return true
+    end
     if ev.button == "left" and ev.action == "down" then
       for _, v in ipairs((st.visible or {})[ev.popup_row] or {}) do
         if ev.popup_col >= v.x and ev.popup_col <= v.last then activate(v.action); break end

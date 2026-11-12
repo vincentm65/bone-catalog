@@ -129,8 +129,13 @@ local function chip(label, click)
   return W.press(W.pill(label, { size = S.size.small }), click, "button")
 end
 
+-- The page is as wide as the window lets it be, up to this: past it the
+-- rows are too long to read across.
+M.max_width = 1280
+
 function M.build(ctx, api)
   local st = api.st
+  local page_w = math.min(ctx and tonumber(ctx.width) or M.max_width, M.max_width)
   local r = st.span or api.span(st.period, st.custom)
   local names, current = {}, 0
   for i, p in ipairs(api.periods) do
@@ -263,7 +268,7 @@ function M.build(ctx, api)
     if #d.tools == 0 then
       tool_rows[#tool_rows + 1] = small("no tool calls in this period")
     else
-      local limit = (ctx and ctx.width or 0) >= 900 and 14 or 10
+      local limit = page_w >= 900 and 14 or 10
       for i, t in ipairs(d.tools) do
         if i > limit then
           tool_rows[#tool_rows + 1] = small("… " .. (#d.tools - limit) .. " more")
@@ -309,10 +314,7 @@ function M.build(ctx, api)
     end
     add(section("Hours", best and string.format("busiest %02d:00-%02d:00", best, (best + 1) % 24) or nil, punch_rows))
 
-    local weeks = 26
-    if ctx and ctx.width and ctx.width > 0 then
-      weeks = math.max(8, math.min(53, math.floor((ctx.width - 80) / 14)))
-    end
+    local weeks = math.max(8, math.min(53, math.floor((page_w - 80) / 14)))
     local start = api.noon_plus(api.monday(os.time()), -7 * (weeks - 1))
     local today = api.ymd(os.time())
     local keys, day_max = {}, 0
@@ -368,7 +370,7 @@ function M.build(ctx, api)
   end
 
   return {
-    direction = "column", gap = S.space.md, grow = 1,
+    direction = "column", gap = S.space.md, grow = 1, max_width = M.max_width,
     header,
     W.divider({ margin = { 0, 0, 0, 0 } }),
     body,

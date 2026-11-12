@@ -225,6 +225,44 @@ assert(state().focus.action.model and state().scroll > 0)
 first = #requests + 1
 popup.on_key("enter"); finish(first)
 assert(state().filters.model)
+-- The wheel scrolls the terminal's page. The desktop's page is nodes: the
+-- pointer is left to them (answered here, it never reaches one), and the
+-- keys move the page from where it is.
+local function mouse(ev)
+  ev.popup, ev.popup_focused = 1, true
+  local answered
+  for _, h in pairs(handlers) do
+    if h.name == "mouse" then answered = h.fn(ev) or answered end
+  end
+  return answered
+end
+render(80, 12)
+state().scroll = 0
+assert(mouse({ action = "wheel", button = "down" }) == true and state().scroll == 3)
+assert(mouse({ action = "wheel", button = "up" }) == true and state().scroll == 0)
+assert(mouse({ action = "move", button = "" }) == true)
+local asked = {}
+bone.has_capability = function(name) return name == "gui.nodes" end
+bone.gui = {
+  scroll = function(id, to) asked[#asked + 1] = { id, to } end,
+  scroll_info = function() return { offset = 100, max = 130, viewport = 300 } end,
+}
+for _, ev in ipairs({
+  { action = "wheel", button = "down" },
+  { action = "move", button = "" },
+  { action = "down", button = "left", popup_row = 2, popup_col = 4 },
+}) do
+  assert(mouse(ev) == nil, ev.action .. " is the nodes'")
+end
+popup.on_key("down"); assert(asked[#asked][1] == "usage:body" and asked[#asked][2] == 120)
+popup.on_key("pagedown"); assert(asked[#asked][2] == 130, "no further than the end")
+popup.on_key("up"); assert(asked[#asked][2] == 80)
+popup.on_key("end"); assert(asked[#asked][2] == "end")
+popup.on_key("home"); assert(asked[#asked][2] == "top")
+local n = #asked
+popup.on_key("t"); popup.on_key("esc")
+assert(#asked == n, "other keys leave the page where it is")
+bone.has_capability, bone.gui = nil, nil
 popup.on_key("q")
 assert(not next(handlers))
 print("usage dashboard tests passed")
