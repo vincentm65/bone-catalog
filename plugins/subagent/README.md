@@ -100,6 +100,10 @@ bone.config.subagents.reviewer = {
 
 - core half: yes
 - UI: yes, one view for the terminal and the desktop app (`/subagents` editor; click an agent or a field, or New / Rename / Delete; owned sessions shown by Bone itself)
+- Chat (`tui.lua`, `gui.lua`): a background agent's row shows as running, with
+  its own clock, until the agent finishes; the plugin's own messages (an
+  agent's report, a message between agents or chats) are drawn as a short
+  report you can click open, not as something you typed.
 - needs a Bone 3 core with `bone.session.create` / `bone.session.run`
 - Per-agent/default model overrides and reliable cancellation cleanup require
   a core with request-hook `model` support and cancellation-safe `turn_end` hooks.
