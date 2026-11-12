@@ -875,7 +875,7 @@
     "name": "subagent",
     "title": "Subagents",
     "kind": "plugin",
-    "version": "2.8.1",
+    "version": "2.9.0",
     "description": "Delegate tasks to sub-agents that run in sessions of their own",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -885,11 +885,11 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "89d434a0d91d616a7e956c276e1b335cf1df33a2c57a08fb409fbb59d70b2a3d"
+        "sha256": "e258ef87518967619d118e4bc881dca7ace2f345e23a85be0a786cc385ee3b8b"
       },
       {
         "path": "core.lua",
-        "sha256": "fefe46bb5dc0530b858fc72931504040eb5557d982b0b51e7f49de0b4659a55a"
+        "sha256": "1e3a4ba8456d2d16b7bbcf0cd3507844eb3b36f89bf1f4a44547328d7c1ddf86"
       },
       {
         "path": "gui.lua",
@@ -897,7 +897,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "e94db1e6bc9fdb0511872d2b450b63d72a475676b04137765f6e9a54ff7e298b"
+        "sha256": "14de2d996620d7be37c2f38b591c1ca8b8e0f43aebf922072a4c11b02add633a"
       },
       {
         "path": "tui.lua",

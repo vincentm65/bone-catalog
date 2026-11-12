@@ -1,6 +1,6 @@
 -- Run from the catalog root: luajit tests/subagent_test.lua
 local hooks, tool, limit, created = {}, nil, nil, 0
-local settings, rpc = {}, {}
+local settings, rpc, replies = {}, {}, {}
 local run_impl = function() return { text = "done", outcome = { status = "completed" } } end
 bone = {
   config = {},
@@ -21,7 +21,18 @@ bone = {
       if hooks.turn_start then hooks.turn_start({ session_id = id }) end
       return run_impl(id)
     end,
+    messages = function(id) return { { role = "assistant", content = replies[id] } } end,
   },
+  -- The main chat starts its agents' turns through the queue and takes the
+  -- answer from turn_end; a turn that ends without one was cancelled.
+  queue = { add = function(id, text)
+    local r, err = bone.session.run(id, text)
+    if err then error(err, 0) end
+    if r then
+      replies[id] = r.text
+      hooks.turn_end({ session_id = id, outcome = r.outcome })
+    end
+  end },
 }
 dofile("plugins/subagent/core.lua")
 
@@ -148,6 +159,7 @@ run_impl = function() return nil, "cancelled" end
 result, err = tool.run({ prompt = "test" }, { session_id = "root" })
 assert(result == nil and err == "cancelled")
 run_impl = function(id) coroutine.yield(id); return nil end
+bone.sleep = function() return nil end
 co = coroutine.create(function() return tool.run({ prompt = "test" }, { session_id = "root" }) end)
 ok, running = coroutine.resume(co)
 assert(ok)

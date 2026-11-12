@@ -28,8 +28,12 @@ Every answer ends with the agent's handle, e.g. `[agent 1a2b3c4d]`.
   on the same core. The list shows busy chats and idle ones with a turn in the
   last 30 minutes, at most 10 (both settings); older chats are counted and
   still reachable by handle. Sub-agents never reach other chats.
-- **Background:** `background = true` returns at once; the answer arrives in
-  the calling session as a message when the agent is done.
+- **Background:** a call from the main chat waits for the answer, but if you
+  write while it works, the call returns, the main agent answers you, and the
+  agent carries on in the background. `background = true` returns at once.
+  A background answer arrives in the calling session as a message when the
+  agent is done. Cancelling the main chat while it waits stops the agent at
+  its next step. Agents started by agents always wait.
 - **Failures** return what the agent wrote before it stopped, plus its handle,
   so it can be resumed.
 

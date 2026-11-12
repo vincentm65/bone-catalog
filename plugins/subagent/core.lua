@@ -8,7 +8,10 @@
 -- message into its turn when it is still working; agents working for the
 -- same top-level session, and their main chat, can message each other the
 -- same way; list = true shows who (other chats too with cross_session on).
--- `background` returns at once and delivers the answer as a message.
+-- A call from the main chat waits for its answer, unless the user writes
+-- meanwhile: then it returns and the agent carries on in the background.
+-- `background` returns at once. Either way a background answer arrives as
+-- a message.
 -- `provider` / `model` pick what the agent runs on; an unknown provider, or
 -- one that fails, falls back to the agent's defaults.
 --
@@ -28,7 +31,10 @@ local ROLE = "You are a sub-agent: another agent gave you one task. "
   .. "tool calls, only your final reply."
 
 -- children: session id -> { spec, depth, parent, root, task, override?,
--- note?, notify?, last? } (false for sessions that are not agents).
+-- note?, notify?, last?, waiter?, ended?, result?, detached?, stop? }
+-- (false for sessions that are not agents). waiter: the chat waiting on
+-- the agent's answer; detached: the user wrote, so it stops waiting; stop:
+-- that chat gave up on it, so its next model or tool call is refused.
 -- chats: top-level session id -> { cwd, last } for each chat this core ran
 -- a turn in. busy: session ids with a turn running. last: os.time() of the
 -- latest turn start or end.
@@ -296,6 +302,7 @@ end)
 
 bone.hook("request", function(ev)
   local c = child_of(ev.session_id)
+  if c and c.stop then return { deny = "the main chat stopped waiting for this agent" } end
   -- Defaults apply only to child sessions, never to their owner.
   local spec = c and spec_for(c) or {}
   local all, err = agents()
@@ -351,6 +358,7 @@ end)
 -- Also enforce whitelists on calls, not just advertised tool definitions.
 bone.hook("tool_call", function(ev)
   local c = child_of(ev.session_id)
+  if c and c.stop then return { deny = "the main chat stopped waiting for this agent" } end
   if c and not allowed(spec_for(c), ev.name) then
     return { deny = "tool " .. ev.name .. " is not allowed for this sub-agent" }
   end
@@ -382,8 +390,22 @@ bone.hook("turn_end", function(ev)
       active[token] = nil
     end
   end
-  -- A background agent's answer goes to whoever started this turn.
+  -- A chat that ends its turn while still waiting on an agent (cancelled)
+  -- gave up on it: it stops at its next step.
+  for _, o in pairs(children) do
+    if o and o.waiter == ev.session_id then o.waiter, o.stop = nil, true end
+  end
   local c = children[ev.session_id]
+  if c then c.stop = nil end
+  -- A waiting chat takes the answer itself. ended is set before reading the
+  -- reply (which waits), so the chat doesn't stop waiting in between.
+  if c and c.waiter then
+    c.ended = true
+    local outcome = ev.outcome or {}
+    c.result = { outcome = outcome, text = last_reply(ev.session_id) }
+    return
+  end
+  -- A background agent's answer goes to whoever started this turn.
   if c and c.notify then
     local to = c.notify
     c.notify = nil
@@ -409,6 +431,45 @@ local function reserve(nested, parent)
   return token
 end
 
+-- The main chat waits for agent `id`'s turn like bone.session.run, but
+-- stops waiting when the user writes (detached): the answer is then sent
+-- as a message. A cancelled wait leaves the agent to be stopped.
+local function wait(id, parent, body, token)
+  local c = children[id]
+  c.waiter, c.ended, c.result, c.detached = parent, nil, nil, nil
+  bone.queue.add(id, body)
+  if active[token] then active[token].started = true end
+  while true do
+    if c.result then
+      local r = c.result
+      c.waiter, c.ended, c.result = nil, nil, nil
+      return { text = r.text, outcome = r.outcome }
+    end
+    if c.detached and not c.ended then
+      c.waiter, c.detached, c.notify = nil, nil, parent
+      return { detached = true }
+    end
+    if not bone.sleep(200) then
+      if c.waiter == parent then c.waiter, c.stop = nil, true end
+      return nil
+    end
+  end
+end
+
+-- The user writing to a chat that waits on agents frees it: they carry on
+-- in the background. Messages from agents, chats and jobs don't.
+local NOT_USER = { "Background sub-agent (", "Message from agent ", "Message from chat ", "Background job " }
+bone.hook("queue_add", function(ev)
+  if ev.mode == "next" then return end
+  local text = ev.text or ""
+  for _, opening in ipairs(NOT_USER) do
+    if text:sub(1, #opening) == opening then return end
+  end
+  for _, c in pairs(children) do
+    if c and c.waiter == ev.session_id then c.detached = true end
+  end
+end)
+
 -- Run a turn on agent `id` (made by `make` when it is new), in a slot.
 local function turn(nested, parent, background, make, body)
   local token, err = reserve(nested, parent)
@@ -427,12 +488,14 @@ local function turn(nested, parent, background, make, body)
       if active[token] then active[token].started = true end
       return { background = true }
     end
-    return bone.session.run(id, body)
+    -- An agent's own agents have no user to answer: plain waits.
+    if nested then return bone.session.run(id, body) end
+    return wait(id, parent, body, token)
   end)
   local reservation = active[token]
   -- nil without an error means the wait was cancelled, not that the child
   -- finished; a background child keeps its slot until its turn ends.
-  local keep = ok and ((r and r.background) or (not r and not err and reservation and reservation.started))
+  local keep = ok and ((r and (r.background or r.detached)) or (not r and not err and reservation and reservation.started))
   if not keep then active[token] = nil end
   if not ok then
     if id and children[id] then children[id].notify = nil end
@@ -442,6 +505,10 @@ local function turn(nested, parent, background, make, body)
   local c = children[id]
   if r.background then
     return "Started in the background; its answer will arrive as a message.\n\n[agent " .. handle(id) .. "]"
+  end
+  if r.detached then
+    return "The user wrote while this agent worked, so it carries on in the background; "
+      .. "its answer will arrive as a message. Answer the user.\n\n[agent " .. handle(id) .. "]"
   end
   local status = r.outcome and r.outcome.status
   return answer(id, c, status, r.outcome and r.outcome.message, r.text)
@@ -490,9 +557,10 @@ bone.tool.register({
     .. "conversation: put everything it needs in prompt. Several calls in one reply run at "
     .. "the same time. Each answer ends with [agent <handle>]: pass the handle as session to "
     .. "follow up with that agent, or to message one that is still working; list = true "
-    .. "shows who you can message. background "
-    .. "returns at once and the answer arrives later as a message. Set provider or model only "
-    .. "when the user asks for them.",
+    .. "shows who you can message. The call waits for the answer, but if the user writes "
+    .. "meanwhile it returns and the agent carries on in the background; background = true "
+    .. "returns at once. A background answer arrives later as a message. Set provider or model "
+    .. "only when the user asks for them.",
   parameters = {
     type = "object",
     properties = {
