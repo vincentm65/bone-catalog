@@ -29,8 +29,10 @@ local views = bone.ui.views
 
 -- ---- the agent's card --------------------------------------------------------
 
+-- Only views that exist are wrapped: with none (the bare library) the
+-- chat is drawn plainly by bone, and stays so.
 local base_tool = views.tool
-views.tool = function(item, ctx)
+if base_tool then views.tool = function(item, ctx)
   local a = item.name == "subagent" and item.done and agents.for_call(item.id)
   if a and a.started_at then
     item = copy(item)
@@ -42,7 +44,7 @@ views.tool = function(item, ctx)
     end
   end
   return base_tool(item, ctx)
-end
+end end
 
 -- An agent's turn ending changes its card: draw the chat again.
 bone.on("turn/finished", function(ev)
@@ -86,7 +88,7 @@ local function report(item)
 end
 
 local base_user = views.user
-views.user = function(item, ctx)
+if base_user then views.user = function(item, ctx)
   if is_report(item) then return report(item) end
   return base_user(item, ctx)
-end
+end end

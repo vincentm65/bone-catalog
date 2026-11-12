@@ -27,8 +27,10 @@ end
 
 -- ---- the agent's row ---------------------------------------------------------
 
+-- Only views that exist are wrapped: with none (the bare library) the
+-- chat is plain text drawn by bone, and stays so.
 local base_tool = bone.ui.views.tool
-bone.ui.views.tool = function(item, ctx)
+if base_tool then bone.ui.views.tool = function(item, ctx)
   local a = item.name == "subagent" and item.done and agents.for_call(item.id)
   if a and a.started_at then
     item = copy(item)
@@ -40,7 +42,7 @@ bone.ui.views.tool = function(item, ctx)
     end
   end
   return base_tool(item, ctx)
-end
+end end
 
 -- ---- reports -----------------------------------------------------------------
 
@@ -80,14 +82,15 @@ local function report(item, ctx)
 end
 
 local base_user = bone.ui.views.user
-bone.ui.views.user = function(item, ctx)
+if base_user then bone.ui.views.user = function(item, ctx)
   if is_report(item) then return report(item, ctx) end
   return base_user(item, ctx)
-end
+end end
 
 -- A click (without a drag) opens or folds a report.
 local press
 bone.on("mouse", function(ev)
+  if not base_user then return end
   local down = press
   press = ev.action == "down" and ev.button == "left" and not ev.popup and not ev.panel and ev or nil
   if ev.action ~= "up" or ev.button ~= "left" or not down or not ev.index

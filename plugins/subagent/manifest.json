@@ -1,5 +1,5 @@
 {
-  "version": "2.8.0",
+  "version": "2.8.1",
   "description": "Delegate tasks to sub-agents that run in sessions of their own",
   "capabilities": ["tool", "ui"],
   "title": "Subagents",
