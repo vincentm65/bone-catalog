@@ -1,5 +1,5 @@
 {
-  "version": "2.6.1",
+  "version": "2.7.0",
   "description": "Delegate tasks to sub-agents that run in sessions of their own",
   "capabilities": ["tool"],
   "title": "Subagents",
@@ -20,6 +20,18 @@
       "key": "max_concurrent", "label": "Maximum concurrent subagents", "type": "integer",
       "default": 8, "min": 0,
       "desc": "Global limit across sessions, including nested agents. Extra calls wait for a free slot (nested ones fail instead); 0 means unlimited."
+    },
+    {
+      "key": "cross_session", "label": "Message other chats", "type": "boolean",
+      "default": false, "desc": "Let a chat's agent list and message your other running chats. Sub-agents only ever reach their own task and main chat."
+    },
+    {
+      "key": "list_window_minutes", "label": "Recent chats window", "type": "integer",
+      "default": 30, "min": 1, "desc": "list shows busy chats and idle ones with a turn in this many minutes."
+    },
+    {
+      "key": "list_max", "label": "List size", "type": "integer",
+      "default": 10, "min": 1, "desc": "At most this many agents, and chats, in a list; the rest are counted."
     },
     {
       "key": "provider", "label": "Default provider", "type": "string", "default": "",

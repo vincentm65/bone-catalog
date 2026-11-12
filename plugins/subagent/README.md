@@ -16,8 +16,18 @@ Every answer ends with the agent's handle, e.g. `[agent 1a2b3c4d]`.
   task. It keeps everything it learned the first time.
 - **Message:** if that agent is still working, the message is slipped into its
   current turn and the call returns at once. Agents working for the same
-  top-level session see each other's handles and can message each other the
-  same way. An agent too deep to start new agents can still message.
+  top-level session can message each other the same way, and their main chat
+  (it gets the message mid-turn, or starts a turn for it). An agent too deep
+  to start new agents can still message.
+- **List:** `list = true` shows who the caller can message, with handles and
+  busy/idle: the agents on its task, plus its main chat for an agent. It is
+  asked for, not put in the tool description, so the provider's prompt cache
+  is not broken each time an agent starts.
+- **Other chats:** with **Message other chats** on (`subagent.cross_session`,
+  off by default), a chat's agent can also list and message your other chats
+  on the same core. The list shows busy chats and idle ones with a turn in the
+  last 30 minutes, at most 10 (both settings); older chats are counted and
+  still reachable by handle. Sub-agents never reach other chats.
 - **Background:** `background = true` returns at once; the answer arrives in
   the calling session as a message when the agent is done.
 - **Failures** return what the agent wrote before it stopped, plus its handle,
@@ -45,6 +55,9 @@ Configure defaults in `/config` → **Subagents**. Settings are saved under
 | Default provider | blank | Configured provider entry name; blank uses the child session's provider. |
 | Default model | blank | Model ID supported by that provider; blank uses its configured model. |
 | Default instructions | blank | Prepended to the normal system prompt; blank uses the built-in subagent role. |
+| Message other chats | off | A chat's agent can list and message your other running chats. |
+| Recent chats window | 30 | Minutes: idle chats older than this are left out of the list. |
+| List size | 10 | At most this many agents, and chats, in a list. |
 | Allowed tools | blank | Comma-separated names; blank or `*` allows all, `none` or `[]` allows none. Include `subagent` to allow nested delegation. |
 
 Defaults only affect child sessions, not the main agent. Tool restrictions are

@@ -6,7 +6,8 @@
 -- Each answer ends with the agent's handle ([agent 1a2b3c4d]). Passing it
 -- back as `session` continues that agent when it is idle, or slips the
 -- message into its turn when it is still working; agents working for the
--- same top-level session can message each other the same way.
+-- same top-level session, and their main chat, can message each other the
+-- same way; list = true shows who (other chats too with cross_session on).
 -- `background` returns at once and delivers the answer as a message.
 -- `provider` / `model` pick what the agent runs on; an unknown provider, or
 -- one that fails, falls back to the agent's defaults.
@@ -27,9 +28,11 @@ local ROLE = "You are a sub-agent: another agent gave you one task. "
   .. "tool calls, only your final reply."
 
 -- children: session id -> { spec, depth, parent, root, task, override?,
--- note?, notify? } (false for sessions that are not agents).
--- busy: session ids with a turn running.
-local children, active, busy = {}, {}, {}
+-- note?, notify?, last? } (false for sessions that are not agents).
+-- chats: top-level session id -> { cwd, last } for each chat this core ran
+-- a turn in. busy: session ids with a turn running. last: os.time() of the
+-- latest turn start or end.
+local children, chats, active, busy = {}, {}, {}, {}
 local function copy(value)
   if type(value) ~= "table" then return value end
   local out = {}
@@ -178,16 +181,85 @@ local function roster(all)
   return #names > 0 and ("\n\nNamed sub-agents (pass as name):\n" .. table.concat(names, "\n")) or ""
 end
 
--- The other agents working for the same top-level session as `id`.
-local function peers(id, c)
+local function title_of(id)
+  local ok, info = pcall(bone.session.info, id)
+  return ok and type(info) == "table" and text(info.title) or "untitled"
+end
+
+-- Busy first, then the most recent; at most `max`, and how many were left out.
+local function newest(list, max)
+  table.sort(list, function(a, b)
+    if busy[a.id] ~= busy[b.id] then return busy[a.id] == true end
+    if (a.last or 0) ~= (b.last or 0) then return (a.last or 0) > (b.last or 0) end
+    return a.id < b.id
+  end)
   local out = {}
+  for i = 1, math.min(#list, max) do out[i] = list[i] end
+  return out, #list - #out
+end
+
+local function line(id, label, extra)
+  return "  " .. handle(id) .. "  " .. label .. (extra or "") .. "  " .. (busy[id] and "busy" or "idle")
+end
+
+-- Who `id` can message: agents on its task, its main chat (for an agent),
+-- and other recent chats (for a chat, when subagent.cross_session is on).
+local function listing(id, c)
+  local max, root = integer("list_max", 10), c and c.root or id
+  local out, agents_on, more = {}, {}, 0
   for other, o in pairs(children) do
-    if o and other ~= id and o.root == c.root then
-      out[#out + 1] = "- " .. handle(other) .. ": " .. (o.task or "agent")
+    if o and other ~= id and o.root == root then
+      agents_on[#agents_on + 1] = { id = other, last = o.last, label = o.task or "agent" }
     end
   end
-  table.sort(out)
-  return out
+  agents_on, more = newest(agents_on, max)
+  out[#out + 1] = "Agents on this task:"
+  for _, a in ipairs(agents_on) do out[#out + 1] = line(a.id, a.label) end
+  if #agents_on == 0 then out[#out + 1] = "  (none)" end
+  if more > 0 then out[#out + 1] = "  +" .. more .. " older agents not shown" end
+  if c then
+    out[#out + 1] = "Main chat:"
+    out[#out + 1] = line(root, '"' .. title_of(root) .. '"')
+  elseif setting("cross_session") == true then
+    local since, others = os.time() - 60 * integer("list_window_minutes", 30), {}
+    local older = 0
+    for other, chat in pairs(chats) do
+      if other ~= id then
+        if busy[other] or (chat.last or 0) >= since then
+          others[#others + 1] = { id = other, last = chat.last, cwd = chat.cwd }
+        else
+          older = older + 1
+        end
+      end
+    end
+    others, more = newest(others, max)
+    out[#out + 1] = "Other chats:"
+    for _, o in ipairs(others) do
+      out[#out + 1] = line(o.id, '"' .. title_of(o.id) .. '"', o.cwd and ("  " .. o.cwd) or "")
+    end
+    if #others == 0 then out[#out + 1] = "  (none recent)" end
+    if more + older > 0 then out[#out + 1] = "  +" .. (more + older) .. " older chats not shown" end
+  end
+  out[#out + 1] = "Pass a handle as session (with the message as prompt) to message it."
+  return table.concat(out, "\n")
+end
+
+-- A chat `name` names that `id` may message: its own main chat (for an
+-- agent), or another chat when subagent.cross_session is on.
+local function find_chat(name, id, c)
+  name = trim(name):gsub("^chat%s+", "")
+  if c then
+    if c.root == name or handle(c.root) == name then return c.root end
+    return nil
+  end
+  if setting("cross_session") ~= true then return nil end
+  for other in pairs(chats) do
+    if other ~= id and (other == name or handle(other) == name) then return other end
+  end
+  if #name > 8 and name ~= id and not child_of(name) then
+    local ok, info = pcall(bone.session.info, name)
+    if ok and type(info) == "table" and not info.owner then return name end
+  end
 end
 
 -- The final reply of the turn that just ended, if it wrote one.
@@ -229,22 +301,26 @@ bone.hook("request", function(ev)
   local all, err = agents()
   if not all then return { deny = err } end
   local deep = depth(ev.session_id) >= max_depth()
-  local others = c and peers(ev.session_id, c) or {}
+  -- Too deep to start agents, an agent still messages the others and its
+  -- main chat, and a chat other chats when that is on.
+  local talks = c ~= nil or setting("cross_session") == true
   local tools = {}
   for _, t in ipairs(ev.tools or {}) do
-    -- Too deep to start agents, a child still messages the others.
-    if allowed(spec, t.name) and (t.name ~= "subagent" or not deep or #others > 0) then
+    if allowed(spec, t.name) and (t.name ~= "subagent" or not deep or talks) then
       if t.name == "subagent" then
+        -- Nothing here changes from turn to turn, so the provider's
+        -- prompt cache keeps the tool definitions: who is running is
+        -- asked for with list instead.
         local names = providers()
         t.description = t.description .. roster(all)
           .. (#names > 0 and ("\n\nProviders: " .. table.concat(names, ", ") .. ".") or "")
-        if #others > 0 then
-          t.description = t.description .. "\n\nOther agents on this task (pass the handle as "
-            .. "session to message one):\n" .. table.concat(others, "\n")
+        if c then
+          t.description = t.description .. "\n\nYou are a sub-agent: you can also message "
+            .. "the other agents on this task and the main chat (list = true shows them)."
         end
         if deep then
           t.description = t.description .. "\n\nYou cannot start new sub-agents: "
-            .. "use session to message the agents above."
+            .. "use session to message the ones list shows."
         end
         t.parameters.properties.name = next(all) and not deep and {
           type = "string", description = "A named sub-agent, if any are listed.",
@@ -285,6 +361,12 @@ end)
 -- parent's turn_end, or the slot would leak.
 bone.hook("turn_start", function(ev)
   busy[ev.session_id] = true
+  local c = child_of(ev.session_id)
+  if c then
+    c.last = os.time()
+  else
+    chats[ev.session_id] = { cwd = ev.cwd, last = os.time() }
+  end
   for _, reservation in pairs(active) do
     if reservation.child == ev.session_id then reservation.started = true end
   end
@@ -292,6 +374,8 @@ end)
 
 bone.hook("turn_end", function(ev)
   busy[ev.session_id] = nil
+  local seen = children[ev.session_id] or chats[ev.session_id]
+  if seen then seen.last = os.time() end
   for token, reservation in pairs(active) do
     if reservation.child == ev.session_id
       or (not reservation.started and reservation.parent == ev.session_id) then
@@ -363,17 +447,32 @@ local function turn(nested, parent, background, make, body)
   return answer(id, c, status, r.outcome and r.outcome.message, r.text)
 end
 
--- A message to an agent that already exists.
+-- Who a message is from, and how to answer it.
+local function from(ctx, caller)
+  local who = caller and ("agent " .. handle(ctx.session_id) .. " (" .. (caller.task or "agent") .. ")")
+    or ("chat " .. handle(ctx.session_id) .. ' ("' .. title_of(ctx.session_id) .. '")')
+  return "Message from " .. who .. "; to reply, use the subagent tool with session "
+    .. handle(ctx.session_id) .. ":\n\n"
+end
+
+-- A message to an agent or chat that already exists.
 local function message(args, ctx, caller, over, note)
   local root = caller and caller.root or ctx.session_id
   local id, target = find(args.session, root)
-  if not id then return nil, "no agent " .. trim(args.session) .. " working on this task" end
+  if not id then
+    -- A chat is never run and waited on: the message joins its queue.
+    local chat = find_chat(args.session, ctx.session_id, caller)
+    if not chat then
+      return nil, "no agent or chat " .. trim(args.session) .. " you can message (list = true shows them)"
+    end
+    local ok, err = pcall(bone.queue.add, chat, from(ctx, caller) .. args.prompt, "steer")
+    if not ok then return nil, tostring(err) end
+    return "Delivered to chat " .. handle(chat) .. (busy[chat] and ", which reads it before its next step."
+      or ", which starts a turn for it.")
+  end
   if id == ctx.session_id then return nil, "an agent cannot message itself" end
   local body = args.prompt
-  if target.parent ~= ctx.session_id then
-    body = "Message from " .. (caller and ("agent " .. handle(ctx.session_id) .. " (" .. (caller.task or "agent") .. ")")
-      or "the main agent") .. "; to reply, message it back with the subagent tool:\n\n" .. body
-  end
+  if target.parent ~= ctx.session_id then body = from(ctx, caller) .. body end
   if busy[id] then
     local ok, err = pcall(bone.queue.add, id, body, "steer")
     if not ok then return nil, tostring(err) end
@@ -390,28 +489,31 @@ bone.tool.register({
     .. "broad searches, reviews and independent pieces of work. It cannot see this "
     .. "conversation: put everything it needs in prompt. Several calls in one reply run at "
     .. "the same time. Each answer ends with [agent <handle>]: pass the handle as session to "
-    .. "follow up with that agent, or to message one that is still working. background "
+    .. "follow up with that agent, or to message one that is still working; list = true "
+    .. "shows who you can message. background "
     .. "returns at once and the answer arrives later as a message. Set provider or model only "
     .. "when the user asks for them.",
   parameters = {
     type = "object",
     properties = {
-      task = { type = "string", description = "A few words saying what it does, shown to the user." },
+      task = { type = "string", description = "A few words saying what a new agent does, shown to the user." },
       prompt = { type = "string", description = "The full task, with all the context it needs, or the message for session." },
+      list = { type = "boolean", description = "Only show the agents and chats you can message, with their handles." },
       name = { type = "string", description = "A named sub-agent, if any are listed." },
-      session = { type = "string", description = "An existing agent's handle: continue it or message it instead of starting a new one." },
+      session = { type = "string", description = "A handle from an answer or from list: continue that agent, or message it or a chat, instead of starting a new agent." },
       background = { type = "boolean", description = "Return at once; the answer arrives as a message when it is done." },
       provider = { type = "string", description = "Only when the user asks: one of the providers listed." },
       model = { type = "string", description = "Only when the user asks: a model ID for that provider." },
     },
-    required = { "task", "prompt" },
+    -- No required list: an empty Lua table would go out as {} (not []).
   },
   parallel = true,
   needs_approval = false,
   run = function(args, ctx)
+    local caller = child_of(ctx.session_id)
+    if args.list == true then return listing(ctx.session_id, caller) end
     -- Before the session exists: a child with no turn would show forever.
     if not text(args.prompt) then return nil, "subagent needs a prompt with the full task" end
-    local caller = child_of(ctx.session_id)
     if caller and not allowed(spec_for(caller), "subagent") then
       return nil, "tool subagent is not allowed for this sub-agent"
     end
