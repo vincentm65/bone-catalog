@@ -185,12 +185,13 @@ end
 -- ---- the Trash --------------------------------------------------------------------
 
 --- Whether the desktop's Trash can be listed and put back from (gio).
+--- Asked through a job, which runs where the files are (on a phone, the
+--- machine it reaches): taken to be there until the answer says otherwise.
 function M.can_restore()
   if M.gio == nil then
-    local p = io.popen("command -v gio 2>/dev/null")
-    local out = p and p:read("*l") or ""
-    if p then p:close() end
-    M.gio = out ~= ""
+    M.gio = true
+    bone.job.start("command -v gio >/dev/null 2>&1", { name = "files: gio", timeout = 5000, buffer = true,
+      on_exit = function(r) M.gio = (r ~= nil and r.code == 0) end })
   end
   return M.gio
 end

@@ -4263,13 +4263,28 @@ local POLL_ENTRIES = 3000 -- a folder with more than this is left to `r`
 --- act.poll_every grows when a look took long.
 function act.poll()
   if ops.busy or ask or listing.filter_typing or quick_on then return end
-  local t0 = os.clock()
-  local changed, looked = false, 0
-  for dir, entries in pairs(listing.read) do
-    if looked >= POLL_DIRS then break end
-    if #entries <= POLL_ENTRIES then
+  -- The time on the wall, not the processor's: a folder on another machine
+  -- (a share, a phone reaching its computer) costs waiting, not work.
+  local function clock() return bone.now and bone.now() / 1000 or os.clock() end
+  local t0 = clock()
+  local changed, looked, slowest = false, 0, 0
+  -- The folders in a fixed order, taken up where the last look stopped, so
+  -- a look that runs out of time still gets round to each of them.
+  local dirs = {}
+  for dir in pairs(listing.read) do dirs[#dirs + 1] = dir end
+  table.sort(dirs)
+  local from = (act.poll_from or 0) % math.max(1, #dirs)
+  for step = 1, #dirs do
+    local at = ((from + step - 1) % #dirs) + 1
+    local dir = dirs[at]
+    local entries = listing.read[dir]
+    if looked >= POLL_DIRS or clock() - t0 > 0.06 then break end
+    act.poll_from = at
+    if entries and #entries <= POLL_ENTRIES then
       looked = looked + 1
+      local one = clock()
       local list = bone.fs.list(dir)
+      slowest = math.max(slowest, clock() - one)
       if list then
         local now = folder_mark(list)
         act.polled = act.polled or {}
@@ -4287,11 +4302,11 @@ function act.poll()
       end
     end
   end
-  local took = os.clock() - t0
+  local took = clock() - t0
   act.poll_every = took > 0.02 and math.min(20, (act.poll_every or 4) * 2) or math.max(4, (act.poll_every or 4) - 1)
   -- A folder that takes a quarter of a second to list (a share over a slow
   -- line) would make the panel stutter: there the looking stops, and says so.
-  if took > 0.25 then
+  if slowest > 0.25 then
     act.poll_every = 1e9
     note("Live refresh is off here: this folder is slow to list · r reads it again")
   end
