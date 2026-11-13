@@ -560,7 +560,8 @@ bone.tool.register({
     .. "shows who you can message. The call waits for the answer, but if the user writes "
     .. "meanwhile it returns and the agent carries on in the background; background = true "
     .. "returns at once. A background answer arrives later as a message. Set provider or model "
-    .. "only when the user asks for them.",
+    .. "only when the user asks for them. Before calling, tell the user in one line what you are "
+    .. "dispatching and why; after, sum up what came back.",
   parameters = {
     type = "object",
     properties = {
