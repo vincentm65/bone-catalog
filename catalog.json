@@ -251,7 +251,7 @@
     "name": "files",
     "title": "Files",
     "kind": "plugin",
-    "version": "3.8.1",
+    "version": "3.8.2",
     "description": "A file manager, a file viewer, a text editor and a CSV table in one docked sidebar, in the terminal and the desktop app: a folder tree kept up to date as files change, copy, move, Trash and undo for several files at once, Git's own markers and what the agent changed, search through the folder, and an editor that will not write over a file someone else changed",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -268,7 +268,7 @@
       },
       {
         "path": "core.lua",
-        "sha256": "a7f57e2b8362150fa90efeaf381fcfc56f8e0c5fa4ce2b63f3febfcf903722ae"
+        "sha256": "274f33c95ffa395e2aeb0b69ceb8b37c3425d5b26c580e30cc67a73610325fb0"
       },
       {
         "path": "lua/files/buffer.lua",
@@ -340,7 +340,7 @@
       },
       {
         "path": "lua/files/pdf.lua",
-        "sha256": "f7e5ccb5f617793ea705a43ba887694d915d20f5ce2476a00bc7ff68e1ac483b"
+        "sha256": "d02444102ebb6394dab99d89b6ddd6cb54d7dc9bb1d4c248cc92e470262291f0"
       },
       {
         "path": "lua/files/platform.lua",
@@ -368,7 +368,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "0bb5e43c319c141fd79dd96e0d9a44ecdc73996344f90a5b970162688d202c36"
+        "sha256": "e8d3acb993e5201473e59762c68ce1eef9764364435f7d5ab8c37600ff6aedb1"
       },
       {
         "path": "ui.lua",
