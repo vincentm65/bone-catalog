@@ -412,7 +412,7 @@ bone.hook("turn_end", function(ev)
     local outcome = ev.outcome or {}
     local report, err = answer(ev.session_id, c, outcome.status, outcome.message, last_reply(ev.session_id))
     pcall(bone.queue.add, to, "Background sub-agent (" .. (c.task or "agent") .. ") "
-      .. (report and "finished" or "stopped") .. ":\n\n" .. (report or err), "steer")
+      .. (report and "finished" or "stopped") .. ":\n\n" .. (report or err), "steer", nil, "agent")
   end
 end)
 
@@ -460,7 +460,7 @@ end
 -- in the background. Messages from agents, chats and jobs don't.
 local NOT_USER = { "Background sub-agent (", "Message from agent ", "Message from chat ", "Background job " }
 bone.hook("queue_add", function(ev)
-  if ev.mode == "next" then return end
+  if ev.mode == "next" or ev.source then return end
   local text = ev.text or ""
   for _, opening in ipairs(NOT_USER) do
     if text:sub(1, #opening) == opening then return end
@@ -532,7 +532,7 @@ local function message(args, ctx, caller, over, note)
     if not chat then
       return nil, "no agent or chat " .. trim(args.session) .. " you can message (list = true shows them)"
     end
-    local ok, err = pcall(bone.queue.add, chat, from(ctx, caller) .. args.prompt, "steer")
+    local ok, err = pcall(bone.queue.add, chat, from(ctx, caller) .. args.prompt, "steer", nil, "agent")
     if not ok then return nil, tostring(err) end
     return "Delivered to chat " .. handle(chat) .. (busy[chat] and ", which reads it before its next step."
       or ", which starts a turn for it.")
