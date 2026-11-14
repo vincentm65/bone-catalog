@@ -148,9 +148,10 @@ end)
 
 --- Open a file with the desktop's own app (the system's default one).
 bone.rpc.register("files.open", function(args, ctx)
-  local file = io.open(args.path, "rb")
+  local path = tostring(args.path or "")
+  local file = io.open(path, "rb")
   if not file then
-    return { error = "There is no such file: " .. tostring(args.path) }
+    return { error = "There is no such file: " .. path }
   end
   file:close()
   -- The app is started in the background and its output is kept away from
@@ -158,7 +159,7 @@ bone.rpc.register("files.open", function(args, ctx)
   -- `open` on macOS, xdg-open elsewhere.
   local opener = (jit and jit.os == "OSX") and "open" or "xdg-open"
   local r, err = run(
-    opener .. " " .. quoted(args.path) .. " >/dev/null 2>&1 </dev/null &", 5000)
+    opener .. " " .. quoted(path) .. " >/dev/null 2>&1 </dev/null &", 5000)
   if not r then return { error = err } end
   if r.code ~= 0 then
     local why = (r.stderr or ""):gsub("%s+$", "")

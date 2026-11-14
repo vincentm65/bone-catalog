@@ -1,6 +1,6 @@
 {
   "title": "Files",
-  "version": "3.8.1",
+  "version": "3.8.2",
   "description": "A file manager, a file viewer, a text editor and a CSV table in one docked sidebar, in the terminal and the desktop app: a folder tree kept up to date as files change, copy, move, Trash and undo for several files at once, Git's own markers and what the agent changed, search through the folder, and an editor that will not write over a file someone else changed",
   "capabilities": [
     "command",

@@ -488,7 +488,10 @@ end
 --- The objects an object stream holds: the pairs of numbers in its head
 --- say where each of them stands.
 read_object_streams = function(doc)
-  for _, obj in pairs(doc.objects) do
+  -- Collected first: the loop below adds to doc.objects.
+  local streams = {}
+  for _, obj in pairs(doc.objects) do streams[#streams + 1] = obj end
+  for _, obj in ipairs(streams) do
     local t = get(doc, obj.value, "Type")
     if t and t.kind == "name" and t.value == "ObjStm" then
       local count = get(doc, obj.value, "N")
@@ -631,23 +634,6 @@ do
   for name, ch in pairs(names) do GLYPHS[name] = ch end
 end
 
---- The character of a byte in WinAnsi.
-local function win_ansi(code)
-  if code >= 0x80 and code <= 0x9F then
-    local high = {
-      [0x80] = "€", [0x82] = "‚", [0x83] = "ƒ", [0x84] = "„",
-      [0x85] = "…", [0x86] = "†", [0x87] = "‡", [0x88] = "ˆ",
-      [0x89] = "‰", [0x8A] = "Š", [0x8B] = "‹", [0x8C] = "Œ",
-      [0x8E] = "Ž", [0x91] = "‘", [0x92] = "’", [0x93] = "“",
-      [0x94] = "”", [0x95] = "•", [0x96] = "–", [0x97] = "—",
-      [0x98] = "˜", [0x99] = "™", [0x9A] = "š", [0x9B] = "›",
-      [0x9C] = "œ", [0x9E] = "ž", [0x9F] = "Ÿ",
-    }
-    return high[code] or "?"
-  end
-  return string.char(code)
-end
-
 --- A code point as UTF-8.
 local function utf8_char(code)
   if type(code) ~= "number" or code < 0 or code > 0x10FFFF then return "?" end
@@ -662,6 +648,23 @@ local function utf8_char(code)
   return string.char(0xF0 + math.floor(code / 0x40000),
     0x80 + math.floor(code / 0x1000) % 0x40,
     0x80 + math.floor(code / 0x40) % 0x40, 0x80 + code % 0x40)
+end
+
+--- The character of a byte in WinAnsi.
+local function win_ansi(code)
+  if code >= 0x80 and code <= 0x9F then
+    local high = {
+      [0x80] = "€", [0x82] = "‚", [0x83] = "ƒ", [0x84] = "„",
+      [0x85] = "…", [0x86] = "†", [0x87] = "‡", [0x88] = "ˆ",
+      [0x89] = "‰", [0x8A] = "Š", [0x8B] = "‹", [0x8C] = "Œ",
+      [0x8E] = "Ž", [0x91] = "‘", [0x92] = "’", [0x93] = "“",
+      [0x94] = "”", [0x95] = "•", [0x96] = "–", [0x97] = "—",
+      [0x98] = "˜", [0x99] = "™", [0x9A] = "š", [0x9B] = "›",
+      [0x9C] = "œ", [0x9E] = "ž", [0x9F] = "Ÿ",
+    }
+    return high[code] or "?"
+  end
+  return utf8_char(code)
 end
 
 --- The text of a ToUnicode map's hex string.
@@ -760,7 +763,7 @@ end
 
 --- The text of a string, in the font's own codes.
 local function decode_text(bytes, font)
-  if not font then return bytes end
+  font = font or { unicode = {}, diffs = {} }
   local out = {}
   if next(font.unicode) ~= nil then
     if font.two_byte then
@@ -853,8 +856,6 @@ local function content_text(doc, content, fonts)
       token, next_pos = read_name(content, pos)
     elseif c == "[" then
       token, next_pos = read_array(content, pos, doc)
-    elseif c == "]" or c == "{" or c == "}" then
-      pos = pos + 1
     else
       local s, e, a, b = content:find("^([+-]?%d+)%s+([+-]?%d+)%s+R", pos)
       if s then
@@ -867,8 +868,6 @@ local function content_text(doc, content, fonts)
           local word = content:match("^[A-Za-z'\"][A-Za-z0-9*'\"%%]*", pos)
           if word then
             token, next_pos = { kind = "op", value = word }, pos + #word
-          else
-            pos = pos + 1
           end
         end
       end
@@ -982,8 +981,10 @@ local function find_pages(doc)
       break
     end
   end
+  local seen = {}
   local function walk(node, resources, depth)
-    if depth > 32 or type(node) ~= "table" then return end
+    if depth > 32 or type(node) ~= "table" or seen[node] then return end
+    seen[node] = true
     local res = get(doc, node, "Resources") or resources
     local t = get(doc, node, "Type")
     if t and t.kind == "name" and t.value == "Page" then
@@ -1023,7 +1024,7 @@ end
 function M.text(path)
   local file, err = io.open(path, "rb")
   if not file then return nil, tostring(err) end
-  local data = file:read("*a")
+  local data = file:read(M.MAX_BYTES + 1)
   file:close()
   if not data then return nil, "the file could not be read" end
   if #data > M.MAX_BYTES then return nil, "the PDF is too big to read" end
