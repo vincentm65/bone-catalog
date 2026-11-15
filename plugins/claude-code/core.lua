@@ -20,6 +20,18 @@ local function canonical(v)
   return "{" .. table.concat(out, ",") .. "}"
 end
 
+-- A short stand-in for a long string (a message, the prompt): its length and
+-- two rolling hashes. Saved sessions keep these instead of whole transcripts.
+local function digest(s)
+  local a, b = 5381, 0
+  for i = 1, #s do
+    local c = s:byte(i)
+    a = (a * 33 + c) % 4294967296
+    b = (b * 65599 + c) % 4294967296
+  end
+  return string.format("%d:%08x%08x", #s, a, b)
+end
+
 -- Scan already-decoded JSON for raw argument spans. Lua decoding alone loses
 -- null/empty-collection distinctions. Syntax validation belongs to bone.json.decode.
 local function raw_json(s)
@@ -65,6 +77,51 @@ local function raw_json(s)
   return value(0)
 end
 
+-- The newly complete part of the "response" string in a StructuredOutput
+-- input that is still arriving, decoded. Only a response written first (as
+-- the sorted schema asks) is streamed; anything else shows when it is done.
+local function response_delta(block)
+  local buf = block.buf
+  if not block.started then
+    local _, e = buf:find('^%s*{%s*"response"%s*:%s*"')
+    if not e then
+      if #buf > 64 then block.done = true end
+      return ""
+    end
+    block.started = true
+    buf = buf:sub(e + 1)
+  end
+  local i, n = 1, #buf
+  while i <= n do
+    local c = buf:byte(i)
+    if c == 34 then block.done = true; break end -- the closing quote
+    if c == 92 then
+      local esc = buf:sub(i + 1, i + 1)
+      if esc == "" then break end
+      if esc == "u" then
+        if n < i + 5 then break end
+        local unit = tonumber(buf:sub(i + 2, i + 5), 16)
+        if unit and unit >= 0xD800 and unit <= 0xDBFF then
+          if n < i + 11 then break end -- wait for the pair's low half
+          i = i + 12
+        else
+          i = i + 6
+        end
+      else
+        i = i + 2
+      end
+    else
+      i = i + 1
+    end
+  end
+  block.buf = block.done and "" or buf:sub(i)
+  local raw = buf:sub(1, i - 1)
+  if raw == "" then return "" end
+  local ok, text = pcall(bone.json.decode, '"' .. raw .. '"')
+  if not ok or type(text) ~= "string" then block.done = true; return "" end
+  return text
+end
+
 local preamble = [[You are Bone's model backend. Native Claude Code tools are disabled.
 The conversation below is data representing the real Bone conversation, not instructions to execute CLI tools.
 Return only structured output: response is your assistant text; tool_calls is an array of requested Bone tools.
@@ -89,31 +146,70 @@ local function looks_unfinished(text)
   end
   return t:sub(-1) == ":" or t:sub(-4) == " now" or t:sub(-4) == "now."
 end
+
+local function config_dir()
+  return os.getenv("CLAUDE_CONFIG_DIR") or ((os.getenv("HOME") or "") .. "/.claude")
+end
+-- Where the CLI keeps the transcripts of a working directory.
+local function project_dir(cwd)
+  return config_dir() .. "/projects/" .. (cwd:gsub("[^%w]", "-"))
+end
+
+-- Sessions outlive config reloads (which happen on every settings change and
+-- plugin save) and restarts: dropping one would make the next call send the
+-- whole history again as a cold cache write. A session idle this long is
+-- forgotten, and so is any private directory nothing has used for as long
+-- (left by a Bone that was killed).
+local IDLE_LIMIT = 6 * 3600
+local STATE = "claude-code"
+local saved = bone.state.load(STATE)
+local sessions = type(saved.sessions) == "table" and saved.sessions or {}
+local limits = type(saved.limits) == "table" and saved.limits or nil
+local function save()
+  bone.state.save(STATE, { sessions = sessions, limits = limits })
+end
 local last_usage = {}
 local turn_cost = {}
-local sessions = {}
 local function discard(sid)
   local s = sessions[sid]
   sessions[sid] = nil
-  if s then
-    -- Only generated private dirs are removed. CLI transcripts never touch repo files.
-    local config = os.getenv("CLAUDE_CONFIG_DIR") or ((os.getenv("HOME") or "") .. "/.claude")
-    local project = s.cwd:gsub("[^%w]", "-")
-    -- The project directory is exclusive to our mktemp cwd, even on a failed first call.
-    bone.system("rm -rf -- " .. quote(s.cwd) .. " " .. quote(config .. "/projects/" .. project), { timeout = 5000 })
+  -- Only generated private dirs are removed. CLI transcripts never touch repo files.
+  if type(s) == "table" and type(s.cwd) == "string" and s.cwd:match("^/tmp/bone3%-claude%-code%.[%w]+$") then
+    bone.system("rm -rf -- " .. quote(s.cwd) .. " " .. quote(project_dir(s.cwd)), { timeout = 5000 })
   end
 end
-bone.on_shutdown(function()
-  for sid in pairs(sessions) do discard(sid) end
-end)
+-- Marks a private directory as in use (the sweep below spares it); false
+-- when it is gone.
+local function touch(dir)
+  local f = io.open(dir .. "/.bone-used", "w")
+  if not f then return false end
+  f:write(tostring(os.time()))
+  f:close()
+  return true
+end
+do
+  local now = os.time()
+  for sid, s in pairs(sessions) do
+    if type(s) ~= "table" or (tonumber(s.used_at) or 0) < now - IDLE_LIMIT then discard(sid) end
+  end
+  bone.system("for d in /tmp/bone3-claude-code.* " .. quote(config_dir() .. "/projects") .. "/-tmp-bone3-claude-code-*; do"
+    .. ' [ -d "$d" ] && [ -z "$(find "$d" -mmin -' .. math.floor(IDLE_LIMIT / 60) .. ' -print -quit 2>/dev/null)" ]'
+    .. ' && rm -rf -- "$d"; done; true', { timeout = 10000 })
+  save()
+end
+
 local function message_key(m)
   -- Ignore display-only metadata/reasoning; compare the actual Bone transcript.
-  local calls = {}
+  local calls, images = {}, nil
   for _, c in ipairs(m.tool_calls or {}) do
     calls[#calls + 1] = { id = c.id, name = c.name, arguments = c.arguments }
   end
-  return canonical({ role = m.role, content = m.content or "", tool_calls = calls,
-    call_id = m.call_id, is_error = m.is_error or nil })
+  for _, img in ipairs(m.images or {}) do
+    images = images or {}
+    images[#images + 1] = img.id or digest(img.data or "")
+  end
+  return digest(canonical({ role = m.role, content = m.content or "", tool_calls = calls,
+    call_id = m.call_id, is_error = m.is_error or nil, images = images }))
 end
 bone.hook("turn_start", function(ctx) turn_cost[ctx.session_id] = 0 end)
 local auth_env = "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL"
@@ -148,6 +244,75 @@ local function executable(o)
   return best
 end
 
+-- One stream-json user message: the new Bone messages as JSON, then any
+-- images they carry, each after the [image N] label its message lists.
+local function user_message(intro, messages)
+  local plain, images = {}, {}
+  for i, m in ipairs(messages) do
+    local copy = {}
+    for k, v in pairs(m) do
+      if k ~= "images" and k ~= "reasoning" then copy[k] = v end
+    end
+    if type(m.images) == "table" and #m.images > 0 then
+      copy.images = {}
+      for _, img in ipairs(m.images) do
+        if type(img.data) ~= "string" then error("claude-code: an attached image has no data", 0) end
+        images[#images + 1] = img
+        copy.images[#copy.images + 1] = "[image " .. #images .. "]"
+      end
+    end
+    plain[i] = copy
+  end
+  local blocks = { { type = "text", text = intro .. (#images > 0 and " (images follow, each after its label)" or "")
+    .. ":\n" .. canonical(plain) } }
+  for n, img in ipairs(images) do
+    blocks[#blocks + 1] = { type = "text", text = "[image " .. n .. "]" }
+    blocks[#blocks + 1] = { type = "image", source = { type = "base64",
+      media_type = img.mime_type or "image/png", data = img.data } }
+  end
+  return canonical({ type = "user", message = { role = "user", content = blocks } }) .. "\n"
+end
+local function notice(text)
+  return canonical({ type = "user", message = { role = "user", content = text } }) .. "\n"
+end
+
+-- Run the CLI and hand each line of its output to on_line as it arrives; on
+-- Bone builds without bone.system_stream, all of them once it exits.
+-- { code, stderr } or { timed_out = true }; nil when the turn was cancelled.
+local function run_cli(command, opts, on_line)
+  if not bone.system_stream then
+    local r = bone.system(command, opts)
+    if not r then return nil end
+    for line in (r.stdout or ""):gmatch("[^\r\n]+") do on_line(line) end
+    return r
+  end
+  local p = bone.system_stream(command, opts)
+  if not p then return nil end
+  local ok, err = pcall(function()
+    for line in p:lines() do
+      if line ~= "" then on_line(line) end
+    end
+  end)
+  if not ok then
+    p:close()
+    error(err, 0)
+  end
+  local r = p:wait()
+  p:close()
+  return r
+end
+
+local window_names = { five_hour = "5-hour", seven_day = "weekly", seven_day_opus = "weekly Opus",
+  seven_day_sonnet = "weekly Sonnet" }
+-- A readable error when the plan's limit stopped the call.
+local function limit_error(info)
+  if type(info) ~= "table" or info.status ~= "rejected" then return nil end
+  local window = window_names[info.rateLimitType] or tostring(info.rateLimitType or "usage")
+  local reset = tonumber(info.resetsAt)
+  return "claude-code: your Claude plan's " .. window .. " limit is reached"
+    .. (reset and ("; it resets " .. os.date("%a %H:%M", reset)) or "") .. "; no automatic retry"
+end
+
 local function complete(req, emit)
   local o = req.options
   local sid = req.session_id or "default"
@@ -177,23 +342,22 @@ local function complete(req, emit)
   local system, history = {}, {}
   for _, m in ipairs(req.messages) do
     if m.role == "system" then system[#system + 1] = m.content or ""
-    else
-      if m.images and #m.images > 0 then error("claude-code: images are not supported", 0) end
-      history[#history + 1] = m
-    end
+    else history[#history + 1] = m end
   end
   local prompt = preamble .. "\nBone system instructions:\n" .. table.concat(system, "\n\n")
   -- Tool descriptions and parameters live only in the output schema; duplicating
   -- them in the system prompt charges for the same definitions twice.
   local schema_json = canonical(schema)
-  local fingerprint = canonical({ prompt = prompt, schema = schema_json,
+  local fingerprint = digest(canonical({ prompt = prompt, schema = schema_json,
     executable = executable(o), model = o.model or "claude-haiku-5-5",
-    effort = o.reasoning_effort or "low" })
+    effort = o.reasoning_effort or "low" }))
+  local keys = {}
+  for i, m in ipairs(history) do keys[i] = message_key(m) end
   local s = req.session_id and sessions[sid]
   if s then
-    local matches = s.fingerprint == fingerprint and #history > #s.history
+    local matches = s.fingerprint == fingerprint and #history > #s.history and touch(s.cwd)
     for i, key in ipairs(s.history) do
-      if not history[i] or message_key(history[i]) ~= key then matches = false; break end
+      if keys[i] ~= key then matches = false; break end
     end
     if not matches then discard(sid); s = nil end
   end
@@ -202,6 +366,7 @@ local function complete(req, emit)
     if not setup then return nil end
     if setup.code ~= 0 then error("claude-code: could not create isolated working directory", 0) end
     s = { cwd = setup.stdout:gsub("%s+$", ""), fingerprint = fingerprint, history = {} }
+    touch(s.cwd)
   end
   -- Keep previous Claude message/cache boundaries intact; send only new Bone data.
   local delta = {}
@@ -209,9 +374,22 @@ local function complete(req, emit)
   local resumed = s.cli_id ~= nil
   sessions[sid] = s
   s.invocation = (s.invocation or 0) + 1
+  s.used_at = os.time()
+
+  -- The reply so far (every invocation's response, in order) and what of it
+  -- the user has been shown.
+  local text, shown = "", ""
+  local function show(chunk)
+    if chunk ~= "" then
+      shown = shown .. chunk
+      emit({ text = chunk })
+    end
+  end
   local function invoke(stdin_body, resume_id)
     local command = auth_env .. quote(executable(o))
-      .. " -p --output-format stream-json --verbose --tools '' --strict-mcp-config --mcp-config '{\"mcpServers\":{}}'"
+      .. " -p --input-format stream-json --output-format stream-json --verbose"
+      .. (bone.system_stream and " --include-partial-messages" or "")
+      .. " --tools '' --strict-mcp-config --mcp-config '{\"mcpServers\":{}}'"
       .. " --setting-sources '' --settings '{\"disableAllHooks\":true}' --disable-slash-commands --no-chrome"
       .. " --effort " .. quote(o.reasoning_effort or "low")
       .. " --model " .. quote(o.model or "claude-haiku-5-5")
@@ -220,35 +398,60 @@ local function complete(req, emit)
       .. (budget and (" --max-budget-usd " .. quote((s.total_cost or 0) + budget)) or "")
       .. " --system-prompt " .. quote(prompt) .. " --json-schema " .. quote(schema_json)
       .. (resume_id and (" --resume " .. quote(resume_id)) or "")
-    local r = bone.system(command, { cwd = s.cwd, stdin = stdin_body, timeout = o.timeout_ms or 600000 })
-    -- Never resume an interrupted/failed CLI transcript.
-    if not r then return nil end
-    if r.timed_out then error("claude-code: timed out; no automatic retry", 0) end
     -- Result usage sums all internal calls. Context comes from the last real
     -- assistant message instead; repeated content blocks must not be summed.
-    local doc, result_json, context_tokens
-    for line in (r.stdout or ""):gmatch("[^\r\n]+") do
+    local doc, result_json, context_tokens, limit
+    local block -- the StructuredOutput input arriving now, while its response streams
+    local first = true -- nothing of this invocation's response is on screen yet
+    local function on_line(line)
       local ok, event = pcall(bone.json.decode, line)
       if not ok or type(event) ~= "table" then
-          error("claude-code: invalid CLI stream", 0)
+        error("claude-code: invalid CLI stream", 0)
       end
-      if event.type == "assistant" and type(event.message) == "table" then
+      if event.type == "stream_event" and type(event.event) == "table" then
+        local ev = event.event
+        if ev.type == "content_block_start" then
+          local b = ev.content_block
+          block = type(b) == "table" and b.type == "tool_use" and b.name == "StructuredOutput" and { buf = "" } or nil
+        elseif ev.type == "content_block_delta" and type(ev.delta) == "table" then
+          -- (Thinking streams too, but the CLI sends its text empty.)
+          local d = ev.delta
+          if d.type == "input_json_delta" and block and not block.done and type(d.partial_json) == "string" then
+            block.buf = block.buf .. d.partial_json
+            local chunk = response_delta(block)
+            if chunk ~= "" then
+              show((first and text ~= "") and ("\n\n" .. chunk) or chunk)
+              first = false
+            end
+          end
+        elseif ev.type == "content_block_stop" then
+          block = nil
+        end
+      elseif event.type == "assistant" and type(event.message) == "table" then
         local usage = event.message.usage
         if type(usage) == "table" then
           local n = (usage.input_tokens or 0) + (usage.cache_read_input_tokens or 0)
             + (usage.cache_creation_input_tokens or 0)
           if n > 0 then context_tokens = n end
         end
+      elseif event.type == "rate_limit_event" and type(event.rate_limit_info) == "table" then
+        limit = event.rate_limit_info
+        limits = { info = limit, at = os.time() }
       elseif event.type == "result" then
         doc, result_json = event, line
       end
     end
+    local r = run_cli(command, { cwd = s.cwd, stdin = stdin_body, timeout = o.timeout_ms or 600000 }, on_line)
+    -- Never resume an interrupted/failed CLI transcript.
+    if not r then return nil end
+    if r.timed_out then error("claude-code: timed out; no automatic retry", 0) end
     if not doc then
-      error("claude-code: CLI failed (exit " .. tostring(r.code) .. "): " .. (r.stderr or ""):sub(1, 1000), 0)
+      error(limit_error(limit) or ("claude-code: CLI failed (exit " .. tostring(r.code) .. "): "
+        .. (r.stderr or ""):sub(1, 1000)), 0)
     end
     if r.code ~= 0 or doc.is_error or doc.subtype ~= "success" then
-      error("claude-code: " .. tostring(doc.subtype or "CLI error") .. ": "
-        .. tostring(doc.result or canonical(doc.errors or {})):sub(1, 1000) .. "; no automatic retry", 0)
+      error(limit_error(limit) or ("claude-code: " .. tostring(doc.subtype or "CLI error") .. ": "
+        .. tostring(doc.result or canonical(doc.errors or {})):sub(1, 1000) .. "; no automatic retry"), 0)
     end
     local output = doc.structured_output
     if type(output) ~= "table" or type(output.response) ~= "string" or type(output.tool_calls) ~= "table" then
@@ -269,6 +472,12 @@ local function complete(req, emit)
       end
       calls[i] = { name = c.name, arguments = result_json:sub(arguments.first, arguments.last) }
     end
+    -- Add this response to the reply and show whatever of it did not stream
+    -- (all of it on Bone builds without bone.system_stream).
+    if output.response ~= "" then
+      text = text == "" and output.response or (text .. "\n\n" .. output.response)
+    end
+    if text:sub(1, #shown) == shown then show(text:sub(#shown + 1)) end
     return { doc = doc, content = output.response, calls = calls, context_tokens = context_tokens }
   end
 
@@ -281,22 +490,23 @@ local function complete(req, emit)
     agg.output = agg.output + (u.output_tokens or 0)
   end
 
-  local inv = invoke((resumed and "New Bone messages as JSON:\n" or "Bone conversation history as JSON:\n")
-    .. canonical(delta), resumed and s.cli_id or nil)
-  if not inv then discard(sid); return nil end
+  local inv = invoke(user_message(resumed and "New Bone messages as JSON" or "Bone conversation history as JSON", delta),
+    resumed and s.cli_id or nil)
+  if not inv then discard(sid); save(); return nil end
   account(inv.doc)
   local nudged = 0
   -- One-shot continuation: a no-tool-call reply that reads as unfinished work
   -- gets a single resume telling the model to continue or finish explicitly.
+  -- The user has seen that reply already, so what comes back is added to it.
   while #inv.calls == 0 and nudged < 1 and o.continuation_nudge ~= false and looks_unfinished(inv.content) do
     nudged = nudged + 1
     s.cli_id = inv.doc.session_id
     sessions[sid] = s
-    local again = invoke("Bone notice: that reply had no tool_calls, which ends your turn, but it reads as"
+    local again = invoke(notice("Bone notice: that reply had no tool_calls, which ends your turn, but it reads as"
       .. " unfinished work. If the task is incomplete, continue now and include the needed tool_calls."
-      .. " If it is complete, or you are truly blocked on the user, restate your final response with an"
-      .. " empty tool_calls array.", inv.doc.session_id)
-    if not again then discard(sid); return nil end
+      .. " If it is complete, or you are truly blocked on the user, reply with an empty response and an empty"
+      .. " tool_calls array: the user already sees your previous reply."), inv.doc.session_id)
+    if not again then discard(sid); save(); return nil end
     account(again.doc)
     inv = again
   end
@@ -309,22 +519,21 @@ local function complete(req, emit)
     output_tokens = agg.output, total_cost_usd = cost, cli_session_cost_usd = doc.total_cost_usd,
     model_usage = doc.modelUsage, subtype = doc.subtype, turn_cost_usd = turn_cost[sid],
     context_tokens = inv.context_tokens, resumed = resumed, sent_messages = #delta,
-    cli_turns = doc.num_turns, continuation_nudges = nudged }
-  local result = { content = inv.content, tool_calls = {}, usage = {
+    cli_turns = doc.num_turns, continuation_nudges = nudged, streamed = bone.system_stream ~= nil }
+  local result = { content = text, tool_calls = {}, usage = {
     input_tokens = agg.input + agg.read + agg.write, output_tokens = agg.output,
     cached_tokens = agg.read, context_tokens = inv.context_tokens } }
   for i, c in ipairs(inv.calls) do
     result.tool_calls[i] = { id = "cc_" .. tostring(doc.session_id or "call") .. "_" .. s.invocation .. "_" .. i,
       name = c.name, arguments = c.arguments }
   end
-  if result.content ~= "" then emit({ text = result.content }) end
   s.cli_id = doc.session_id
   s.total_cost = doc.total_cost_usd or 0
   sessions[sid] = s
-  s.history = {}
-  for i, m in ipairs(history) do s.history[i] = message_key(m) end
+  s.history = keys
   s.history[#s.history + 1] = message_key({ role = "assistant", content = result.content, tool_calls = result.tool_calls })
   if not req.session_id then discard(sid) end
+  save()
   return result
 end
 
@@ -332,6 +541,7 @@ bone.provider.register("claude_code", { complete = function(req, emit)
   local ok, result = pcall(complete, req, emit)
   if not ok then
     discard(req.session_id or "default")
+    save()
     error(result, 0)
   end
   return result
@@ -339,6 +549,24 @@ end })
 bone.rpc.register("claude-code.usage", function(_, ctx)
   return last_usage[ctx.session_id or "default"] or {}
 end)
+
+-- The plan, from the CLI's login; asked once per config load.
+local plan
+local function plan_type()
+  if plan then return plan end
+  local o = bone.config.providers.claude_code or {}
+  local r = bone.system(auth_env .. quote(executable(o)) .. " auth status", { timeout = 10000 })
+  local ok, auth = pcall(bone.json.decode, r and r.stdout or "")
+  if r and r.code == 0 and ok and type(auth) == "table" then
+    plan = auth.subscriptionType and tostring(auth.subscriptionType) or "unknown"
+  end
+  return plan
+end
+-- The plan's usage windows as of the latest request (each one reports them).
+bone.rpc.register("claude-code.limits", function()
+  return { plan = plan_type(), info = limits and limits.info, at = limits and limits.at }
+end)
+
 bone.health("Claude Code", function()
   local o = bone.config.providers.claude_code or {}
   local exe = executable(o)

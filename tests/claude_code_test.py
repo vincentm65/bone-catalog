@@ -33,10 +33,14 @@ with tempfile.TemporaryDirectory(prefix='bone3-claude-test-') as raw:
     fake.write_text('''#!/usr/bin/env python3
 import json, os, sys, time
 scenario = os.environ['CLAUDE_TEST_SCENARIO']
+args = sys.argv[1:]
+if args[:2] == ['auth', 'status']:
+    print(json.dumps({'loggedIn': True, 'authMethod': 'claude.ai', 'subscriptionType': 'pro'}))
+    sys.exit(0)
 with open(os.environ['CLAUDE_TEST_CALLS'], 'a') as log:
     log.write('call\\n')
-args = sys.argv[1:]
 assert args[args.index('--tools') + 1] == ''
+assert args[args.index('--input-format') + 1] == 'stream-json'
 assert args[args.index('--output-format') + 1] == 'stream-json'
 assert '--verbose' in args
 assert args[args.index('--setting-sources') + 1] == ''
@@ -51,7 +55,9 @@ if scenario == 'no-budget':
 else:
     assert abs(float(args[args.index('--max-budget-usd') + 1]) - previous_cost - 0.12) < 1e-9 or scenario == 'turn-budget'
 schema = json.loads(args[args.index('--json-schema') + 1])
-history = json.loads(sys.stdin.read().split('\\n', 1)[1])
+message = json.loads(sys.stdin.readline())['message']
+text = message['content'] if isinstance(message['content'], str) else message['content'][0]['text']
+history = json.loads(text.split('\\n', 1)[1])
 if '--resume' in args:
     assert args[args.index('--resume') + 1] == 'mock'
     assert len(history) == 1, 'resumed call must send only new user/tool message'
@@ -96,6 +102,16 @@ elif scenario == 'turn-budget':
 cost_file = __import__('pathlib').Path('mock-cumulative-cost')
 cost = (float(cost_file.read_text()) if '--resume' in args and cost_file.exists() else 0) + .001
 cost_file.write_text(str(cost))
+if '--include-partial-messages' in args:
+    # The structured output arrives as a few characters of JSON at a time.
+    raw = json.dumps(output)
+    event = lambda e: print(json.dumps({'type': 'stream_event', 'event': e}), flush=True)
+    event({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'tool_use', 'name': 'StructuredOutput', 'input': {}}})
+    for i in range(0, len(raw), 3):
+        event({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'input_json_delta', 'partial_json': raw[i:i + 3]}})
+    event({'type': 'content_block_stop', 'index': 0})
+print(json.dumps({'type': 'rate_limit_event', 'rate_limit_info': {'status': 'allowed', 'rateLimitType': 'five_hour',
+    'unifiedWindows': {'five_hour': {'utilization': 0.25, 'resetsAt': 1794734400, 'status': 'allowed'}}}}))
 # Multiple calls, repeated blocks, and a synthetic zero-usage message.
 for mid, n in [('first', 50), ('last', 80), ('last', 80), ('synthetic', 0)]:
     print(json.dumps({'type': 'assistant', 'message': {'id': mid, 'usage': {
@@ -286,6 +302,11 @@ end)
         else:
             first, u1 = turn(sid, 'Reply with exactly HELLO, no tools.')
             assert first[-1]['content'].strip() == 'HELLO', first[-1]
+            streamed = ''.join(e['params']['text'] for e in events if e['method'] == 'message/delta')
+            assert streamed == first[-1]['content'], (streamed, first[-1])
+            if not a.live:
+                limits = rpc('lua/call', {'name': 'claude-code.limits'})
+                assert limits['plan'] == 'pro' and limits['info']['unifiedWindows']['five_hour']['utilization'] == .25, limits
             second, u2 = turn(sid, 'Again reply with exactly HELLO, no tools.')
             assert second[-1]['content'].strip() == 'HELLO', second[-1]
             if a.live:
@@ -311,6 +332,13 @@ end)
         if process.poll() is None:
             process.kill()
             process.wait(timeout=10)
+        # Saved sessions outlive Bone on purpose; this test's config does not.
+        state = config / 'state/core/claude-code.json'
+        if state.exists():
+            saved = json.loads(state.read_text()).get('sessions') or {}
+            for s in (saved.values() if isinstance(saved, dict) else saved):
+                if isinstance(s, dict) and str(s.get('cwd', '')).startswith('/tmp/bone3-claude-code.'):
+                    shutil.rmtree(s['cwd'], ignore_errors=True)
         signal.alarm(0)
         stderr_log.seek(0)
         stderr = stderr_log.read()
