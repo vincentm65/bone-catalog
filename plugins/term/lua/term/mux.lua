@@ -806,6 +806,8 @@ panel_spec = function(focus)
   p.id = ID
   p.title = false
   p.focusable = true
+  -- Every key goes to the program (F6 and f1 too); ctrl+] is the way out.
+  p.global_keys = false
   p.focus = focus ~= false
   p.render = M.render
   if GUI then p.node = M.node end
