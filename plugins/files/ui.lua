@@ -210,6 +210,12 @@ local function display(path)
   return path
 end
 
+--- Whether bone lights the edge of the panel with the keys (and has F6 to
+--- move between areas): then the panel need not say where the keys are.
+local function lit_edge()
+  return bone.hl.get("WinSeparatorFocus") ~= nil
+end
+
 --- A path inside the folder being shown, as that folder's own relative one.
 local function relative(path)
   local root = listing.root
@@ -1671,7 +1677,7 @@ local function top_row()
     row[#row + 1] = { kind = "badge", text = "Git: nothing changed", tone = "dim" }
   end
   if listing.hidden then row[#row + 1] = { kind = "badge", text = "hidden shown", tone = "dim" } end
-  if keys_here == false then
+  if keys_here == false and not lit_edge() then
     row[#row + 1] = { kind = "badge", text = "keys: prompt", tone = "dim" }
   end
   -- A Git folder with changes in it has nothing to add here: the panel does
@@ -4363,9 +4369,15 @@ local scrolled = {} -- a list's id and key -> the entry last scrolled into view
 local function desktop_badges(path)
   local out = { mark = listing.marks[path], sign = listing.git[path] }
   if not out.mark and not out.sign then
+    -- `inside`: Git's strongest letter among what is inside, or true for
+    -- this session's writes alone.
     local prefix = path .. "/"
-    for p in pairs(listing.git) do
-      if p:sub(1, #prefix) == prefix then out.inside = true break end
+    local rank = { M = 4, D = 3, A = 2, ["?"] = 1 }
+    for p, sign in pairs(listing.git) do
+      if p:sub(1, #prefix) == prefix and (rank[sign] or 0) >= (rank[out.inside] or 0) then
+        out.inside = sign
+        if rank[sign] == 4 then break end
+      end
     end
     if not out.inside then
       for p in pairs(listing.marks) do
@@ -4540,9 +4552,11 @@ local bridge = {
       act.open_change(changed_rows[i])
     end,
     changed_items = changed_items,
+    lit_edge = lit_edge,
+    -- The tab's number: what this session wrote; Git's list is still in it.
     changed_count = function()
-      changed_lists()
-      return #changed_rows
+      local held = changed_lists()
+      return #held
     end,
     caret = function(line, byte, extend)
       buffer.place(editor, line, byte, extend)

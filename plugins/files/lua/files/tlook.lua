@@ -139,6 +139,18 @@ local function cut(s, cells)
   return table.concat(out)
 end
 
+--- `name` in `cells` cells: whole when it fits, else cut with a `…` that
+--- keeps its end (the extension, and a version before it) in view.
+local function elide(name, cells)
+  if cells <= 0 then return "" end
+  if width(name) <= cells then return name end
+  if cells < 4 or not ascii(name) then return cut(name, cells - 1) .. "…" end
+  local ext = name:match("%.[^.]+$") or ""
+  local keep = math.max(#ext, math.floor(cells / 3))
+  if keep > cells - 3 then keep = 0 end
+  return name:sub(1, cells - 1 - keep) .. "…" .. (keep > 0 and name:sub(-keep) or "")
+end
+
 --- A row being made, `cells` wide.
 local function row(cells)
   return { spans = {}, used = 0, cells = cells, hits = {} }
@@ -255,7 +267,7 @@ local function header(s, cells)
   local tail = {}
   if s.listing.git_state == "loading" then tail[#tail + 1] = { "git… ", "Dim" } end
   if s.following then tail[#tail + 1] = { "◉ following ", "Accent" } end
-  if s.keys_here == false then tail[#tail + 1] = { "keys: prompt ", "Dim" } end
+  if s.keys_here == false and not app.lit_edge() then tail[#tail + 1] = { "keys: prompt ", "Dim" } end
   local note = s.listing.error or s.listing.note
   if note and #tail == 0 then
     local room = cells - r.used - 3
@@ -342,27 +354,37 @@ local function tree_rows(s, cells, height, focused, narrow)
     local name_group = (rw.ignored or app.act.is_cut(rw.path)) and "Dim"
       or (rw.type == "dir" and "FilesTDir" or (rw.name:sub(1, 1) == "." and "Dim" or "Normal"))
     if marked then name_group = bold(name_group) end
-    if rw.hit then
-      local a, b = rw.hit[1], rw.hit[2]
-      put(r, rw.name:sub(1, a - 1), g(name_group), function() app.click_row(i) end)
-      put(r, rw.name:sub(a, b), on(bold(name_group), "FilesTMatch"), function() app.click_row(i) end)
-      put(r, rw.name:sub(b + 1), g(name_group), function() app.click_row(i) end)
-    else
-      put(r, rw.name, g(name_group), function() app.click_row(i) end)
-    end
     local b = app.badges(rw.path)
     local tail = {}
     if b.mark then tail[#tail + 1] = { "● ", g("WarningMsg") } end
     if b.sign then tail[#tail + 1] = { (b.sign == "?" and "U" or b.sign) .. " ", g(sign_group(b.sign)) }
-    elseif b.inside then tail[#tail + 1] = { "· ", g("Dim") } end
-    -- With room for it, when it last changed; then a file's size.
+    elseif b.inside then
+      -- A folder with changes inside: their letter, dimmed (· for this
+      -- session's writes alone).
+      local sign = type(b.inside) == "string" and b.inside or nil
+      tail[#tail + 1] = { (sign and (sign == "?" and "U" or sign) or "·") .. " ", g("Dim") }
+    end
+    -- With room for it, when it last changed; then a file's size (a folder
+    -- keeps the size's place empty, so the dates stay in one column).
     if not narrow and cells >= 64 then
       local at = app.when(rw.modified)
       if at then tail[#tail + 1] = { string.format("%8s ", at), g("Dim") } end
     end
-    if not narrow and rw.type == "file" then
-      local size = app.size_of(rw.size)
-      if size then tail[#tail + 1] = { string.format("%8s ", size), g("Dim") } end
+    if not narrow then
+      local size = rw.type == "file" and app.size_of(rw.size) or nil
+      if size then tail[#tail + 1] = { string.format("%8s ", size), g("Dim") }
+      elseif #tail > 0 then tail[#tail + 1] = { string.rep(" ", 9), ground } end
+    end
+    local tail_w = 0
+    for _, t in ipairs(tail) do tail_w = tail_w + width(t[1]) end
+    local shown = elide(rw.name, cells - r.used - (tail_w > 0 and tail_w + 1 or 0))
+    if rw.hit and shown == rw.name then
+      local a, z = rw.hit[1], rw.hit[2]
+      put(r, rw.name:sub(1, a - 1), g(name_group), function() app.click_row(i) end)
+      put(r, rw.name:sub(a, z), on(bold(name_group), "FilesTMatch"), function() app.click_row(i) end)
+      put(r, rw.name:sub(z + 1), g(name_group), function() app.click_row(i) end)
+    else
+      put(r, shown, g(name_group), function() app.click_row(i) end)
     end
     right(r, tail, ground)
     pad(r, cells, ground)
@@ -502,7 +524,7 @@ local function side_column(s, cells, height, narrow, alone)
   else body = tree_rows(s, cells, body_h, focused, narrow) end
   for i = 1, body_h do out[#out + 1] = body[i] or pad(row(cells), cells) end
   local keys
-  if not focused then keys = { { "tab", "the tree" } }
+  if not focused then keys = { { (s.keys_here == false and app.lit_edge()) and "F6" or "tab", "the tree" } }
   elseif s.tab == 2 then keys = { { "↑↓", "results" }, { "enter", "open" }, { "esc", "back" } }
   elseif s.tab == 3 then keys = { { "↑↓", "move" }, { "enter", "what changed" }, { "r", "read again" }, { "esc", "back" } }
   elseif s.tab == 1 and app.act.marked_count() > 0 then
@@ -519,7 +541,8 @@ local function side_column(s, cells, height, narrow, alone)
     local shown = s.docs[s.doc_at]
     local unsaved = shown and shown.kind == "edit" and shown.ed.dirty
     keys = { { "↑↓", "move" }, { "←→", "fold" }, { "tab", "the file" }, { "esc", unsaved and "the prompt" or "close file" }, { "p", "find a file" }, { "/", "search" } }
-  else keys = { { "↑↓", "move" }, { "enter", "open" }, { "space", "mark" }, { "ctrl+c", "copy" }, { "g", "places" }, { "S", "sort" }, { "d", "changes" }, { "p", "find a file" }, { "/", "search" }, { "i", "properties" }, { "a", "new" }, { "q", "close" } } end
+  -- Most used first: a narrow panel drops hints from the end.
+  else keys = { { "↑↓", "move" }, { "enter", "open" }, { "p", "find a file" }, { "/", "search" }, { "space", "mark" }, { "a", "new" }, { "g", "places" }, { "d", "changes" }, { "S", "sort" }, { "ctrl+c", "copy" }, { "i", "properties" }, { "q", "close" } } end
   out[#out + 1] = hints(cells, keys)
   return out
 end
@@ -702,6 +725,11 @@ local function editor_rows(s, cells, height)
     if caret then put(r, " ", caret_group()) end
     local eol = s1 and i >= s1 and i < s2
     if eol then put(r, " ", "FilesTSelect") end
+    -- More of the line past the right edge: a mark in the last cell.
+    if b < #line then
+      pad(r, cells - 1, ground)
+      put(r, "›", on("Dim", ground))
+    end
     pad(r, cells, ground)
     out[#out + 1] = r
   end
@@ -723,7 +751,10 @@ local function diff_rows(s, cells, height)
   end
   out[1] = head
   if #rows == 0 then
-    if base ~= "pending" then out[2] = put(row(cells), "  No changes.", "Dim") end
+    if base ~= "pending" then
+      out[2] = put(row(cells), base == "head" and "  No changes since the last commit."
+        or "  No changes since the file was opened.", "Dim")
+    end
     return out
   end
   height = height - 1
@@ -1015,7 +1046,7 @@ local function doc_column(s, cells, height)
   M.doc_body_top = #out
   for i = 1, body_h do out[#out + 1] = body[i] or pad(row(cells), cells) end
   local keys
-  if not focused then keys = { { "tab", "the file" } }
+  if not focused then keys = { { (s.keys_here == false and app.lit_edge()) and "F6" or "tab", "the file" } }
   elseif s.doc == "edit" and (e.shown == "buffer" or e.shown == "split") then
     keys = { { "ctrl+s", "save" }, { "ctrl+g", "changes" }, { "ctrl+f", "find" }, { "ctrl+c", "copy" }, { "ctrl+v", "paste" }, { "ctrl+k", "chat" }, { "ctrl+w", "close" }, { "esc", "files" } }
     if #s.docs > 1 then table.insert(keys, 3, { "alt+1…" .. math.min(#s.docs, 9), "other file" }) end
@@ -1025,7 +1056,7 @@ local function doc_column(s, cells, height)
     else keys = { { "enter", "edit" }, { "o", "row" }, { "A", "column" }, { "D", "del row" }, { "X", "del column" }, { "s", "sort" },
       { "f", "filter" }, { "u", "undo" }, { "ctrl+s", "save" }, { "e", "text" }, { "esc", "files" } } end
   elseif s.doc == "edit" and e.shown == "changes" then
-    keys = { { "e", "edit" }, { "↑↓", "scroll" }, { "b", "compare with" }, { "esc", "back" } }
+    keys = { { "e", "edit" }, { "↑↓", "scroll" }, { "esc", "back" } }
   elseif s.doc == "edit" then keys = { { "e", "edit" }, { "↑↓", "scroll" }, { "esc", "files" } }
   else keys = { { "↑↓", "scroll" }, { "o", "open outside" }, { "e", "edit" }, { "ctrl+w", "close" }, { "esc", "files" } } end
   out[#out + 1] = hints(cells, keys)

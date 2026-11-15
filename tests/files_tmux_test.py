@@ -53,6 +53,22 @@ def wait(text, absent=False):
     raise AssertionError("waiting for " + repr(text) + "\n" + screen())
 
 
+def prompt_has_keys(snapshot):
+    """The keys went back to the prompt: an older bone says so in the panel
+    ("keys: prompt"); a newer one lights the bar instead and hints F6."""
+    return "keys: prompt" in snapshot or "F6 the " in snapshot
+
+
+def wait_prompt():
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        snapshot = screen()
+        if prompt_has_keys(snapshot):
+            return snapshot
+        time.sleep(0.1)
+    raise AssertionError("waiting for the keys to go to the prompt\n" + screen())
+
+
 def keys(*names):
     for key in names:
         tmux("send-keys", "-t", name, key)
@@ -110,7 +126,9 @@ with tempfile.TemporaryDirectory(prefix="bone-files-tmux-") as raw:
         assert "math.lua" in snapshot, snapshot
         row = next(line for line in snapshot.splitlines() if "name with space.txt" in line)
         assert " U " in row, "no Git marker on a name with a space:\n" + snapshot
-        wait("Changed 3")
+        # Nothing written by this session yet: the tab carries no number.
+        snapshot = wait("Files  Search  Changed")
+        assert "Changed 3" not in snapshot, snapshot
 
         # d: the changes since the last commit, removals first.
         keys("d")
@@ -126,7 +144,7 @@ with tempfile.TemporaryDirectory(prefix="bone-files-tmux-") as raw:
         keys("Escape")
         wait("open")
         keys("Escape")
-        snapshot = wait("keys: prompt")
+        snapshot = wait_prompt()
         assert "math.lua ●" in snapshot, "the unsaved file was closed:\n" + snapshot
         command("/editor " + str(project / "math.lua"))
         wait("ZZlocal M = {}")
@@ -140,7 +158,7 @@ with tempfile.TemporaryDirectory(prefix="bone-files-tmux-") as raw:
 
         # The open files, by keys tmux sends.
         keys("Escape", "Escape")
-        wait("keys: prompt")
+        wait_prompt()
         command("/editor " + str(project / "notes.md"))
         wait("2 notes.md")
         wait("# Notes")
@@ -154,11 +172,11 @@ with tempfile.TemporaryDirectory(prefix="bone-files-tmux-") as raw:
         tmux("resize-window", "-t", name, "-x", "200", "-y", "36")
         deadline = time.monotonic() + 15
         while True:
-            row = next((line for line in screen().splitlines() if "Changed 3" in line and "notes.md" in line), None)
+            row = next((line for line in screen().splitlines() if "Search  Changed" in line and "notes.md" in line), None)
             if row or time.monotonic() > deadline:
                 break
             time.sleep(0.1)
-        assert row and row.index("Changed 3") < row.index("notes.md"), "the tree is not left of the file:\n" + screen()
+        assert row and row.index("Search  Changed") < row.index("notes.md"), "the tree is not left of the file:\n" + screen()
         tmux("resize-window", "-t", name, "-x", "120", "-y", "36")
         wait("# Notes")
 
@@ -200,11 +218,11 @@ with tempfile.TemporaryDirectory(prefix="bone-files-tmux-") as raw:
         (project / "t.csv").write_text("name,qty\npear,10\napple,3\n")
         # esc closes a file with nothing unsaved, then hands the keys over.
         for _ in range(4):
-            if "keys: prompt" in screen():
+            if prompt_has_keys(screen()):
                 break
             keys("Escape")
             time.sleep(0.3)
-        wait("keys: prompt")
+        wait_prompt()
         command("/editor " + str(project / "t.csv"))
         wait("row 1 · name")
         keys("Right")

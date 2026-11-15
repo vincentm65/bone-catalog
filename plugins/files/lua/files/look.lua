@@ -365,7 +365,7 @@ local function header(s)
       wrap = false, text_overflow = "ellipsis", shrink = 1, max_width = 420 }
   end
   if s.listing.hidden then row[#row + 1] = chip("hidden shown") end
-  if s.keys_here == false then row[#row + 1] = chip("keys: prompt") end
+  if s.keys_here == false and not app.lit_edge() then row[#row + 1] = chip("keys: prompt") end
   row[#row + 1] = press({ direction = "row", align = "center", gap = 6, height = 26, padding = { 0, 9 }, radius = 7,
     bg = C.chip, shrink = 0, tooltip = "Go to a file by a few letters of its path (ctrl+p)",
     magnifier(C.dim), { text = "Go to file", size = SIZE.small, color = C.dim, wrap = false },
