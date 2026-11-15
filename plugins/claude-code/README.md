@@ -30,9 +30,8 @@ bone.config.providers.claude_code = {
 
 The CLI's normal HOME / CLAUDE_CONFIG_DIR is retained. API keys, injected OAuth-token variables, API base URLs and alternate-provider flags are removed from the child environment so they cannot silently override the locally stored subscription login. The plugin does not use `--bare` (which disables subscription authentication) or bypass permission checks.
 
-## Streaming, images and plan usage (1.3)
+## Images, plan usage and reloads (1.3)
 
-- **Streaming.** Replies appear as Claude writes them. The CLI's partial messages carry the structured output a few characters at a time; the plugin decodes the `response` text as it arrives and shows it before any tool calls. (The CLI streams thinking with its text left empty, so there is no reasoning to show.) This needs a Bone build with `bone.system_stream` (capability `core.system_stream`); on older builds the plugin works as before and each reply appears when it is complete.
 - **Images.** Pasted images and images in tool results reach Claude. New messages go to the CLI as one stream-json user message: the Bone messages as JSON, each image replaced by an `[image N]` label, followed by the images themselves after their labels.
 - **`/claude-usage`** shows your plan and each usage window (5-hour, weekly) with what is left and when it resets. Every Claude Code request reports these, so the page shows the latest request's figures and costs nothing to open. When a window's limit stops a request, the error says which one and when it resets.
 
@@ -46,7 +45,7 @@ A bounded growing-history test measured **98–99% reuse** for short requests af
 
 Resumption persists CLI transcripts in the normal Claude config's `projects/` directory for a generated private cwd (`/tmp/bone3-claude-code.*`). Those private project directories and working directories are removed when a session resets or fails. When the plugin loads, it forgets sessions idle for six hours and removes any private directory nothing has used for as long, including those left by a Bone that was killed. They are not user project transcripts.
 
-`lua/call` with `{ "name": "claude-code.usage", "session_id": "…" }` returns the latest CLI call's uncached input, cache-read, cache-write, output, incremental list-price estimate, accumulated turn estimate, whether it resumed, the number of appended messages, the continuation nudges and whether it streamed. `model_usage` and `cli_session_cost_usd` are CLI-session cumulative; the adapter subtracts prior cumulative cost for budget tracking. Bone's usual `usage.cached_tokens` receives cache-read tokens; total input includes read and write tokens. `usage.context_tokens` is the last real assistant model call's input (including cache reads/writes), not the sum across CLI internal calls. `claude-code.limits` returns `{ plan, info, at }`: the plan from `claude auth status` and the latest request's rate-limit report.
+`lua/call` with `{ "name": "claude-code.usage", "session_id": "…" }` returns the latest CLI call's uncached input, cache-read, cache-write, output, incremental list-price estimate, accumulated turn estimate, whether it resumed, the number of appended messages and the continuation nudges. `model_usage` and `cli_session_cost_usd` are CLI-session cumulative; the adapter subtracts prior cumulative cost for budget tracking. Bone's usual `usage.cached_tokens` receives cache-read tokens; total input includes read and write tokens. `usage.context_tokens` is the last real assistant model call's input (including cache reads/writes), not the sum across CLI internal calls. `claude-code.limits` returns `{ plan, info, at }`: the plan from `claude auth status` and the latest request's rate-limit report.
 
 Both budgets are off unless configured. `max_budget_usd` becomes the CLI's `--max-budget-usd`, which the CLI also puts in the model's context (`USD budget: $0/$0.5; $0.5 remaining`); models then ration work or stop early, so only set it when you want a hard cap. `max_turn_budget_usd` is enforced by Bone between invocations and is not shown to the model. Budget figures are CLI list-price estimates, **not a promise about subscription quota or a hard prepaid limit**. A request can cross a budget threshold before the CLI notices; the turn guard stops subsequent invocations. Tool loops consume more than one model invocation. Errors, rate limits and timeouts are not automatically retried by this plugin (other user-installed request-error hooks may retry).
 
@@ -79,11 +78,11 @@ python3 tests/claude_code_test.py --live
 python3 tests/claude_code_test.py --live --scenario growth
 ```
 
-Set `BONE_BIN` if the Bone binary is not at `../bone3/target/debug/bone` relative to this catalog. Tests isolate Bone config/data and do not change your default provider or credentials. With a Bone that has `bone.system_stream`, the fake CLI's partial messages exercise streaming; with an older one, the same scenarios cover the non-streaming path.
+Set `BONE_BIN` if the Bone binary is not at `../bone3/target/debug/bone` relative to this catalog. Tests isolate Bone config/data and do not change your default provider or credentials.
 
 ## Limitations
 
 - Tool calls use Claude structured JSON output, not native Claude tool execution. The CLI receives per-tool argument schemas; the adapter additionally validates tool names, array/object shape and the call-count cap, preserving raw argument JSON (including null and empty collections).
-- Only a reply whose structured output starts with `response` streams (the schema's sorted order asks for that); otherwise it appears when complete.
+- A reply appears when the CLI call completes, not as Claude writes it.
 - Bone's Lua JSON representation can lose null/empty-array distinctions in incoming tool schemas; unusual schemas should be checked before relying on them.
 - Requires Linux/Unix `env`, `mktemp` and a compatible Claude CLI. CLI protocol/flags may change.

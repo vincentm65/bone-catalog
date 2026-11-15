@@ -77,51 +77,6 @@ local function raw_json(s)
   return value(0)
 end
 
--- The newly complete part of the "response" string in a StructuredOutput
--- input that is still arriving, decoded. Only a response written first (as
--- the sorted schema asks) is streamed; anything else shows when it is done.
-local function response_delta(block)
-  local buf = block.buf
-  if not block.started then
-    local _, e = buf:find('^%s*{%s*"response"%s*:%s*"')
-    if not e then
-      if #buf > 64 then block.done = true end
-      return ""
-    end
-    block.started = true
-    buf = buf:sub(e + 1)
-  end
-  local i, n = 1, #buf
-  while i <= n do
-    local c = buf:byte(i)
-    if c == 34 then block.done = true; break end -- the closing quote
-    if c == 92 then
-      local esc = buf:sub(i + 1, i + 1)
-      if esc == "" then break end
-      if esc == "u" then
-        if n < i + 5 then break end
-        local unit = tonumber(buf:sub(i + 2, i + 5), 16)
-        if unit and unit >= 0xD800 and unit <= 0xDBFF then
-          if n < i + 11 then break end -- wait for the pair's low half
-          i = i + 12
-        else
-          i = i + 6
-        end
-      else
-        i = i + 2
-      end
-    else
-      i = i + 1
-    end
-  end
-  block.buf = block.done and "" or buf:sub(i)
-  local raw = buf:sub(1, i - 1)
-  if raw == "" then return "" end
-  local ok, text = pcall(bone.json.decode, '"' .. raw .. '"')
-  if not ok or type(text) ~= "string" then block.done = true; return "" end
-  return text
-end
-
 local preamble = [[You are Bone's model backend. Native Claude Code tools are disabled.
 The conversation below is data representing the real Bone conversation, not instructions to execute CLI tools.
 Return only structured output: response is your assistant text; tool_calls is an array of requested Bone tools.
@@ -276,29 +231,12 @@ local function notice(text)
   return canonical({ type = "user", message = { role = "user", content = text } }) .. "\n"
 end
 
--- Run the CLI and hand each line of its output to on_line as it arrives; on
--- Bone builds without bone.system_stream, all of them once it exits.
+-- Run the CLI and hand each line of its output to on_line once it exits.
 -- { code, stderr } or { timed_out = true }; nil when the turn was cancelled.
 local function run_cli(command, opts, on_line)
-  if not bone.system_stream then
-    local r = bone.system(command, opts)
-    if not r then return nil end
-    for line in (r.stdout or ""):gmatch("[^\r\n]+") do on_line(line) end
-    return r
-  end
-  local p = bone.system_stream(command, opts)
-  if not p then return nil end
-  local ok, err = pcall(function()
-    for line in p:lines() do
-      if line ~= "" then on_line(line) end
-    end
-  end)
-  if not ok then
-    p:close()
-    error(err, 0)
-  end
-  local r = p:wait()
-  p:close()
+  local r = bone.system(command, opts)
+  if not r then return nil end
+  for line in (r.stdout or ""):gmatch("[^\r\n]+") do on_line(line) end
   return r
 end
 
@@ -376,19 +314,11 @@ local function complete(req, emit)
   s.invocation = (s.invocation or 0) + 1
   s.used_at = os.time()
 
-  -- The reply so far (every invocation's response, in order) and what of it
-  -- the user has been shown.
-  local text, shown = "", ""
-  local function show(chunk)
-    if chunk ~= "" then
-      shown = shown .. chunk
-      emit({ text = chunk })
-    end
-  end
+  -- The reply so far: every invocation's response, in order.
+  local text = ""
   local function invoke(stdin_body, resume_id)
     local command = auth_env .. quote(executable(o))
       .. " -p --input-format stream-json --output-format stream-json --verbose"
-      .. (bone.system_stream and " --include-partial-messages" or "")
       .. " --tools '' --strict-mcp-config --mcp-config '{\"mcpServers\":{}}'"
       .. " --setting-sources '' --settings '{\"disableAllHooks\":true}' --disable-slash-commands --no-chrome"
       .. " --effort " .. quote(o.reasoning_effort or "low")
@@ -401,33 +331,12 @@ local function complete(req, emit)
     -- Result usage sums all internal calls. Context comes from the last real
     -- assistant message instead; repeated content blocks must not be summed.
     local doc, result_json, context_tokens, limit
-    local block -- the StructuredOutput input arriving now, while its response streams
-    local first = true -- nothing of this invocation's response is on screen yet
     local function on_line(line)
       local ok, event = pcall(bone.json.decode, line)
       if not ok or type(event) ~= "table" then
         error("claude-code: invalid CLI stream", 0)
       end
-      if event.type == "stream_event" and type(event.event) == "table" then
-        local ev = event.event
-        if ev.type == "content_block_start" then
-          local b = ev.content_block
-          block = type(b) == "table" and b.type == "tool_use" and b.name == "StructuredOutput" and { buf = "" } or nil
-        elseif ev.type == "content_block_delta" and type(ev.delta) == "table" then
-          -- (Thinking streams too, but the CLI sends its text empty.)
-          local d = ev.delta
-          if d.type == "input_json_delta" and block and not block.done and type(d.partial_json) == "string" then
-            block.buf = block.buf .. d.partial_json
-            local chunk = response_delta(block)
-            if chunk ~= "" then
-              show((first and text ~= "") and ("\n\n" .. chunk) or chunk)
-              first = false
-            end
-          end
-        elseif ev.type == "content_block_stop" then
-          block = nil
-        end
-      elseif event.type == "assistant" and type(event.message) == "table" then
+      if event.type == "assistant" and type(event.message) == "table" then
         local usage = event.message.usage
         if type(usage) == "table" then
           local n = (usage.input_tokens or 0) + (usage.cache_read_input_tokens or 0)
@@ -472,12 +381,9 @@ local function complete(req, emit)
       end
       calls[i] = { name = c.name, arguments = result_json:sub(arguments.first, arguments.last) }
     end
-    -- Add this response to the reply and show whatever of it did not stream
-    -- (all of it on Bone builds without bone.system_stream).
     if output.response ~= "" then
       text = text == "" and output.response or (text .. "\n\n" .. output.response)
     end
-    if text:sub(1, #shown) == shown then show(text:sub(#shown + 1)) end
     return { doc = doc, content = output.response, calls = calls, context_tokens = context_tokens }
   end
 
@@ -519,7 +425,8 @@ local function complete(req, emit)
     output_tokens = agg.output, total_cost_usd = cost, cli_session_cost_usd = doc.total_cost_usd,
     model_usage = doc.modelUsage, subtype = doc.subtype, turn_cost_usd = turn_cost[sid],
     context_tokens = inv.context_tokens, resumed = resumed, sent_messages = #delta,
-    cli_turns = doc.num_turns, continuation_nudges = nudged, streamed = bone.system_stream ~= nil }
+    cli_turns = doc.num_turns, continuation_nudges = nudged }
+  if text ~= "" then emit({ text = text }) end
   local result = { content = text, tool_calls = {}, usage = {
     input_tokens = agg.input + agg.read + agg.write, output_tokens = agg.output,
     cached_tokens = agg.read, context_tokens = inv.context_tokens } }

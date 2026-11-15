@@ -106,11 +106,11 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "836dbadf7b50f51bbc7004457d34949723f7c121c97e710dd851557e20ed0020"
+        "sha256": "046d1df984efcd8129e1b50e8dccb5de66c05c8f62b4f2d4ff37961df82a72bb"
       },
       {
         "path": "core.lua",
-        "sha256": "0e287f41fe4e78fbd3624fead7a46944a651322525449e9e7f0b3d9697a96b43"
+        "sha256": "2acc5ceb2777c57984131941dcd22de59ef36a7e9beae8ccffeb9d60f43ed072"
       },
       {
         "path": "manifest.json",

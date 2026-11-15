@@ -102,14 +102,6 @@ elif scenario == 'turn-budget':
 cost_file = __import__('pathlib').Path('mock-cumulative-cost')
 cost = (float(cost_file.read_text()) if '--resume' in args and cost_file.exists() else 0) + .001
 cost_file.write_text(str(cost))
-if '--include-partial-messages' in args:
-    # The structured output arrives as a few characters of JSON at a time.
-    raw = json.dumps(output)
-    event = lambda e: print(json.dumps({'type': 'stream_event', 'event': e}), flush=True)
-    event({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'tool_use', 'name': 'StructuredOutput', 'input': {}}})
-    for i in range(0, len(raw), 3):
-        event({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'input_json_delta', 'partial_json': raw[i:i + 3]}})
-    event({'type': 'content_block_stop', 'index': 0})
 print(json.dumps({'type': 'rate_limit_event', 'rate_limit_info': {'status': 'allowed', 'rateLimitType': 'five_hour',
     'unifiedWindows': {'five_hour': {'utilization': 0.25, 'resetsAt': 1794734400, 'status': 'allowed'}}}}))
 # Multiple calls, repeated blocks, and a synthetic zero-usage message.
