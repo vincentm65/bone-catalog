@@ -255,7 +255,7 @@
     "name": "files",
     "title": "Files",
     "kind": "plugin",
-    "version": "3.8.2",
+    "version": "3.8.3",
     "description": "A file manager, a file viewer, a text editor and a CSV table in one docked sidebar, in the terminal and the desktop app: a folder tree kept up to date as files change, copy, move, Trash and undo for several files at once, Git's own markers and what the agent changed, search through the folder, and an editor that will not write over a file someone else changed",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -268,7 +268,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "d5230f9292069069f36c2688a313213191dcc2826e5451e8494d615d46e03c90"
+        "sha256": "f4bd304a4fcb06f2123d6604a30d0b3f97cc12f142776991e8a4e36120f271c1"
       },
       {
         "path": "core.lua",
@@ -324,7 +324,7 @@
       },
       {
         "path": "lua/files/look.lua",
-        "sha256": "23d67725d3097830c7a52c609d1e71c4378dcf1e1d1e538c646d79bc3217a22e"
+        "sha256": "269db55deb4fde162b5febb23d9a09242e4e426d55b5e337b87e32f221710852"
       },
       {
         "path": "lua/files/media.lua",
@@ -368,15 +368,15 @@
       },
       {
         "path": "lua/files/tlook.lua",
-        "sha256": "e855a161feea293cbe1d44027cfd75203fb479bd8e5de2308a527a337fd11f54"
+        "sha256": "6cf14e57c057f7d388dfbd50b2d0b1d98b4fc1608e20f80d3fcd3e0eddfeb229"
       },
       {
         "path": "manifest.json",
-        "sha256": "e8d3acb993e5201473e59762c68ce1eef9764364435f7d5ab8c37600ff6aedb1"
+        "sha256": "ddb899ed29eace44f7ec1a98326d4a2b11dd08416a922ec0c24409811f978492"
       },
       {
         "path": "ui.lua",
-        "sha256": "a3ef48c34dcf37a8eb89bdc33b9dc4a7eb85f54dc1468f058aeffab677a08b89"
+        "sha256": "e873756f82890253dab2b58b872e9ab99dc060aecb496bb38209a903b4ea6eee"
       }
     ]
   },
@@ -917,7 +917,7 @@
     "name": "term",
     "title": "Terminal",
     "kind": "plugin",
-    "version": "1.4.0",
+    "version": "1.4.1",
     "description": "Terminal tabs and split panes in one panel, in the terminal and the desktop app, with mouse, scrollback and paste",
     "min_bone_version": "3.0.10",
     "capabilities": [
@@ -940,7 +940,7 @@
       },
       {
         "path": "lua/term/mux.lua",
-        "sha256": "2f1510a5372732d6659f87e7956868ac4db8a4a0a22c3d4159972b3ec5033856"
+        "sha256": "2eaf17c273a12b8605174d7b26774fd0d9d81b1a2288ce69c5be03a19535040b"
       },
       {
         "path": "lua/term/vt.lua",
@@ -948,7 +948,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "f9f2769f112c66c539868492aaee241cf7dbe3e8201d56ccb2085809cab94a0e"
+        "sha256": "83ed0ea6b7900b9d4fae32e913ba774be28e47e468938faa91daf69c462ebdd6"
       },
       {
         "path": "tui.lua",
