@@ -13,8 +13,12 @@ enters the transcript or the actual draft until you accept it.
   prefix. Diverging text, slash commands, selections, an unfocused prompt, and
   a cursor away from the end hide the prediction. Normal command completion is
   preserved.
-- Starting a turn, switching chats, changing settings, or unloading the plugin
-  clears the prediction and invalidates pending results.
+- Each chat has its own prediction, shown only in that chat's prompt while it
+  has the keyboard. Switching chats or windows (the Windows plugin's splits)
+  keeps it: a chat that finishes a turn while another has the focus gets its
+  prediction too, waiting there until you come back. Starting a turn in that
+  chat, sending, Escape, changing settings, or unloading the plugin clears it
+  and invalidates a pending result.
 
 Open `/config prompt-suggestions` (or select **Prompt suggestions** in `/config`):
 
@@ -47,7 +51,8 @@ provider receives the last eight nonempty user/assistant text messages, each
 limited to 2,000 characters; no tool output, images, or reasoning is included.
 The prediction is limited to 160 characters and one line; long display text is
 clipped by the existing prompt renderer. No prediction is made for failed or
-cancelled turns or background chats. An unclear next step may produce nothing.
+cancelled turns, or for sessions not open as a chat here (sub-agents, another
+client's sessions). An unclear next step may produce nothing.
 A provider that is busy, rate limited, or unreachable simply produces no
 prediction for that turn, with no message; a mistake you can act on (an unknown
 provider name, a rejected model) is reported once, with the provider's own text

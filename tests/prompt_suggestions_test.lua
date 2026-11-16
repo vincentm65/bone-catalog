@@ -21,7 +21,8 @@ local conversation = { { role = "user", content = "Fix this test" }, { role = "a
 
 local function mock(frontend, opts)
   frontend, opts = frontend or "tui", opts or {}
-  local m = { settings = {}, session = { session_id = "a" }, events = {}, messages = {}, calls = {}, notices = {}, sets = {}, submits = 0,
+  -- m.session is the chat on screen; m.open holds the other chats open here.
+  local m = { settings = {}, session = { session_id = "a" }, open = {}, events = {}, messages = {}, calls = {}, notices = {}, sets = {}, submits = 0,
     complete_calls = 0, dismiss_calls = 0, shutdowns = {}, input = ctx(""), marks = { highlights = { { row = 0, from = 0, to = 1, hl = "Custom" } }, custom = "kept" } }
   m.original = {
     placeholder = function() return { { "Original placeholder", "Custom" } } end,
@@ -32,9 +33,13 @@ local function mock(frontend, opts)
   local b = {
     settings = { get = function(key) return m.settings[key] end },
     chat = {
-      session = function()
-        if not m.session then return nil end
-        local copy = {}; for k, v in pairs(m.session) do copy[k] = v end; return copy
+      session = function(opts)
+        local s = m.session
+        if type(opts) == "table" and opts.session ~= nil then
+          s = (m.session and m.session.session_id == opts.session) and m.session or m.open[opts.session]
+        end
+        if not s then return nil end
+        local copy = {}; for k, v in pairs(s) do copy[k] = v end; return copy
       end,
       messages = function(id, cb)
         eq(type(cb), "function", "messages callback")
@@ -111,6 +116,19 @@ local function mock(frontend, opts)
     return (slots.nodes("composer.above", extra or {}))[1]
   end
   function m:emit(event, ev) for _, cb in ipairs(self.events[event] or {}) do cb(ev or {}) end end
+  -- Put chat `id` on screen (opening it if new); the one shown before stays
+  -- open. Each chat keeps its own draft, as in Bone.
+  m.drafts = {}
+  function m:show(id)
+    local prev = self.session
+    if prev and prev.session_id then
+      self.open[prev.session_id] = prev; self.drafts[prev.session_id] = self.input
+    end
+    self.session = self.open[id] or { session_id = id }
+    self.open[id] = nil
+    self.input = self.drafts[id] or ctx("")
+    self:emit("chat/shown", { session_id = id })
+  end
   function m:finish(ev)
     self:emit("turn/finished", ev or { session_id = "a", outcome = { status = "completed" } })
   end
@@ -168,12 +186,12 @@ for _, config in ipairs({
     eq(m.calls[1].req.provider, config.want_provider); eq(m.calls[1].req.options.model, config.want_model)
   end)
 end
-for _, condition in ipairs({ "disabled", "failed", "cancelled", "missing outcome", "background", "running", "starting", "no session" }) do
+for _, condition in ipairs({ "disabled", "failed", "cancelled", "missing outcome", "not an open chat", "running", "starting", "no session" }) do
   test("does not request: " .. condition, function()
     local m = mock(); local ev = { session_id = "a", outcome = { status = "completed" } }
     if condition == "disabled" then m.settings["prompt-suggestions.enabled"] = false
     elseif condition == "missing outcome" then ev.outcome = nil
-    elseif condition == "background" then ev.session_id = "b"
+    elseif condition == "not an open chat" then ev.session_id = "b"
     elseif condition == "no session" then m.session = nil
     elseif condition == "running" or condition == "starting" then m.session[condition] = true
     else ev.outcome.status = condition end
@@ -235,7 +253,6 @@ end)
 local invalidations = {
   { "submit", function(m) m:emit("submit") end },
   { "turn_started", function(m) m:emit("turn/started", { session_id = "a" }) end },
-  { "chat_shown", function(m) m:emit("chat/shown") end },
   { "settings_changed", function(m) m:emit("settings/changed") end },
   { "Escape", function(m) eq(m.b.ui.actions.dismiss(), true) end },
   { "unload", function(m) m.shutdown() end },
@@ -283,6 +300,79 @@ for _, change in ipairs({ "session", "running", "starting", "disabled" }) do
     end)
   end
 end
+
+-- Several chats: the windows plugin's splits, or switching chats. Each
+-- chat's prediction is its own and only shows while that chat is on screen.
+local function predict_for(m, id, text)
+  m:finish({ session_id = id, outcome = { status = "completed" } })
+  m:deliver_messages(); m:deliver({ content = text })
+end
+for _, phase in ipairs({ "messages pending", "model pending", "suggestion ready" }) do
+  test("switching to another chat and back keeps the prediction: " .. phase, function()
+    local m = mock(); m:finish()
+    if phase ~= "messages pending" then m:deliver_messages() end
+    if phase == "suggestion ready" then m:deliver({ content = "Run the tests" }) end
+    m:show("b"); m:absent()
+    if phase == "model pending" then eq(m.calls[1].cancels, 0, "not cancelled") end
+    if phase == "messages pending" then m:deliver_messages() end
+    if phase ~= "suggestion ready" then m:deliver({ content = "Run the tests" }) end
+    m:absent()
+    m:show("a"); eq(m:ghost(ctx("Run")), " the tests"); eq(m:placeholder()[1][1], "Run the tests")
+  end)
+end
+test("a chat finishing while another is on screen gets its own prediction", function()
+  local m = mock(); m:show("b")
+  m:finish({ session_id = "a", outcome = { status = "completed" } })
+  eq(m.messages[1].id, "a"); m:deliver_messages(); eq(#m.calls, 1)
+  m:deliver({ content = "Run the tests" }); m:absent()
+  m:show("a"); eq(m:placeholder()[1][1], "Run the tests")
+  m.input = ctx(""); eq(m.b.ui.actions.complete(), true); eq(m.sets[1], "Run the tests")
+end)
+test("each chat keeps its own prediction", function()
+  local m = mock(); m:predict("Run the tests")
+  m:show("b"); predict_for(m, "b", "Deploy it")
+  eq(m:placeholder()[1][1], "Deploy it"); eq(m:ghost(ctx("Run")), nil); eq(m:ghost(ctx("Dep")), "loy it")
+  m:show("a"); eq(m:placeholder()[1][1], "Run the tests"); eq(m:ghost(ctx("Dep")), nil)
+  m.input = ctx(""); eq(m.b.ui.actions.complete(), true); eq(m.sets[1], "Run the tests")
+  m:show("b"); eq(m:placeholder()[1][1], "Deploy it")
+end)
+test("turn start, submit, Escape and Tab only clear their own chat", function()
+  local m = mock(); m:predict("Run the tests"); m:show("b"); predict_for(m, "b", "Deploy it")
+  eq(m.b.ui.actions.dismiss(), true); m:absent()
+  m:show("a"); eq(m:placeholder()[1][1], "Run the tests")
+  m:show("b"); predict_for(m, "b", "Deploy it"); m:emit("submit"); m:absent()
+  m:show("a"); eq(m:placeholder()[1][1], "Run the tests")
+  m:show("b"); predict_for(m, "b", "Deploy it"); m:emit("turn/started", { session_id = "a" })
+  eq(m:placeholder()[1][1], "Deploy it"); m:show("a"); m:absent()
+  predict_for(m, "a", "Run the tests"); m:show("b")
+  m.input = ctx(""); eq(m.b.ui.actions.complete(), true); eq(m.sets[1], "Deploy it")
+  m:show("a"); eq(m:placeholder()[1][1], "Run the tests")
+end)
+test("a new prediction for one chat does not cancel another chat's request", function()
+  local m = mock(); m:finish(); m:deliver_messages()
+  m:show("b"); m:finish({ session_id = "b", outcome = { status = "completed" } })
+  m:deliver_messages(); eq(m.calls[1].cancels, 0)
+  m:deliver({ content = "Deploy it" }, nil, 2); m:deliver({ content = "Run the tests" }, nil, 1)
+  eq(m:placeholder()[1][1], "Deploy it"); m:show("a"); eq(m:placeholder()[1][1], "Run the tests")
+end)
+test("a prompt drawn for another chat shows only that chat's prediction", function()
+  local m = mock(); m:predict("Run the tests")
+  -- The terminal draws every window's prompt with ctx.session set to its chat.
+  local other = ctx("", { session = { session_id = "b" } })
+  eq(m:placeholder(other)[1][1], "Original placeholder"); eq(m:ghost(ctx("Run", { session = { session_id = "b" } })), nil)
+  eq(m:placeholder(ctx("", { session = { session_id = "a" } }))[1][1], "Run the tests")
+  eq(m:placeholder(ctx("", { session = { session_id = "a", running = true } }))[1][1], "Original placeholder")
+  eq(m:placeholder(ctx("", { session = { new = true } }))[1][1], "Original placeholder")
+end)
+test("a chat closed before its prediction lands gets none", function()
+  local m = mock(); m:finish(); m:deliver_messages(); m:show("b"); m.open.a = nil
+  m:deliver({ content = "Run the tests" })
+  m:show("a"); m:absent(); eq(m.b.ui.actions.dismiss(), false, "nothing pending")
+end)
+test("settings change clears every chat's prediction", function()
+  local m = mock(); m:predict("Run the tests"); m:show("b"); predict_for(m, "b", "Deploy it")
+  m:emit("settings/changed"); m:absent(); m:show("a"); m:absent()
+end)
 
 test("configuration errors notify and leave no suggestion", function()
   local m = mock(); m:finish(); m:deliver_messages(nil, "transcript failed")
@@ -471,6 +561,18 @@ test("gui hides the placeholder and ghost when the input is ineligible", functio
   m.input = ctx(""); m.context = "popup"; eq(m:placeholder()[1][1], "Original placeholder")
   m.context = "main"; m.panel_focus = "term"; eq(m:placeholder()[1][1], "Original placeholder")
   m.panel_focus = nil; m.node_focus = "search"; eq(m:placeholder()[1][1], "Original placeholder")
+end)
+test("gui: another window's composer never shows the focused chat's prediction", function()
+  local m = mock("gui"); m:predict("Run the tests"); m.input = ctx("")
+  -- The windows plugin draws chat b's read-only composer with focused = false.
+  eq(m:placeholder({ text = "", empty = true, focused = false, session = { session_id = "b" } })[1][1],
+    "Original placeholder")
+  eq(m:placeholder({ text = "", empty = true, focused = true, session = { session_id = "a" } })[1][1],
+    "Run the tests")
+  m:show("b"); eq(m:placeholder({ text = "", empty = true, focused = false, session = { session_id = "a" } })[1][1],
+    "Original placeholder")
+  eq(m:placeholder()[1][1], "Original placeholder")
+  m:show("a"); eq(m:placeholder()[1][1], "Run the tests")
 end)
 test("gui Escape dismisses an in-flight or ready prediction", function()
   local m = mock("gui"); m:finish()

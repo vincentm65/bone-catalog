@@ -682,7 +682,7 @@
     "name": "prompt-suggestions",
     "title": "Prompt Suggestions",
     "kind": "plugin",
-    "version": "1.1.4",
+    "version": "1.1.5",
     "description": "Next-prompt predictions in the terminal and desktop composer; Tab accepts, Escape dismisses",
     "min_bone_version": "3.0.2",
     "capabilities": [
@@ -692,23 +692,23 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "529fa7149cd288142e9d431722201974b04e4b017bcd3bff18361294eb3f2741"
+        "sha256": "7d0a69114e919ae369ea9b2c22f345e9673836ee3dc294435b54e48cdbcc9bcc"
       },
       {
         "path": "gui.lua",
-        "sha256": "d4f512253b8ab32b6b68b187ead06e20e72423cb87daf378051f8b9048528240"
+        "sha256": "7e444113056ab8c2217927a15b8890a8afe0ad0596458f3ac095680600e03c30"
       },
       {
         "path": "lua/prompt_suggestions.lua",
-        "sha256": "46cefae06597965c81cab12ad2a067d48c15bd11a4b4f4615f33086bc019d11c"
+        "sha256": "591ffc06663e605ad435ad8300251aa22d8cef73bc7c3c55d1615b3998f909e5"
       },
       {
         "path": "manifest.json",
-        "sha256": "a4587b285182ea43a9707208d7b39a7175ed32cd96683d37b44b466c5a17eb63"
+        "sha256": "046a134c036a73535d9082c4092b0f4d6c759eba52f2ae85cdb31617dcd4aa4a"
       },
       {
         "path": "tui.lua",
-        "sha256": "249382d37e43cf7ce601746a82c8ca43f8296e2df2a7fc8179a8bbb4d8f49caf"
+        "sha256": "00ac701502f7870a282890f3ccba682c8f9e68a6b5f559513002b9f60909c02e"
       },
       {
         "path": "ui.lua",

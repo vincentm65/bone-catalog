@@ -40,9 +40,14 @@ local function decorate()
     local old = prompt.placeholder
     previous_placeholder = old
     placeholder = function(ctx)
-      local current = visible_ctx()
-      if current.text == "" and core.suffix(current) then
-        return { { core.suggestion(), "Placeholder" } }
+      -- Another window's composer (ctx.focused false) shows that chat's
+      -- draft. Only the composer with the keys gets a prediction, and it
+      -- reads the live prompt because the composer's ctx has no cursor.
+      if not (type(ctx) == "table" and ctx.focused == false) then
+        local current = visible_ctx()
+        if current.text == "" and core.suffix(current) then
+          return { { core.suggestion(current), "Placeholder" } }
+        end
       end
       if type(old) == "function" then return old(ctx) end
       return old

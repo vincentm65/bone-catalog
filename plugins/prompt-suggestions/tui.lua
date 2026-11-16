@@ -16,7 +16,7 @@ local function decorate()
     local old = prompt.placeholder
     previous_placeholder = old
     placeholder = function(ctx)
-      if core.suffix(ctx) then return { { core.suggestion(), "Placeholder" } } end
+      if core.suffix(ctx) then return { { core.suggestion(ctx), "Placeholder" } } end
       if type(old) == "function" then return old(ctx) end
       return old
     end
