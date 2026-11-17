@@ -43,9 +43,9 @@ The dashboard shows:
 
 Token counts are **estimates**. The plugin divides the observed request's size
 by the input count the provider reports for it, which gives this conversation's
-bytes per token. This is how Bone calibrates its own compaction estimate, and
-"calibrated" in the header shows it has happened. Until then it assumes 4 bytes
-per token. Images use Bone's conservative tile allowance. Provider framing and
+bytes per token. This is how Bone calibrates its own compaction estimate; the
+Breakdown heading shows the rate in use. Until then it assumes 4 bytes per
+token. Images use Bone's conservative tile allowance. Provider framing and
 opaque reasoning are left out. Text reasoning counts as potential replay unless
 the provider turns that off.
 

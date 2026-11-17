@@ -20,7 +20,6 @@ TITLES = {
     "goal": "Goal",
     "grok": "Grok",
     "git-diff": "Git Diff",
-    "history": "History",
     "idle_compact": "Idle Compact",
     "mcp": "MCP",
     "md": "Markdown",

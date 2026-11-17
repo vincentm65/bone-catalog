@@ -1,16 +1,44 @@
 -- goal: keep a session working toward an objective, turn after turn, until
 -- the model says it is done (and the check passes), says it is blocked, or a
--- continuation turn makes no progress. One hook (turn_end), no tools and no
--- prompt changes: all a goal adds is short messages at the end of its chat,
--- so other sessions are untouched and the prompt cache is never broken.
+-- continuation turn makes no progress. No tools and no system prompt
+-- changes: all a goal adds is short messages at the end of its chat, so
+-- other sessions are untouched and the prompt cache is never broken.
 local NAME = "goal"
 local FILE = bone.config_dir and (bone.config_dir .. "/state/core/" .. NAME .. ".json")
 local CHECK_TIMEOUT = 10 * 60000
 
+-- What the chat shows: one short line per goal message. What the model is
+-- sent in its place: the rules (see the context hook below).
+local SHOWN_START, SHOWN_CONTINUE = "◎ Goal: ", "◎ Continue: "
 local START = [[Goal: %s
 
 Work on this until it is fully done, across as many turns as it takes: after each turn you will be told to continue. The user is away, so never ask questions, wait for input, or use ask_user or any other tool that waits for the user; when unsure, pick the option that is easiest to reverse and say which you picked. When the goal is done and verified, end your reply with <goal>done</goal>. If only the user can unblock it, end with <goal>blocked: why</goal>.]]
 local CONTINUE = "Continue the goal: %s\nEnd with <goal>done</goal> once it is done and verified."
+
+-- A goal message as the model reads it, or nil for any other text.
+local function expand(text)
+  if text:sub(1, #SHOWN_START) == SHOWN_START then
+    return START:format(text:sub(#SHOWN_START + 1))
+  elseif text:sub(1, #SHOWN_CONTINUE) == SHOWN_CONTINUE then
+    local rest = text:sub(#SHOWN_CONTINUE + 1)
+    local objective, note = rest:match("^(.-)(\n\n.*)$")
+    return CONTINUE:format(objective or rest) .. (note or "")
+  end
+end
+
+-- The stored message never changes and expands the same way every time, so
+-- each request sends the same words and the prompt cache holds, after the
+-- goal ends and across restarts too.
+bone.hook("context", function(ev)
+  local changed = false
+  for _, m in ipairs(ev.messages or {}) do
+    if m.role == "user" and type(m.content) == "string" then
+      local full = expand(m.content)
+      if full then m.content, changed = full, true end
+    end
+  end
+  if changed then return { messages = ev.messages } end
+end)
 
 -- This core process. Goals outlive a reload, which keeps their turns going,
 -- but not a restart, after which no turn is left to continue them.
@@ -69,7 +97,7 @@ bone.hook("turn_end", function(ev)
     local m = messages[i]
     calls = calls + #(m.tool_calls or {})
     if m.role == "assistant" and type(m.content) == "string" and m.content:find("%S") then reply = m.content end
-    if m.role == "user" and type(m.content) == "string" and m.content:sub(1, 18) == "Continue the goal:" then ours = true end
+    if m.role == "user" and type(m.content) == "string" and m.content:sub(1, #SHOWN_CONTINUE) == SHOWN_CONTINUE then ours = true end
   end
   g = goals[sid] -- the snapshot waited: the goal may have been stopped
   if not g then return end
@@ -95,7 +123,7 @@ bone.hook("turn_end", function(ev)
   save()
   -- The user's own queued messages go first; the turn after them continues.
   if #(bone.queue.list(sid) or {}) == 0 then
-    bone.queue.add(sid, CONTINUE:format(g.text) .. (note and ("\n\n" .. note) or ""), "next")
+    bone.queue.add(sid, SHOWN_CONTINUE .. g.text .. (note and ("\n\n" .. note) or ""), "next")
   end
 end)
 
@@ -136,7 +164,7 @@ bone.rpc.register("goal.set", function(args, ctx)
     turns = 0, seen = #s.messages, started_at = os.time() }
   ended[sid] = nil
   save()
-  bone.queue.add(sid, START:format(args.text), "next")
+  bone.queue.add(sid, SHOWN_START .. args.text, "next")
   return view(goals[sid], sid)
 end)
 

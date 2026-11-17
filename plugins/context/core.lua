@@ -35,33 +35,15 @@ bone.rpc.register("context.get", function(args, ctx)
   local options = {}
   for k, v in pairs((bone.config.providers or {})[provider] or {}) do options[k] = v end
   for k, v in pairs(bone.settings.get("providers." .. tostring(provider)) or {}) do options[k] = v end
-  local captured, notes = requests[id], {}
+  local captured = requests[id]
   local prompt = captured
   if not prompt then
     local base = os.getenv("BONE_SYSTEM_PROMPT") or bone.config.system_prompt
     if type(base) == "string" then
       prompt = { system_bytes = #(base .. "\n\nWorking directory: " .. s.info.cwd) }
-      notes[#notes + 1] = "System prompt is from configuration; system hooks have not been observed yet."
-    else
-      notes[#notes + 1] = "Dynamic system prompt unavailable until this conversation makes a model request."
     end
   end
-  if not captured then
-    notes[#notes + 1] = "Tool schemas are unknown until this conversation's next model request (not in the total)."
-  else
-    notes[#notes + 1] = "System prompt and tool schemas are from this conversation's last observed request."
-  end
   local cal = calibration[id]
-  if cal then
-    notes[#notes + 1] = ("Calibrated: the provider counted %d tokens for the last observed request (%.2f bytes/token)."):format(cal.tokens, cal.per)
-  else
-    notes[#notes + 1] = "Uncalibrated: 4 bytes/token until the provider reports a count for this conversation."
-  end
-  notes[#notes + 1] = "Provider framing, opaque reasoning and later request rewrites can differ."
-  if options.replay_reasoning ~= false then
-    notes[#notes + 1] = "Text reasoning is included as potential replay; the provider may omit it."
-  end
-  if s.active_turn then notes[#notes + 1] = "A turn is running; unsaved streaming output is not included." end
   local compact = bone.settings.get("compact") or {}
   local limit = options.compact_limit
   if limit == nil then limit = compact.limit or (bone.config.compact or {}).limit end
@@ -69,7 +51,7 @@ bone.rpc.register("context.get", function(args, ctx)
     session_id = id, title = s.info.title, provider = provider, model = pin.model or options.model,
     current = B.finish(B.current(s, prompt, options.replay_reasoning)),
     request = captured and captured.breakdown, request_at = captured and captured.at,
-    usage = usage[id], compact_limit = limit, notes = notes,
+    usage = usage[id], compact_limit = limit,
     bytes_per_token = cal and cal.per or B.BYTES_PER_TOKEN, calibrated = cal ~= nil,
   }
 end)

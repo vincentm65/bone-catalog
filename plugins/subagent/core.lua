@@ -457,14 +457,9 @@ local function wait(id, parent, body, token)
 end
 
 -- The user writing to a chat that waits on agents frees it: they carry on
--- in the background. Messages from agents, chats and jobs don't.
-local NOT_USER = { "Background sub-agent (", "Message from agent ", "Message from chat ", "Background job " }
+-- in the background. Messages from agents, chats and jobs (a source) don't.
 bone.hook("queue_add", function(ev)
   if ev.mode == "next" or ev.source then return end
-  local text = ev.text or ""
-  for _, opening in ipairs(NOT_USER) do
-    if text:sub(1, #opening) == opening then return end
-  end
   for _, c in pairs(children) do
     if c and c.waiter == ev.session_id then c.detached = true end
   end
@@ -541,7 +536,7 @@ local function message(args, ctx, caller, over, note)
   local body = args.prompt
   if target.parent ~= ctx.session_id then body = from(ctx, caller) .. body end
   if busy[id] then
-    local ok, err = pcall(bone.queue.add, id, body, "steer")
+    local ok, err = pcall(bone.queue.add, id, body, "steer", nil, "agent")
     if not ok then return nil, tostring(err) end
     return "Delivered: agent " .. handle(id) .. " is still working and reads it before its next step."
   end

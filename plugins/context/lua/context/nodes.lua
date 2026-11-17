@@ -157,7 +157,7 @@ function M.build(api)
       (data.provider or "") .. (data.model and ("/" .. data.model) or ""),
     }, " · ")
     if not d then
-      add(W.note("No request observed yet. Send a message, then press Refresh. Current shows this conversation's estimate.", { 0, 0 }))
+      add(W.note("No request yet · send a message, then press r", { 0, 0 }))
     else
       local total = api.tokens(d.bytes)
       local capacity = api.capacity()
@@ -167,10 +167,7 @@ function M.build(api)
         {
           direction = "row", gap = S.space.md, align = "center", flex_wrap = true,
           text("≈ " .. api.num(total) .. " tokens", "Normal", { bold = true, size = S.size.lead }),
-          small(mode == "current" and "estimated current context" or ("last request · " .. api.ago(data.request_at))),
-          { grow = 1 },
-          W.pill(data.calibrated and "CALIBRATED" or "UNCALIBRATED",
-            { hl = data.calibrated and "Dim" or "WarningMsg", bg = "Selection" }),
+          mode ~= "current" and small("last request · " .. api.ago(data.request_at)) or nil,
         },
       }
       if who ~= " · " and who ~= "" then summary[#summary + 1] = small(who) end
@@ -201,11 +198,10 @@ function M.build(api)
         facts[#facts + 1] = "compacts at " .. api.num(limit) .. (total >= limit and " · due on the next turn"
           or string.format(" · %.0f%% there, %s to go", total / limit * 100, api.num(limit - total)))
       end
-      if mode == "current" then
-        facts[#facts + 1] = string.format("%d active / %d stored messages%s", d.messages or 0, d.stored_messages or 0,
+      -- Only when compaction left some messages out.
+      if mode == "current" and (d.messages ~= d.stored_messages or (d.summarized or 0) > 0) then
+        facts[#facts + 1] = string.format("%d of %d messages sent%s", d.messages or 0, d.stored_messages or 0,
           (d.summarized or 0) > 0 and (" · " .. d.summarized .. " summarized") or "")
-      elseif data.request_at then
-        facts[#facts + 1] = "observed " .. os.date("%H:%M:%S", data.request_at) .. ", after context hooks"
       end
       if data.usage then
         local u = data.usage
@@ -216,7 +212,7 @@ function M.build(api)
       end
       if #facts > 0 then summary[#summary + 1] = small(table.concat(facts, " · ")) end
       if capacity == 0 then
-        summary[#summary + 1] = small("Set a context window in /config → Context to see how full it is.")
+        summary[#summary + 1] = small("No context window set · /config → Context")
       end
       add(summary)
 
@@ -239,9 +235,6 @@ function M.build(api)
       end
       if #breakdown == 0 then breakdown[1] = small("empty") end
       add(section("Breakdown", data.calibrated and string.format("%.2f bytes/token", data.bytes_per_token) or "4 bytes/token", breakdown))
-      if (d.image_count or 0) > 0 then
-        add(small("Images count 85 + 170 tokens per 512px tile; provider billing may differ."))
-      end
 
       local schemas, schema_bytes = {}, 0
       for _, t in ipairs(d.tools or {}) do
@@ -254,10 +247,7 @@ function M.build(api)
         return a.definitions == b.definitions and a.name < b.name or a.definitions > b.definitions
       end)
       local schema_rows = {}
-      if #schemas == 0 then
-        schema_rows[1] = small(data.request and "No tool schemas were offered in the last observed request."
-          or "Tool schemas are unknown until this conversation makes a model request.")
-      else
+      if #schemas > 0 then
         for _, t in ipairs(schemas) do
           local share = schema_bytes > 0 and t.definitions / schema_bytes or 0
           schema_rows[#schema_rows + 1] = {
@@ -270,7 +260,9 @@ function M.build(api)
           }
         end
       end
-      add(section("Tool schemas", #schemas > 0 and (#schemas .. " tools · ≈ " .. api.num(api.tokens(schema_bytes)) .. " tokens") or nil, schema_rows))
+      if #schemas > 0 then
+        add(section("Tool schemas", #schemas .. " tools · ≈ " .. api.num(api.tokens(schema_bytes)) .. " tokens", schema_rows))
+      end
 
       if #(d.tools or {}) > 0 then
         local shown_tools = math.min(15, #d.tools)
@@ -307,30 +299,20 @@ function M.build(api)
         for _, m in ipairs(d.largest) do
           local who_m = m.role .. (m.name and (" · " .. m.name) or "")
           local key = ({ tool = "results", system = "system", user = "user", assistant = "assistant" })[m.role] or "user"
+          -- One line each: size, share, which message, whose, and a glimpse.
           largest[#largest + 1] = {
-            direction = "column", gap = S.space.xs,
-            {
-              direction = "row", gap = S.space.md, align = "center",
-              figure(api.num(api.tokens(m.bytes))),
-              figure(d.bytes > 0 and api.pct(m.bytes / d.bytes) or "", "Dim", 44),
-              small("#" .. tostring(m.index), nil, { width = 40, shrink = 0 }),
-              text(who_m, (api.kinds[key] or {}).hl or "Normal", { size = S.size.caption }),
-            },
-            (m.preview and m.preview ~= "") and small(m.preview, nil, { padding = { 0, 0, 0, 164 },
+            direction = "row", gap = S.space.md, align = "center",
+            figure(api.num(api.tokens(m.bytes))),
+            figure(d.bytes > 0 and api.pct(m.bytes / d.bytes) or "", "Dim", 44),
+            small("#" .. tostring(m.index), nil, { width = 40, shrink = 0 }),
+            text(who_m, (api.kinds[key] or {}).hl or "Normal", { size = S.size.caption, width = 96, shrink = 0,
+              wrap = false, text_overflow = "ellipsis" }),
+            (m.preview and m.preview ~= "") and small(m.preview, nil, { grow = 1, width = 0,
               wrap = false, text_overflow = "ellipsis" }) or nil,
           }
         end
         add(section("Largest messages", nil, largest))
       end
-
-      local notes = mode == "current" and data.notes or {
-        "The exact messages and tools of the last observed request; token counts are estimates.",
-        "A request hook with a still lower priority may change it after observation.",
-        "Text reasoning is counted as potential replay; opaque reasoning and provider framing are excluded.",
-      }
-      local note_rows = {}
-      for _, note in ipairs(notes or {}) do note_rows[#note_rows + 1] = small("· " .. note) end
-      if #note_rows > 0 then add(section("Notes", nil, note_rows)) end
     end
   end
 

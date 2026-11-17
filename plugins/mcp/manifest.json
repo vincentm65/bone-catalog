@@ -1,6 +1,6 @@
 {
   "title": "MCP",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Manage MCP servers: add, sign in (OAuth), browse tools, turn them on and off, and load them on demand",
   "capabilities": [
     "mcp",

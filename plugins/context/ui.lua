@@ -188,8 +188,7 @@ local function body(full)
   if loading or not data then return { line("  Loading context…", "Dim") } end
   local d = data[mode]
   if not d then
-    return { line("  No request observed yet. Send a message, then press r.", "Dim"),
-      line("  Tab shows the current conversation's estimate.", "Dim") }
+    return { line("  No request yet · send a message, then press r", "Dim") }
   end
   local out = {}
   local function add(l) out[#out + 1] = type(l) == "string" and line(l) or l end
@@ -202,8 +201,7 @@ local function body(full)
   local l, put = builder()
   put("  ≈ ", "Dim")
   put(num(total) .. " tokens", "Accent")
-  put(mode == "current" and "  estimated current context" or ("  last request · " .. ago(data.request_at)), "Dim")
-  put(data.calibrated and "  · calibrated" or "  · uncalibrated", data.calibrated and "Dim" or "WarningMsg")
+  if mode ~= "current" then put("  last request · " .. ago(data.request_at), "Dim") end
   add(l)
   if capacity > 0 then
     l, put = builder()
@@ -229,11 +227,10 @@ local function body(full)
     put(total >= limit and " · due on the next turn" or string.format(" · %.0f%% there, %s to go", total / limit * 100, num(limit - total)), "Dim")
     add(l)
   end
-  if mode == "current" then
-    add(line(string.format("  %d active / %d stored messages%s", d.messages, d.stored_messages,
+  -- Only when compaction left some messages out.
+  if mode == "current" and (d.messages ~= d.stored_messages or d.summarized > 0) then
+    add(line(string.format("  %d of %d messages sent%s", d.messages, d.stored_messages,
       d.summarized > 0 and (" · " .. d.summarized .. " summarized") or ""), "Dim"))
-  else
-    add(line("  Observed " .. os.date("%H:%M:%S", data.request_at) .. ", after context hooks", "Dim"))
   end
   if data.usage then
     local u = data.usage
@@ -243,7 +240,7 @@ local function body(full)
       .. (cached > 0 and string.format(" · %s cached (%.0f%%)", num(cached), input > 0 and cached / input * 100 or 0) or ""), "Dim"))
   end
   if capacity == 0 then
-    for _, row in ipairs(para("Set a context window in /config → Context to see how full it is.", "Dim", w)) do add(row) end
+    add(line("  No context window set · /config → Context", "Dim"))
   end
 
   -- Breakdown by category.
@@ -272,9 +269,6 @@ local function body(full)
     end
   end
   if shown == 0 then add(line("  empty", "Dim")) end
-  if d.image_count > 0 then
-    for _, row in ipairs(para("Images count 85 + 170 tokens per 512px tile; provider billing may differ.", "Dim", w)) do add(row) end
-  end
 
   -- Every offered tool's schema cost, even when it has never been called.
   -- Keep this separate from the capped activity ranking below: large results
@@ -289,14 +283,9 @@ local function body(full)
   table.sort(schemas, function(a, b)
     return a.definitions == b.definitions and a.name < b.name or a.definitions > b.definitions
   end)
-  add("")
-  add(title("Tool schemas", w, #schemas > 0 and (#schemas .. " tools · ≈ " .. num(tokens(schema_bytes)) .. " tokens") or nil))
-  if #schemas == 0 then
-    local note = data.request and "No tool schemas were offered in the last observed request."
-      or "Tool schemas are unknown until this conversation makes a model request."
-    for _, row in ipairs(para(note, "Dim", w)) do add(row) end
-  else
-    add(line("  Estimated tokens · share of all tool schemas", "Dim"))
+  if #schemas > 0 then
+    add("")
+    add(title("Tool schemas", w, #schemas .. " tools · ≈ " .. num(tokens(schema_bytes)) .. " tokens"))
     local name_w = 8
     for _, t in ipairs(schemas) do name_w = math.max(name_w, width(t.name) + 2) end
     name_w = math.min(name_w, 42, math.max(w - 20, 8))
@@ -367,20 +356,6 @@ local function body(full)
       local room = w - 21 - who_w
       if m.preview and m.preview ~= "" and room >= 12 then put(bone.text.truncate(m.preview, room), "Dim") end
       add(l)
-    end
-  end
-
-  add("")
-  add(title("Notes", w))
-  local notes = mode == "current" and data.notes or {
-    "The exact messages and tools of the last observed request; token counts are estimates.",
-    "A request hook with a still lower priority may change it after observation.",
-    "Text reasoning is counted as potential replay; opaque reasoning and provider framing are excluded.",
-  }
-  for _, note in ipairs(notes) do
-    for i, wrapped in ipairs(bone.text.wrap({ { note, "Dim" } }, math.max(w - 4, 1))) do
-      table.insert(wrapped, 1, { i == 1 and "  · " or "    ", "Dim" })
-      out[#out + 1] = wrapped
     end
   end
   return out

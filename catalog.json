@@ -215,7 +215,7 @@
     "name": "context",
     "title": "Context",
     "kind": "plugin",
-    "version": "1.2.2",
+    "version": "1.3.0",
     "description": "See what fills the context window: categories, tools and the largest messages, calibrated to the provider's counts",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -227,11 +227,11 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "9d3fc7119c7712575853e82774ac76322333fb732467ca475a36d537971ad83b"
+        "sha256": "6e6df67b22c8cece4274152ecedacb2974c0b808fa0e30c2e256efbadb340f11"
       },
       {
         "path": "core.lua",
-        "sha256": "aeca4fec9d2e5fcb2761d5f77d9e53df6a6114f12a125244e7e64e36f7bb32d5"
+        "sha256": "d8af07051ddc5c7d94682eef7b0151413bed2e3f2cffdcb8c45969b67b40d19d"
       },
       {
         "path": "lua/context/breakdown.lua",
@@ -239,15 +239,15 @@
       },
       {
         "path": "lua/context/nodes.lua",
-        "sha256": "44def50479e08712e67153763f084aefa3b6596d94c42bbac34bffa609abda16"
+        "sha256": "96106cb0927c9ca2acdb8a29c260ea0274d80ef2d1a427ce222b4ef3cfd6357c"
       },
       {
         "path": "manifest.json",
-        "sha256": "0285cebaabf1635a11babfccd0d20fda966f76b37db7f9d30e1302130580e8d8"
+        "sha256": "68eacae7c53d07f26c9be7917d202ba7e56fe52bc614f628924ea413ff2999cc"
       },
       {
         "path": "ui.lua",
-        "sha256": "8cb511bc0bc2c397591b4f9c21fafdc841b10ff9af181d752a7b39575832f30b"
+        "sha256": "7a21ce9716113783ccdb041e56e9cbad5040ee4a0fcbb0eddff6e56f204712db"
       }
     ]
   },
@@ -449,7 +449,7 @@
     "name": "goal",
     "title": "Goal",
     "kind": "plugin",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "description": "Keep a chat working on an objective, turn after turn, until it is done: /goal <objective>. A status band shows it in the terminal and the desktop app.",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -459,15 +459,15 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "1938a8063365fe0d6725abb1deaccc879307772065ad409d0c50a966047b843a"
+        "sha256": "00974875e39e65f6f942eb855203de753bc857abd62f35f13dd512338ffc6ce3"
       },
       {
         "path": "core.lua",
-        "sha256": "cc0df8d6ca4fa3c6939af8b3299da253f4fc32743b0701098f05fe3fe3b05fcf"
+        "sha256": "52682e5ae598f6fc7930d04f5d5a2fbc50dfd876293878c5f50e3cd49e671259"
       },
       {
         "path": "manifest.json",
-        "sha256": "a78240c033d4aebd0c5fac305e3346d6bfa41a3928fd95631abd9c8786319af9"
+        "sha256": "ada48721bf4f39bf508b8aa0da9a22f565c697d807f44a424b23dbf92223a225"
       },
       {
         "path": "ui.lua",
@@ -502,32 +502,6 @@
     ]
   },
   {
-    "name": "history",
-    "title": "History",
-    "kind": "plugin",
-    "version": "1.0.1",
-    "description": "Resume a recent conversation",
-    "min_bone_version": "3.0.4",
-    "capabilities": [
-      "command",
-      "sessions"
-    ],
-    "files": [
-      {
-        "path": "README.md",
-        "sha256": "091219b81ed8e323b747414b88ef2da97337bf11baf6e82507db0d9e59b907bc"
-      },
-      {
-        "path": "manifest.json",
-        "sha256": "8e53ba7779d0bf38d617ff909c5dfc6af6bce9206bd2b5b0f4848db4f606d153"
-      },
-      {
-        "path": "ui.lua",
-        "sha256": "e24d76f385c6bd4e7d3ecbef9eff774f08d99a3699a39b5852f4902eab268665"
-      }
-    ]
-  },
-  {
     "name": "idle_compact",
     "title": "Idle Compact",
     "kind": "plugin",
@@ -556,7 +530,7 @@
     "name": "mcp",
     "title": "MCP",
     "kind": "plugin",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "description": "Manage MCP servers: add, sign in (OAuth), browse tools, turn them on and off, and load them on demand",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -577,11 +551,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "18f33460b2cdce3152b416987d4f06b13d7076be20da06709269ae97cc81fce6"
+        "sha256": "77d25602b7af0d147424481ddb0709809911540eacf649c80ff9c62f00015bc3"
       },
       {
         "path": "ui.lua",
-        "sha256": "3a04d6fc0b0fce9ae225bea60c5d01c884bb928904ff9f6a08549689f74c1f2f"
+        "sha256": "727e7759c88a76f6d6a6462569371bb49d6acdd8646edc03125ce4084e2acc6c"
       }
     ]
   },

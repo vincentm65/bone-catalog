@@ -445,6 +445,8 @@ local function detail(s)
     return out
   end
   local all = tools_of(s)
+  -- A server that is off or failed has no tools to show; its state says why.
+  if #all == 0 and s.state ~= "ready" then return out end
   local tools = { kind = "section", title = tools_title(s, all) }
   for i = 1, math.min(#all, SHOWN) do
     local t = all[i]
@@ -469,11 +471,10 @@ local function loading()
   if not i or (tonumber(i.tokens) or 0) == 0 then return nil end
   local text
   if i.on_demand then
-    text = "Tools load on demand (" .. i.mode .. "): " .. tok(i.sent) .. " of " .. tok(i.tokens)
-      .. " tokens of definitions in each request"
+    text = "Tool definitions: " .. tok(i.sent) .. " of " .. tok(i.tokens) .. " tokens a request · on demand (" .. i.mode .. ")"
   else
-    text = "Every tool is loaded (" .. i.mode .. (i.mode == "auto" and (", on demand above " .. tok(i.above)) or "")
-      .. "): " .. tok(i.tokens) .. " tokens of definitions in each request"
+    text = "Tool definitions: " .. tok(i.tokens) .. " tokens a request · all loaded ("
+      .. i.mode .. (i.mode == "auto" and (", on demand above " .. tok(i.above)) or "") .. ")"
   end
   return { kind = "row", { kind = "text", text = text, tone = "dim" }, button("Change", "l") }
 end
@@ -538,13 +539,13 @@ local function tools_view(ctx)
   local t = tools[at]
   if t then st.tool = t.name end
   local side = { kind = "column",
-    { kind = "text", text = top > 1 and ("↑ " .. (top - 1) .. " more") or "", tone = "dim" },
+    top > 1 and { kind = "text", text = "↑ " .. (top - 1) .. " more", tone = "dim" } or nil,
     { kind = "list", items = items, selected = at - top + 1, empty = "No tool matches.",
       on_select = function(i)
         local to = tools[top + i - 1]
         if to then st.tool, st.note = to.name, nil end
       end },
-    { kind = "text", text = last < #tools and ("↓ " .. (#tools - last) .. " more") or "", tone = "dim" },
+    last < #tools and { kind = "text", text = "↓ " .. (#tools - last) .. " more", tone = "dim" } or nil,
   }
   local bar
   if st.filtering then
@@ -569,8 +570,6 @@ local function tools_view(ctx)
     st.note and { kind = "text", text = st.note.text, tone = st.note.bad and "error" or "dim" } or nil,
     { kind = "divider" },
     bar,
-    not st.filtering and { kind = "hints",
-      text = "space on/off · p pin (always loaded) · / filter · esc back" } or nil,
   }
 end
 
@@ -592,7 +591,7 @@ local function view(ctx)
     { kind = "list", items = items, selected = st.sel,
       on_select = function(i) st.sel, st.note = i, nil end },
     detail(s),
-  } or { kind = "text", text = "No MCP servers yet. Add a command or an https:// URL.", tone = "dim" }
+  } or { kind = "text", text = "No MCP servers yet.", tone = "dim" }
   local bar
   if st.input then
     bar = { kind = "field", label = STEPS[st.input.step] or "", value = st.input.value, editing = true,
@@ -604,15 +603,20 @@ local function view(ctx)
     bar = { kind = "row", button("Copy address", "c", true), button("Cancel sign-in", "esc"),
       { kind = "hints", text = "c copy address · paste the redirected address · esc cancel" } }
   else
-    bar = { kind = "row", button("Add", "a", true) }
-    if s and #tools_of(s) > 0 then bar[#bar + 1] = button("Tools", "t") end
+    -- The selected server's actions, then adding another; the keys in the
+    -- README do the same.
+    bar = { kind = "row" }
+    if s and #tools_of(s) > 0 then bar[#bar + 1] = button("Tools", "t", true) end
+    if s and s.url and not s.signed_in and s.state ~= "disabled" then
+      bar[#bar + 1] = button("Sign in", "s", s.state == "auth" and #bar == 0)
+    end
     if s and s.state ~= "disabled" then bar[#bar + 1] = button("Reconnect", "r") end
-    if s and s.url and s.state ~= "disabled" then bar[#bar + 1] = button("Sign in", "s") end
     if s and s.signed_in then bar[#bar + 1] = button("Sign out", "x") end
     if s then
       bar[#bar + 1] = button(s.state == "disabled" and "Enable" or "Disable", "space")
       bar[#bar + 1] = button("Remove", "d")
     end
+    bar[#bar + 1] = button(s and "Add server" or "Add a server", "a", s == nil)
   end
   return {
     kind = "column",
@@ -621,8 +625,6 @@ local function view(ctx)
     { kind = "divider" },
     not (st.input or st.confirm or st.signing) and loading() or nil,
     bar,
-    not (st.input or st.confirm or st.signing)
-      and { kind = "hints", text = "enter tools · a add · r reconnect · s/x sign in/out · space on/off · d remove · l loading · esc" } or nil,
   }
 end
 
@@ -650,7 +652,7 @@ bone.cmd.create("mcp", function()
     return bone.ui.close(id)
   end
   st = { servers = {}, sel = 1, view = "servers", filter = "" }
-  id = bone.ui.popup({ title = "MCP servers", view = view, on_key = on_key, width = WIDTH, height = HEIGHT })
+  id = bone.ui.popup({ title = "MCP servers", view = view, on_key = on_key, width = WIDTH })
   refresh()
 end, { desc = "MCP servers: state, tools, sign-in, add and remove (mcp plugin)" })
 

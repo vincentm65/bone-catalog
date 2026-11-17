@@ -160,7 +160,7 @@ try:
     type_text("/mcp")
     keys("Enter")
     wait(lambda: "MCP servers" in screen() and "✕ broken" in screen(), "the popup")
-    wait(lambda: "Tools load on demand (auto)" in screen(), "the loading line")
+    wait(lambda: "on demand (auto)" in screen(), "the loading line")
     assert "cannot run /nonexistent/mcp-server" in screen() and "● tracker" in screen(), screen()
     # The broken server is first; its neighbour has the tools.
     keys("Down")
@@ -168,7 +168,7 @@ try:
     assert "… and 14 more · enter shows them all" in screen(), screen()
     keep("servers")
     keys("Enter")
-    wait(lambda: "space on/off · p pin" in screen(), "the tools view")
+    wait(lambda: "Filter" in screen() and "Back" in screen(), "the tools view")
     assert "● create_issue" in screen() and "Arguments  3" in screen(), screen()
     assert "↓ 10 more" in screen(), screen()
     keep("tools")
@@ -203,15 +203,15 @@ try:
     keys("Enter", "Escape")
     wait(lambda: "Filter" not in row("Filter:") and "tool_01" in screen(), "the filter cleared")
     keys("Escape")
-    wait(lambda: "enter tools · a add" in screen(), "back to the servers")
+    wait(lambda: "Reconnect" in screen(), "back to the servers")
 
     # How tools are loaded, changed from here.
     keys("l")
-    wait(lambda: "Tools load on demand (on)" in screen(), "on")
+    wait(lambda: "on demand (on)" in screen(), "on")
     keys("l")
-    wait(lambda: "Every tool is loaded (off)" in screen(), "off")
+    wait(lambda: "all loaded (off)" in screen(), "off")
     keys("l")
-    wait(lambda: "Tools load on demand (auto)" in screen(), "auto")
+    wait(lambda: "on demand (auto)" in screen(), "auto")
     keep("loading modes")
 
     # Adding a command asks for its environment too.

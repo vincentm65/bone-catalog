@@ -18,11 +18,12 @@ carries on.
 
 ## How it works
 
-The first message gives the model the objective and the rules: work
-without asking (no `ask_user` or other tools that wait for you), and end
-the final reply with `<goal>done</goal>`, or `<goal>blocked: why</goal>`
-when only you can unblock it. After each turn the next starts with
-`Continue the goal: <objective>` (about 20 tokens plus the objective).
+The chat shows one short line, `◎ Goal: <objective>`; the model reads the
+objective and the rules in its place: work without asking (no `ask_user`
+or other tools that wait for you), and end the final reply with
+`<goal>done</goal>`, or `<goal>blocked: why</goal>` when only you can
+unblock it. After each turn the next starts with `◎ Continue: <objective>`
+(the model reads about 20 tokens plus the objective).
 
 It ends when:
 
@@ -40,10 +41,12 @@ take the pointer.
 
 ## Isolation
 
-One core hook (`turn_end`), which returns at once for sessions without a
-goal. No tools and no system prompt changes, so other sessions are
-untouched and the prompt cache is never invalidated: a goal only appends
-messages to its own chat. The terminal and the desktop app ask about sessions with a goal only and
+Two core hooks: `turn_end`, which returns at once for sessions without a
+goal, and `context`, which gives the model the full text of the short
+goal lines in a chat (the saved chat keeps the short lines). No tools and
+no system prompt changes, so other sessions are untouched and the prompt
+cache is never invalidated: a goal only appends messages to its own chat,
+and each one is sent the same way every time. The terminal and the desktop app ask about sessions with a goal only and
 override nothing.
 
 Running goals are kept in `~/.bone/state/core/goal.json`, which is removed
