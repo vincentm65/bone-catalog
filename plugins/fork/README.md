@@ -8,28 +8,23 @@ accepting JSON-string message entries. It does not use
 
 ## Install
 
-From the bone repository:
-
-```sh
-mkdir -p ~/.bone/plugins/fork
-cp plugins/fork/{core.lua,ui.lua,README.md} ~/.bone/plugins/fork/
-```
-
-Restart bone, or run `/plugins reload fork` (load it with `/plugins load fork`
-if it was not loaded already). Install both halves on the machine running
-the core and the machine running the terminal or desktop app if those are separate.
+Install `fork` from `/catalog`. Its one `ui.lua` serves both the terminal and
+the desktop app. If the core runs on another machine, install the plugin there
+too.
 
 ## Use
 
-- `/fork`: centered, rounded family browser. Session rows show their children
-  and selectable user-message points. Children with a known cutoff appear just
-  before that user point; their edge is labeled **before #N**. Up/down (or
-  `k`/`j`) select; right expands, left collapses or goes to the parent; Escape
-  or `q` closes. A click selects a row, and a click on the selected row expands
-  or collapses a session (or branches at a user point); the action button opens
-  or branches too. Enter on a session opens it. Enter on a user point
-  creates a branch **before** that message, opens it, and restores that
-  message's text and image references into the draft. Nothing is sent.
+- `/fork`: this chat's messages in bone's picker, newest first, so `enter`
+  right away forks before the latest one. Type to filter. Under each message
+  are the branches that redid it, named by what they sent instead (or their
+  title, if renamed); `enter` on one opens it. A chat that is itself a branch
+  ends with **↰ Branched from: …**, which opens the chat it came from.
+  Forking makes a new chat with everything before that message, opens it, and
+  puts that message's text and images in the prompt to edit. Nothing is sent,
+  and the original chat is not changed.
+- A new branch is titled `↳ <source title>`, so the chat list and the header
+  tell it apart from its source (`/rename` it as usual). A note confirms it
+  was made.
 - `/fork N`: the same operation before the current session's **Nth user
   message**, counting from 1. Steering user messages count too. Invalid,
   fractional, nonpositive and out-of-range ordinals are rejected.
@@ -45,10 +40,10 @@ prompt and explicitly submit when ready. The source is never changed.
 
 Unresolved tool calls and orphan tool results in a copied prefix are rejected;
 a steering cutoff may therefore be unsafe even though it is before a user
-message. Safe earlier prefixes of an active source can be copied. All popup
+message. Safe earlier prefixes of an active source can be copied. All picker
 selections are checked against a freshly read generation/content fingerprint;
-if the source changed, reopen `/fork`. Snapshots are fetched lazily on expansion,
-not during rendering. Image-bearing selections are refused on old TUIs lacking
+if the source changed, reopen `/fork`. Nothing is fetched while drawing.
+Image-bearing selections are refused on old TUIs lacking
 `bone.prompt.set_images`; attachment errors are reported, not silently reduced
 to a text-only prompt.
 
@@ -58,14 +53,16 @@ Genealogy is stored immediately in `~/.bone/state/core/fork.json`, via core-only
 `bone.state.load/save("fork")`: child ID → parent ID, optional `before_turn`,
 and prefix fingerprint. It is not written into new session headers. The core
 RPC `fork.tree` returns family metadata plus one selected snapshot, its user
-points and an `expected` token; `fork.create` accepts `session_id`, optional
+points, what each of its branches sent at its cut (`branches`) and an
+`expected` token; `fork.create` accepts `session_id`, optional
 `before_turn`, and optional `expected`. The TUI fetches `session/list` once per
-popup and supplies that metadata for legacy import.
+picker and supplies that metadata for legacy import.
 
 Old session headers' `parent` links are imported when seen in a snapshot or the
 browser's session list. Their original cutoff is marked
-**legacy (unknown cutoff)**; no old transcript is rewritten. Missing/deleted ancestor IDs remain visible
-as non-openable placeholders. Unrelated sessions are not shown.
+unknown and they are listed after the messages; no old transcript is
+rewritten. A deleted source shows as "a chat that is gone" and cannot be
+opened. Unrelated sessions are not shown.
 
 Back up the session store **and attachment blobs**, together with the core
 `fork.json` state file. Losing plugin state loses new genealogy, not the
@@ -93,10 +90,12 @@ available. Older snapshots without `raw_messages` fall back to parsed entries.
 
 ## Fixture tests
 
+From the catalog checkout:
+
 ```sh
-lua plugins/fork/test.lua
-luajit plugins/fork/test.lua
-luac -p plugins/fork/core.lua plugins/fork/ui.lua plugins/fork/test.lua
+lua tests/fork_test.lua
+luajit tests/fork_test.lua
+luac -p plugins/fork/core.lua plugins/fork/ui.lua tests/fork_test.lua
 ```
 
 Standalone Lua/LuaJIT tests use fake bone APIs: exact JSON-string and parsed

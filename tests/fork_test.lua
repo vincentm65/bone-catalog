@@ -98,7 +98,7 @@ print("core: exact raw JSON/parsed copy, model/summary, bounds, stale views, act
 
 -- Async TUI fixture: RPCs are queued, rendering must not issue one.
 fixture(); state.edges = {}
-local queue, shown, shutdown, command, wins, nextwin, id = {}, nil, nil, nil, {}, 0, "a"
+local queue, shown, shutdown, command, id = {}, nil, nil, nil, "a"
 local prompt, images, notices, opens = "source draft", {}, {}, 0
 bone.api = { session = function() return { session_id = id } end,
   prompt_set = function(text) prompt = text end,
@@ -109,27 +109,33 @@ bone.plugin = { on_shutdown = function(fn) shutdown = fn end }
 bone.on = function(event, fn) if event == "chat/shown" then shown = { fn = fn } end end
 bone.notify = function(text) notices[#notices + 1] = text end
 bone.cmd = { create = function(name, fn) assert(name == "fork"); command = fn end }
-bone.text = { truncate = function(text, width) return text:sub(1, width) end }
-bone.ui = { popup = function(opts) nextwin = nextwin + 1; wins[nextwin] = opts; return nextwin end,
-  is_open = function(w) return wins[w] ~= nil end, close = function(w) wins[w] = nil end,
-  box = function(lines) return lines end }
+-- The picker: what /fork opened, its rows once loaded, and a choice made.
+local pickers, listing = {}, nil
+bone.ui = { select = function(items, opts)
+  local h = { opts = opts, items = items, open = true }
+  function h:set_items(new) self.items = new end
+  function h:close() self.open = false end
+  pickers[#pickers + 1] = h
+  return h
+end }
 bone.rpc.call = function(name, args, cb) queue[#queue + 1] = function()
   local ok, result = pcall(rpc[name], args, ctx); cb(ok and result or nil, not ok and result or nil)
 end end
-bone.request = function(name, args, cb) assert(name == "session/list"); queue[#queue + 1] = function() cb({ sessions.a.info }) end end
+bone.request = function(name, args, cb) assert(name == "session/list"); queue[#queue + 1] = function() cb(listing or { sessions.a.info }) end end
 local function flush() local fn = table.remove(queue, 1); assert(fn); fn() end
 local function run(arg) command({ args = arg }) end
 local function shown_child() id = shown.target; shown.fn() end
--- The popup's view: its tree list, moved and pressed as the cursor would.
-local w
-local function list()
-  for _, el in ipairs(w.view()) do if type(el) == "table" and el.kind == "list" then return el end end
+local function picker() return pickers[#pickers] end
+local function texts()
+  local out = {}
+  for _, row in ipairs(picker().items) do out[#out + 1] = picker().opts.format(row) end
+  return table.concat(out, "\n")
 end
-local function key(k)
-  local l = list()
-  if k == "down" then l.on_select(l.selected + 1)
-  elseif k == "home" then l.on_select(1)
-  else assert(l.on_key(k, l.selected)) end
+local function choose(pattern)
+  for _, row in ipairs(picker().items) do
+    if picker().opts.format(row):find(pattern, 1, true) then picker():close(); return picker().opts.on_choice(row) end
+  end
+  error("no row " .. pattern .. " in\n" .. texts())
 end
 dofile("plugins/fork/ui.lua")
 run("2"); flush(); flush()
@@ -140,54 +146,43 @@ id = "a"; run("2"); flush(); flush()
 prompt, images = "new user draft", { { id = "new-image" } }
 shown_child(); assert(prompt == "new user draft" and images[1].id == "new-image")
 assert(notices[#notices]:find("kept your edits", 1, true))
-id = "a"; run(""); w = wins[nextwin]
+-- Newest first: the first row forks before the latest message. Drawing the
+-- rows makes no RPC.
+id = "a"; run(""); assert(picker().opts.loading)
 flush(); flush()
-local n = #queue; w.view(); assert(#queue == n)
-key("down"); key("enter") -- first user point: prefix is empty
-assert(#queue == 1); w.keys.esc(); local before = opens; flush(); assert(opens == before)
-run(""); w = wins[nextwin]; w.keys.esc(); flush(); assert(#queue == 0)
--- Known cutoffs are adjacent to their user point, not after every user row.
+local n = #queue; texts(); assert(#queue == n)
+assert(texts():match("^#2  second · 1 image\n#1  first · 1 image$"), texts())
+choose("#1") -- the first user point: an empty prefix
+assert(#queue == 1)
+local before = opens
+run(""); flush(); assert(opens == before) -- a newer /fork drops the older create's result
+picker().opts.on_choice(nil); flush(); assert(#queue == 0)
+-- Branches sit under the message they redid; a branch with no cut, last.
 state.edges = {
   first = { parent = "a", before_turn = 1 },
   second = { parent = "a", before_turn = 2 },
   legacy = { parent = "a", legacy = true },
 }
--- Each row as words: a session with its edge and badges, a point by number.
-local function rendered()
-  local out = {}
-  for _, it in ipairs(list().items) do
-    local line
-    if it.text:match("^#") then
-      line = "↳ " .. it.text:sub(2)
-    else
-      line = it.text:gsub("^[▸▾] ", "") .. (it.detail and ("  ← " .. it.detail) or "")
-    end
-    for _, b in ipairs(it.badges or {}) do line = line .. " [" .. b.text .. "]" end
-    out[#out + 1] = line
-  end
-  return table.concat(out, "\n")
-end
-run(""); w = wins[nextwin]; flush(); flush()
-local text = rendered()
-local firstpos, point1 = text:find("first  ← before #1", 1, true), text:find("↳ 1", 1, true)
-local secondpos, point2 = text:find("second  ← before #2", 1, true), text:find("↳ 2", 1, true)
-assert(firstpos and point1 and secondpos and point2 and firstpos < point1 and point1 < secondpos and secondpos < point2, text)
-assert(text:find("legacy (unknown cutoff)", 1, true) and text:find("[missing]", 1, true), text)
-w.keys.esc()
--- Missing ancestors still expose their descendants without a snapshot RPC.
+listing = { sessions.a.info,
+  { session_id = "first", cwd = "/tmp", title = "↳ Source", created_at = os.time() },
+  { session_id = "second", cwd = "/tmp", title = "Renamed", created_at = os.time() },
+  { session_id = "legacy", cwd = "/tmp", title = "Old copy", created_at = os.time() } }
+sessions.first = { info = listing[2], messages = { { role = "user", content = "first, again" } } }
+run(""); flush(); flush()
+local text = texts()
+assert(text:find("^#2  second[^\n]*\n +↳ Renamed · just now\n#1  first[^\n]*\n +↳ first, again · just now\n↳ Old copy · just now$"), text)
+choose("Renamed"); assert(opens == before + 1 and shown.target == "second")
+-- A chat whose source is gone says so, and cannot open it.
+id = "a"; listing = nil; sessions.first = nil
 state.edges = { a = { parent = "missing", before_turn = 2 } }
-run(""); w = wins[nextwin]; flush(); flush(); text = rendered()
-assert(text:find("missing [missing]", 1, true) and text:find("Source", 1, true), text)
-key("home"); key("enter")
-assert(notices[#notices]:find("missing") and opens == before)
-key("down"); key("enter"); assert(opens == before + 1) -- source still opens
-id = "a"
--- A malformed legacy cycle terminates and displays each session only once.
+run(""); flush(); flush(); text = texts()
+assert(text:find("↰ Branched from: a chat that is gone · at #2$"), text)
+choose("Branched from"); assert(notices[#notices]:find("gone") and opens == before + 1)
+-- A malformed legacy cycle shows its parent once and ends.
 state.edges = { a = { parent = "loop", legacy = true }, loop = { parent = "a", legacy = true } }
-run(""); w = wins[nextwin]; flush(); flush(); text = rendered()
-local _, source_count = text:gsub("Source", "")
-local _, loop_count = text:gsub("loop  ←", "")
-assert(source_count == 1 and loop_count == 1, text)
-w.keys.esc()
+run(""); flush(); flush(); text = texts()
+local _, parents = text:gsub("↰", "")
+assert(parents == 1, text)
+picker().opts.on_choice(nil)
 run("copy"); shutdown(); flush(); assert(#queue == 0 and opens == before + 1)
-print("view: fork-point order, missing/cyclic ancestors, delayed prefill, no render RPC, closed/unload guards OK")
+print("view: newest-first rows, branch placement and names, missing/cyclic parents, delayed prefill, no render RPC, stale/unload guards OK")

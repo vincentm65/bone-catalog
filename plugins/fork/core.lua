@@ -91,7 +91,16 @@ bone.rpc.register("fork.tree", function(args, ctx)
     edges[sid] = state.edges[sid]
   end
   table.sort(sessions, function(a, b) return a.session_id < b.session_id end)
-  return { session_id = id, sessions = sessions, edges = edges,
+  -- What each branch of this chat sent in place of the message it was cut
+  -- at, so a branch can be named by what it did differently.
+  local branches = {}
+  for child, e in pairs(state.edges) do
+    if e.parent == id and e.before_turn then
+      local ok, p = pcall(function() return points(bone.session.snapshot(child))[e.before_turn] end)
+      if ok and p then branches[child] = { text = p.text, images = #(p.images or {}) } end
+    end
+  end
+  return { session_id = id, sessions = sessions, edges = edges, branches = branches,
     snapshot = { info = s.info }, points = points(s), expected = expected(s) }
 end)
 
@@ -120,7 +129,11 @@ bone.rpc.register("fork.create", function(args, ctx)
   end
   assert(not next(pending), "fork: unsafe prefix has unresolved tool calls (possibly a steering message)")
   local summary = s.summary and s.summary.through <= count and s.summary or nil
-  local info = bone.session.create({ cwd = s.info.cwd, messages = messages,
+  -- A branch is titled after its source, marked so the two can be told apart
+  -- in the chat list and the header (a branch of a branch is marked once).
+  local base = s.info.title or (points(s)[1] or {}).text
+  local title = base and base ~= "" and ("↳ " .. (base:gsub("^↳ ", ""))) or nil
+  local info = bone.session.create({ cwd = s.info.cwd, title = title, messages = messages,
     summary = summary, model = s.model })
   local child = assert(info and info.session_id, "fork: session creation failed")
   state.edges[child] = { parent = id, before_turn = args.before_turn,

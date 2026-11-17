@@ -384,8 +384,8 @@
     "name": "fork",
     "title": "Fork",
     "kind": "plugin",
-    "version": "1.1.0",
-    "description": "Fork the session into branches with a popup family browser: /fork [N|copy]",
+    "version": "1.2.0",
+    "description": "Fork from an earlier message into a new branch, or copy the chat: /fork [N|copy]",
     "min_bone_version": "3.0.4",
     "capabilities": [
       "command",
@@ -394,19 +394,19 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "9c760d1dbfe16d014fb9bccfc4e3e831f4d90239f21e18578a44358b887de6d2"
+        "sha256": "980200131c5c133410cb0280593127ff36914ccf0f2789d474f156742beb116c"
       },
       {
         "path": "core.lua",
-        "sha256": "d6283cd0048ac9b8455acc1223eb92862bbfa2c516e79d53846af9a57aa29dd7"
+        "sha256": "b0a8f6252e5060b5f8d91a6cb5b1b09addd32a6fd7c5bc5a6d465defd693d44c"
       },
       {
         "path": "manifest.json",
-        "sha256": "1365dbfe9c5cb20ec15c3bfa61cc52334dcc84beb32889bcf2860eb9ffd8d5ef"
+        "sha256": "41340c9d5f6767761ee5028ab51262c7fb6b88d48ea33df638244d99c7ca4bb0"
       },
       {
         "path": "ui.lua",
-        "sha256": "c65d0d1b4ebd590c3f69ac280ac1b660bcf67b968fc6b5bc30cd0016b80a3a2a"
+        "sha256": "99d6965543920448df323ab9fef7be5a4600994a70818ac9ea338ddc4b2dce22"
       }
     ]
   },
