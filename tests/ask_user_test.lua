@@ -400,6 +400,27 @@ local req = requests[#requests]
 req.cb(nil, { message = "nope" })
 assert(notes[#notes][1]:find("nope", 1, true) and notes[#notes][2] == "error")
 
+-- Rebuilt by someone who kept the region (the windows plugin): answering
+-- puts the prompt's own entry back where the region is now. A layout
+-- replaced without the region keeps its change.
+bone.ui.layout = { { rows = { "chat", { "prompt", size = 3 } } }, "statusline" }
+fire("ask/requested", question({ ask_id = 20, session_id = "s", text = "Rebuilt", options = { "A" } }))
+assert(bone.ui.layout[1].rows[2] == "ask_user")
+bone.ui.layout = { "top", { rows = { "chat", "ask_user" } }, "statusline" }
+now = now + 1000
+key("1")
+answer()
+local back = bone.ui.layout[2].rows[2]
+assert(type(back) == "table" and back[1] == "prompt" and back.size == 3, "the prompt's entry comes back in the rebuilt layout")
+fire("ask/requested", question({ ask_id = 21, session_id = "s", text = "Replaced", options = { "A" } }))
+local replaced = { "chat", "prompt", "statusline" }
+bone.ui.layout = replaced
+now = now + 1000
+key("1")
+answer()
+assert(bone.ui.layout == replaced, "a layout replaced meanwhile keeps its change")
+bone.ui.layout = layout
+
 -- Reload puts the prompt and layout back and drops the region.
 fire("ask/requested", question({ ask_id = 14, session_id = "s", text = "Reload", options = { "A", "B" } }))
 prompt = "half"

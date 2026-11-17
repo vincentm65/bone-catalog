@@ -467,3 +467,78 @@ assert(tui.panels.term1 and bars(tui.bone.ui.layout) == 1)
 tui.events.mouse[1]({ region = "wm_bar:2", action = "down", button = "middle" })
 assert(not tui.panels.term1 and bars(tui.bone.ui.layout) == 0 and total() == 1,
   "middle-click closes the sole panel and restores the existing chat")
+
+-- Another plugin's swap of a row under the focused chat (ask_user's question
+-- where the prompt was) lives through rebuilds and follows the focus; so
+-- does putting the row back, down to one window.
+local function focused_rows(node)
+  if type(node) ~= "table" then return nil end
+  if node.rows and node.rows[2] == "chat" then return node.rows end
+  for _, c in ipairs(node.rows or node.cols or node) do
+    local r = focused_rows(c)
+    if r then return r end
+  end
+end
+local function count(node, leaf)
+  if type(node) ~= "table" then return node == leaf and 1 or 0 end
+  local n = 0
+  for _, c in ipairs(node.rows or node.cols or node) do n = n + count(c, leaf) end
+  return n
+end
+local function swap(layout, from, to)
+  local out = copy(layout)
+  local rows = focused_rows(out)
+  for i, e in ipairs(rows) do if e == from then rows[i] = to end end
+  return out
+end
+local function has_leaf(rows, leaf)
+  for _, e in ipairs(rows or {}) do if e == leaf then return true end end
+  return false
+end
+reset()
+local lay = load(nil, false, "tui")
+settle(lay)
+command(lay, "vsplit")
+lay.bone.ui.layout = swap(lay.bone.ui.layout, "prompt", "ask_user")
+command(lay, "equal")
+assert(has_leaf(focused_rows(lay.bone.ui.layout), "ask_user") and count(lay.bone.ui.layout, "prompt") == 0,
+  "a rebuild keeps the swapped row")
+command(lay, "next")
+assert(has_leaf(focused_rows(lay.bone.ui.layout), "ask_user") and count(lay.bone.ui.layout, "ask_user") == 1,
+  "the swapped row follows the focused chat")
+lay.bone.ui.layout = swap(lay.bone.ui.layout, "ask_user", "prompt")
+command(lay, "equal")
+assert(has_leaf(focused_rows(lay.bone.ui.layout), "prompt") and count(lay.bone.ui.layout, "ask_user") == 0,
+  "putting the row back is kept")
+command(lay, "only")
+assert(count(lay.bone.ui.layout, "prompt") == 1 and count(lay.bone.ui.layout, "ask_user") == 0)
+print("windows: another plugin's row swap under the focused chat survives rebuilds")
+
+-- A chat in another window that asks you something gets the focus, unless
+-- the chat you are in waits on you; then it is next.
+local function fire(vm, name, ev)
+  for _, fn in ipairs(vm.events[name] or {}) do fn(ev) end
+end
+reset()
+local af = load(nil, false, "tui")
+settle(af)
+command(af, "vsplit")
+local right_chat = current
+buffers[right_chat].session_id = "s-right"
+fire(af, "turn/started", { session_id = "s-right" })
+command(af, "next")
+local left_chat = current
+assert(left_chat ~= right_chat)
+buffers[left_chat].session_id = "s-left"
+fire(af, "turn/started", { session_id = "s-left" })
+fire(af, "ask/requested", { ask_id = 1, session_id = "s-right" })
+assert(current == right_chat, "the asking window is focused")
+fire(af, "ask/requested", { ask_id = 2, session_id = "s-left" })
+assert(current == right_chat, "a waiting chat keeps the focus")
+fire(af, "ask/resolved", { ask_id = 1 })
+assert(current == left_chat, "answered: the next waiting window is focused")
+fire(af, "ask/resolved", { ask_id = 2 })
+fire(af, "ask/requested", { ask_id = 3, session_id = "s-nowhere" })
+fire(af, "ask/requested", { ask_id = 4 })
+assert(current == left_chat, "an ask from no window changes nothing")
+print("windows: asks focus the asking window, one at a time")

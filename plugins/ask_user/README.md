@@ -40,7 +40,9 @@ clients that answer with a plain string still work.
 
 A question belongs to the chat that asked it. It is shown only while that
 chat is on screen, and put away (the choice and any typed answer kept) while
-you look at another chat.
+you look at another chat. With the windows plugin (1.9.0 or later), it is
+asked in the focused window, and a question from a chat in another window
+focuses that window.
 
 Questions asked before the UI was listening (it started late, or the plugin
 reloaded) are picked up with `ask/list` on newer cores.

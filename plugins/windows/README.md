@@ -109,6 +109,12 @@ are not saved with the windows. In the TUI this uses the `term` plugin's
   statusline…) go into every window. Docked panels sit beside the focused
   window; put a panel in the layout (`{ panel = "id" }`) to place it elsewhere.
 - A window whose session is deleted closes.
+- A chat in another window that asks you something (an `ask_user` question,
+  an approval) gets the focus, in another tab too. While the chat you are in
+  is waiting on you itself, the focus stays; the other window gets it once
+  yours is answered.
+- Another plugin that swaps a row under the focused chat (`ask_user` puts its
+  question where the prompt was) keeps that swap while windows change.
 - With *Watch sub-agents* on (`/config` → Windows), each new sub-agent opens
   in a window under its owner's.
 - The windows, their sizes and zoom state are saved, and come back at the next

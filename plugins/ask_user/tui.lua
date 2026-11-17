@@ -131,12 +131,14 @@ local function hl(g)
   return "AskUser" .. g
 end
 
--- The layout with the region in the prompt's place (searching splits).
-local function with_region(layout)
+-- A copy of `layout` with the first leaf named `from` (searching splits)
+-- replaced by `to`, and the entry it replaced; nil when there is none.
+local function swapped(layout, from, to)
+  local taken
   local function swap(list)
     for i, e in ipairs(list) do
-      if (type(e) == "table" and e[1] or e) == "prompt" then
-        list[i] = REGION
+      if (type(e) == "table" and e[1] or e) == from then
+        taken, list[i] = e, to
         return true
       end
       if type(e) == "table" and ((e.rows and swap(e.rows)) or (e.cols and swap(e.cols))) then
@@ -148,7 +150,12 @@ local function with_region(layout)
   if type(out) ~= "table" or not swap(out) then
     return nil
   end
-  return out
+  return out, taken
+end
+
+-- The layout with the region in the prompt's place, and the prompt's entry.
+local function with_region(layout)
+  return swapped(layout, "prompt", REGION)
 end
 
 -- Drawing -----------------------------------------------------------------------
@@ -333,11 +340,21 @@ end
 
 -- Opening and closing the field -------------------------------------------------
 
--- Undo what opening changed to the layout: only if it is still ours, so a
--- config that changed the layout meanwhile keeps its change.
+-- Undo what opening changed to the layout. Still ours: the one before it.
+-- Rebuilt by someone who kept the region (the windows plugin, when its
+-- windows change): the prompt back where the region is now. A config that
+-- replaced the layout meanwhile keeps its change.
 local function restore_layout(saved)
-  if saved.our_layout and bone.ui.layout == saved.our_layout then
+  if not saved.our_layout then
+    return
+  end
+  if bone.ui.layout == saved.our_layout then
     bone.ui.layout = saved.layout
+    return
+  end
+  local back = swapped(bone.ui.layout or {}, REGION, copy(saved.prompt or "prompt"))
+  if back then
+    bone.ui.layout = back
   end
 end
 
@@ -345,7 +362,7 @@ local function show(cur, snap)
   local style = prompt_style(bone.ui.prompt)
   setup_groups(style.bg)
   local saved = { layout = bone.ui.layout, draft = snap and snap.draft or bone.prompt.get() }
-  saved.our_layout = with_region(bone.ui.layout or DEFAULT_LAYOUT)
+  saved.our_layout, saved.prompt = with_region(bone.ui.layout or DEFAULT_LAYOUT)
   cur.style = style
   cur.saved = saved
   if saved.our_layout then

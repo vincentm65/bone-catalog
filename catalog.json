@@ -3,7 +3,7 @@
     "name": "ask_user",
     "title": "Ask User",
     "kind": "plugin",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "description": "Ask the user questions in the terminal prompt or a desktop window, like the first bone",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -14,7 +14,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "f707c7de1d51360754f1a0b5eef8691f1f8e53ac1a4469235c6cf4e17a7a8816"
+        "sha256": "bfe4bac69b93e1b5af1457b42360e08c5d42fb2b9b3011b72d2a1774110529cc"
       },
       {
         "path": "core.lua",
@@ -26,11 +26,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "8c2c7377ae19bb6196898a5960f43dd29f7eb220eaf471a82e9e01c11f3cec4b"
+        "sha256": "77314b875d44bbab18ef1d9b9a0568dfacbad34b26a42641da06c443c529696c"
       },
       {
         "path": "tui.lua",
-        "sha256": "a6a2ee6a28128f746fa3fa54a5a96312530d4c3cf4eebd777fb8e0ed15729d43"
+        "sha256": "2c688c7dfaa20e6246db7a585d87671958d1e3af20b26c75f1dcef02fbcec405"
       },
       {
         "path": "ui.lua",
@@ -1133,7 +1133,7 @@
     "name": "windows",
     "title": "Windows",
     "kind": "plugin",
-    "version": "1.8.0",
+    "version": "1.9.0",
     "description": "Tiled chat windows and tabs of layouts, in the terminal and the desktop app: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -1143,7 +1143,7 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "91f5f542d25d406e90800ca737777c791314cbc52ab166f11a59b8d76e05c116"
+        "sha256": "339c18ba351917524b1749ce428b479825fe4630c163f71fd361c2d4b46f62b7"
       },
       {
         "path": "gui.lua",
@@ -1155,15 +1155,15 @@
       },
       {
         "path": "lua/windows/tree.lua",
-        "sha256": "e2cc56671809dbc78cdec9557612eecf90c86ee421569c0f46a0b346fa3f3a3d"
+        "sha256": "e8449e35ced139ca7cf94655fa24d04c75d3901a5a5a015368536519a338cf54"
       },
       {
         "path": "manifest.json",
-        "sha256": "bd7b6814b5721027efe56d8ab2033c74e736bfdd0a9af6149ad57cffb13c7d96"
+        "sha256": "243fcf2a1129be93f037d7ed3a004fa470ee1ca435a35be8dad3a7715bd0dcb4"
       },
       {
         "path": "tui.lua",
-        "sha256": "88ecc81a73fa40e51a01f1d6d38face46d06adacc81c1e32b167e777f9274b6a"
+        "sha256": "6300c4bdccd150621b8ea0fa86605499990ae8cde2484676705db66f75993a4a"
       }
     ]
   },

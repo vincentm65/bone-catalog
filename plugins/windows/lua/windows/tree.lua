@@ -713,6 +713,54 @@ function M.new(fe)
     if ev.session_id ~= current_sid() then unread[ev.session_id] = true end
   end)
 
+  -- A chat in a window you are not in asks you something (any bone.ask: a
+  -- question, an approval): focus its window, so it is asked where you
+  -- look. Not while the chat you are in waits on you itself; the other
+  -- window is focused once that is answered.
+  local asks = {} -- { ask_id, sid }, oldest first
+  local function waiting(sid)
+    for _, a in ipairs(asks) do
+      if a.sid == sid then return true end
+    end
+    return false
+  end
+  -- Focus the window showing session `sid`, in another tab too. False when
+  -- no window shows it.
+  local function focus_asker(sid)
+    if switching or not W.root or sid == nil then return false end
+    local id = W.win_of(sid)
+    if not id then
+      local i = elsewhere("sid", sid)
+      if not i then return false end
+      W.tab_go(i)
+      id = W.win_of(sid)
+      if not id then return false end
+    end
+    if id ~= W.here() then focus(id) end
+    return true
+  end
+  bone.on("ask/requested", function(ev)
+    if ev.ask_id == nil then return end
+    for _, a in ipairs(asks) do
+      if a.ask_id == ev.ask_id then return end
+    end
+    asks[#asks + 1] = { ask_id = ev.ask_id, sid = ev.session_id }
+    local here = current_sid()
+    if here ~= nil and here ~= ev.session_id and waiting(here) then return end
+    focus_asker(ev.session_id)
+  end)
+  bone.on("ask/resolved", function(ev)
+    local sid
+    for i = #asks, 1, -1 do
+      if asks[i].ask_id == ev.ask_id then sid = table.remove(asks, i).sid end
+    end
+    -- Yours is answered: on to the next window that waits.
+    if sid == nil or sid ~= current_sid() or waiting(sid) then return end
+    for _, a in ipairs(asks) do
+      if focus_asker(a.sid) then return end
+    end
+  end)
+
   bone.on("session/deleted", function(ev)
     if not W.root then return end
     if W.win_of(ev.session_id) then return W.close(W.win_of(ev.session_id)) end

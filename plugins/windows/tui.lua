@@ -24,8 +24,9 @@ local ok, terminal = pcall(require, "bone.ui.terminal")
 if not ok then terminal = nil end
 
 -- The layout without windows, the one last assigned, and each split by its
--- path in the assigned layout (for separators from bone.ui.geometry).
-local base, applied, splits, below = nil, nil, {}, {}
+-- path in the assigned layout (for separators from bone.ui.geometry). The
+-- rows under the base's chat start after its row `below_at`.
+local base, applied, splits, below, below_at = nil, nil, {}, {}, 0
 local HSEP = { size = 1, render = function() return { { { fill = "─", hl = "WinSeparator" } } } end }
 local drag -- { kind = "cols" | "rows" | "move", ... } while the mouse holds something
 local drop_ids, drop_key = {}, nil -- the outline shown while a window is dragged
@@ -112,12 +113,55 @@ local function has(n, pat)
   end
 end
 
+local function leaf_name(e)
+  if type(e) == "table" then return e[1] end
+  return e
+end
+
+-- The focused chat's window in a layout we built: its title, the bare
+-- "chat", then the rows from under the base's chat.
+local function focused_rows(n)
+  if type(n) ~= "table" then return nil end
+  local rows = n.rows
+  if rows and type(rows[1]) == "string" and rows[1]:find("^wm_bar:") and leaf_name(rows[2]) == "chat" then
+    return rows
+  end
+  for _, c in ipairs(n.rows or n.cols or n) do
+    local found = focused_rows(c)
+    if found then return found end
+  end
+end
+
+-- Someone else swapped a row under the focused chat in a layout we built
+-- (ask_user puts its question where the prompt was). Keep the swap in the
+-- base, so the windows drawn next have it too; putting the row back is
+-- kept the same way. Any other change to our layout is not kept.
+local function fold(layout)
+  local rows = focused_rows(layout)
+  if not rows or #rows ~= #below + 2 then return end
+  local out
+  for k, e in ipairs(below) do
+    local now = rows[k + 2]
+    if leaf_name(now) ~= leaf_name(e) then
+      if not out then
+        out = {}
+        for key, v in pairs(base or DEFAULT) do out[key] = v end
+      end
+      out[below_at + k] = now
+    end
+  end
+  if out then base = out end
+end
+
 function fe.apply()
   for name in pairs(bone.ui.regions) do
     if name:find("^wm_hsep:") then bone.ui.regions[name] = nil end
   end
-  -- Someone else changed the layout: put windows in it, unless it was built on ours (nesting them).
-  if bone.ui.layout ~= applied and not has(bone.ui.layout or {}, "^wm_bar:") then base = bone.ui.layout end
+  -- Someone else changed the layout: put windows in it, unless it was built
+  -- on ours (nesting them); then keep only a swapped row under the chat.
+  if bone.ui.layout ~= applied then
+    if not has(bone.ui.layout or {}, "^wm_bar:") then base = bone.ui.layout else fold(bone.ui.layout) end
+  end
   splits = {}
   local zoomed = W.zoomed
   local zoomed_term = zoomed and W.wins[zoomed] and W.wins[zoomed].panel
@@ -128,7 +172,7 @@ function fe.apply()
     shown = (zoomed_term or (tabbed and zoomed)) and W.leaf(zoomed) or W.root
     local rows, at = base or DEFAULT, 0
     repeat at = at + 1 until at >= #rows or has(rows[at], "^chat$")
-    below = { unpack(rows, at + 1) }
+    below, below_at = { unpack(rows, at + 1) }, at
     applied = {}
     for i = 1, at do applied[i] = subst(rows[i], { i }) end
   end
@@ -181,7 +225,14 @@ function fe.shutdown()
     terminal.open = term_open
     terminal.passthrough[require("windows.tree").PREFIX] = nil
   end
-  if W.root and bone.ui.layout == applied then bone.ui.layout = base end
+  if W.root then
+    local now = bone.ui.layout
+    if now ~= applied and has(now or {}, "^wm_bar:") then
+      fold(now)
+      now = applied
+    end
+    if now == applied then bone.ui.layout = base end
+  end
 end
 
 W = require("windows.tree").new(fe)
