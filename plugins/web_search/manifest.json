@@ -1,5 +1,5 @@
 {
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Search the web with DuckDuckGo (real results through ddgs when uv is installed)",
   "capabilities": ["tool", "network", "system"],
   "min_bone_version": "3.0.4",

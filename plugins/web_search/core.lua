@@ -17,8 +17,14 @@ end
 local SEARCH_PY = [[
 import json, sys
 from ddgs import DDGS
-req = json.load(sys.stdin)
-for r in DDGS().text(req["q"], max_results=req["n"]):
+req, rows = json.load(sys.stdin), []
+for _ in range(3):  # each try asks other engines; blocked ones come back empty
+    try:
+        rows = DDGS().text(req["q"], max_results=req["n"])
+        break
+    except Exception as e:
+        if "No results" not in str(e): raise
+for r in rows:
     print(json.dumps(r))
 ]]
 
@@ -39,7 +45,7 @@ local function ddgs_search(query, limit)
     return nil, "web search timed out"
   end
   if r.code ~= 0 then
-    return nil, "web search failed: " .. tostring(r.stderr or ""):sub(-300)
+    return nil, "web search failed: " .. (tostring(r.stderr or ""):match("([^\n]+)%s*$") or "")
   end
   local rows = {}
   for line in tostring(r.stdout or ""):gmatch("[^\n]+") do
@@ -48,7 +54,7 @@ local function ddgs_search(query, limit)
       rows[#rows + 1] = string.format("%d. %s\n   %s\n   %s", #rows + 1, item.title or "", item.href or "", item.body or "")
     end
   end
-  return #rows > 0 and table.concat(rows, "\n") or "No results found."
+  return #rows > 0 and table.concat(rows, "\n") or "No results found. Try fewer, broader terms."
 end
 
 --- DuckDuckGo's Instant Answer endpoint: topics and an abstract, if any.
