@@ -2,49 +2,50 @@
 
 Delegate tasks to sub-agents that run in sessions of their own.
 
-The `subagent` tool starts a session owned by the calling tool call, runs the
-task there with the same tools, and returns the sub-agent's final answer.
-Several calls in one reply run at the same time; sub-agents may start
-sub-agents two levels deep by default. Bone's TUI lists running sub-agents under the
-prompt; click one (or select it and press enter) to open its transcript.
+The `subagent` tool starts a session owned by the calling tool call and runs
+the task there with the same tools. Sub-agents may start sub-agents two
+levels deep by default. Bone lists running sub-agents under the prompt; click
+one (or select it and press enter) to open its transcript.
 
-## Following up, messaging and background work
+## Background work, names and messages
 
-Every answer ends with the agent's handle, e.g. `[agent 1a2b3c4d]`.
-
-- **Follow up:** pass the handle as `session` to give an idle agent another
-  task. It keeps everything it learned the first time.
-- **Message:** if that agent is still working, the message is slipped into its
-  current turn and the call returns at once. Agents working for the same
-  top-level session can message each other the same way, and their main chat
-  (it gets the message mid-turn, or starts a turn for it). An agent too deep
-  to start new agents can still message.
-- **List:** `list = true` shows who the caller can message, with handles and
-  busy/idle: the agents on its task, plus its main chat for an agent. It is
-  asked for, not put in the tool description, so the provider's prompt cache
-  is not broken each time an agent starts.
+- **Always in the background:** a call from a chat returns at once and the
+  agent works on its own; the chat stays free for you. Several run at the
+  same time.
+- **One answer per turn:** the agents a chat starts in one turn answer
+  together, in one message, once the last of them is done. It starts a turn
+  for an idle chat, or joins the running one. Bone draws no row for it: each
+  agent's own row in the chat shows how it went, and opens its report.
+- **Names:** the model names each agent (`name`, e.g. `auth-audit`); a name
+  already used on the task gets `-2`, `-3`. There are no built-in names.
+  The chat the task started in is `main`.
+- **Message:** pass a name as `to`. A busy agent reads the message before its
+  next step; an idle one takes it as more work and answers again (with the
+  chat's other answers that turn). Agents can message each other and `main`
+  the same way; messages read `From <name>:`. An agent too deep to start new
+  agents can still message.
+- **List:** `list = true` shows who the caller can message, busy or idle: the
+  agents on its task, plus `main` for an agent. It is asked for, not put in
+  the tool description, so the provider's prompt cache is not broken each
+  time an agent starts.
 - **Other chats:** with **Message other chats** on (`subagent.cross_session`,
   off by default), a chat's agent can also list and message your other chats
-  on the same core. The list shows busy chats and idle ones with a turn in the
-  last 30 minutes, at most 10 (both settings); older chats are counted and
-  still reachable by handle. Sub-agents never reach other chats.
-- **Background:** a call from the main chat waits for the answer, but if you
-  write while it works, the call returns, the main agent answers you, and the
-  agent carries on in the background. `background = true` returns at once.
-  A background answer arrives in the calling session as a message when the
-  agent is done. Cancelling the main chat while it waits stops the agent at
-  its next step. Agents started by agents always wait.
-- **Failures** return what the agent wrote before it stopped, plus its handle,
-  so it can be resumed.
+  on the same core, by the handle the list shows. The list shows busy chats
+  and idle ones with a turn in the last 30 minutes, at most 10 (both
+  settings). Sub-agents never reach other chats.
+- **Agents' own agents wait:** an agent has no user to answer, so agents it
+  starts, and idle agents it messages, answer in the call itself.
+- **Failures** say what the agent wrote before it stopped; message it by name
+  to resume it.
 
 ## Choosing the provider and model
 
 The model may pass `provider` and `model` when you ask for them ("use the fast
 provider for this"); the tool lists your configured providers. The call wins
-over the named agent's settings, which win over the defaults below. A provider
+over the agent setup's settings, which win over the defaults below. A provider
 that isn't configured, or one that fails while the agent runs, falls back to
-those defaults, and the answer says so. The choice is kept for the run only:
-after a core restart the agent returns to its defaults.
+those defaults, and the answer says so. The agent's session is made on that
+model, so its row in the chat and its own status line name it.
 
 ## Defaults
 
@@ -55,7 +56,7 @@ Configure defaults in `/config` → **Subagents**. Settings are saved under
 | --- | --- | --- |
 | Maximum nesting depth | 2 | 0 disables delegation; 1 direct children only; 2 permits grandchildren. |
 | Allow nested delegation | on | Turning off clamps depth to 1; it never overrides depth 0. |
-| Maximum concurrent subagents | 8 | Global across sessions, including nested children. 0 means unlimited. Extra calls from the main agent wait for a free slot; extra nested calls fail immediately, since waiting there could deadlock. |
+| Maximum concurrent subagents | 8 | Global across sessions, including nested children. 0 means unlimited. An extra call from the main agent waits for a free slot before it returns; extra nested calls fail immediately, since waiting there could deadlock. |
 | Default provider | blank | Configured provider entry name; blank uses the child session's provider. |
 | Default model | blank | Model ID supported by that provider; blank uses its configured model. |
 | Default instructions | blank | Prepended to the normal system prompt; blank uses the built-in subagent role. |
@@ -70,9 +71,14 @@ not change Bone's separate limit of eight parallel tool calls per model reply.
 Lowering the cap does not cancel existing children, but blocks new launches.
 Cancelled children retain their slots until their turns finish.
 
-## Custom agents
+## Agent setups
 
-**`/subagents`** opens a popup: agents on the left, the selected one's settings
+Optional, and yours: a setup is a description, system prompt, provider,
+model and tool list the model can pick with `agent` when a task fits it.
+None ship with the plugin. An agent started from a setup is named after it
+unless the model names it.
+
+**`/subagents`** opens a popup: setups on the left, the selected one's settings
 on the right. Every change is saved at once.
 
 - `n` creates an agent (a name, then its fields); `r` renames, `d` deletes.
@@ -104,11 +110,10 @@ bone.config.subagents.reviewer = {
 
 - core half: yes
 - UI: yes, one view for the terminal and the desktop app (`/subagents` editor; click an agent or a field, or New / Rename / Delete; owned sessions shown by Bone itself)
-- Chat (`tui.lua`, `gui.lua`): a background agent's row shows as running, with
-  its own clock, until the agent finishes. The plugin's own messages (an
-  agent's report, a message between agents or chats) are sent with source
-  `"agent"`, which Bone draws as a short report you can click open, not as
-  something you typed.
+- Chat: drawn by Bone. Each agent's row is live (running, its model, tokens
+  and time) until it finishes. The answers message is sent with source
+  `"result"`, which Bone does not draw; messages from agents and chats use
+  source `"agent"`, which Bone draws as one line, not as something you typed.
 - needs a Bone 3 core with `bone.session.create` / `bone.session.run`
 - Per-agent/default model overrides and reliable cancellation cleanup require
   a core with request-hook `model` support and cancellation-safe `turn_end` hooks.

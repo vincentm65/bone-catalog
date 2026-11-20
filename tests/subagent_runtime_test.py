@@ -25,10 +25,10 @@ NAMED_SYSTEM = "SAVED REVIEWER INSTRUCTIONS: inspect carefully."
 DEFAULT_SYSTEM = "DEFAULT CHILD INSTRUCTIONS: be brief."
 
 
-def tool_call(call_id, prompt, name=None):
+def tool_call(call_id, prompt, setup=None):
     args = {"task": prompt, "prompt": prompt}
-    if name is not None:
-        args["name"] = name
+    if setup is not None:
+        args["agent"] = setup
     return {"index": 0, "id": call_id, "type": "function", "function": {
         "name": "subagent", "arguments": json.dumps(args),
     }}
@@ -88,7 +88,7 @@ class ModelServer:
             assert {"read_file", "write_file", "shell", "subagent"} <= tools.keys()
             delegate = tools["subagent"]
             assert "reviewer: Saved review agent" in delegate["description"]
-            assert "name" in delegate["parameters"]["properties"]
+            assert "agent" in delegate["parameters"]["properties"]
             calls = {
                 "named case": ("review", "named child", "reviewer", "named child answer"),
                 "default case": ("default", "default child", None, "default child answer"),
@@ -96,12 +96,17 @@ class ModelServer:
                 "hold case": ("hold", "hold child", None, None),
                 "busy case": ("busy", "default child", None, "default child answer"),
             }
-            call_id, child_prompt, name, answer = calls[prompt]
+            call_id, child_prompt, setup, answer = calls[prompt]
+            # The call returns at once; the answer comes later as a message.
+            last = [m["content"] for m in messages if m["role"] == "user"][-1]
+            if last != prompt:
+                assert (answer or "was stopped") in last, last
+                return {"content": "parent final: " + prompt}
             if not results:
-                return {"tool_calls": [tool_call(call_id, child_prompt, name)]}
+                return {"tool_calls": [tool_call(call_id, child_prompt, setup)]}
             assert len(results) == 1 and results[0]["tool_call_id"] == call_id, results
-            assert answer is not None and answer in results[0]["content"], results
-            return {"content": "parent final: " + prompt}
+            assert results[0]["content"].startswith("Started "), results
+            return {"content": "dispatched: " + prompt}
 
         if prompt == "named child":
             assert path == "/named/chat/completions", path
@@ -281,11 +286,21 @@ bone.config.subagents = {{ reviewer = {{ system = "LEGACY", provider = "parent",
                 assert next(a for a in roster if a["name"] == "reviewer")["model"] == "saved-review-model"
                 parent = bone.call("session/create")["session_id"]
 
+                def answered(session, label):
+                    # The answers join the dispatching turn or start one.
+                    deadline = time.monotonic() + TIMEOUT
+                    while time.monotonic() < deadline:
+                        messages = bone.call("session/messages", {"session_id": session})["messages"]
+                        if (messages and messages[-1].get("content") == "parent final: " + label
+                                and session not in bone.call("session/active")):
+                            return messages
+                        time.sleep(0.05)
+                    raise AssertionError("no answer for " + label + "\n" + "\n".join(mock.errors))
+
                 def run_case(session, label):
                     turn = bone.start(session, label)
                     bone.finish(session, turn)
-                    messages = bone.call("session/messages", {"session_id": session})["messages"]
-                    assert messages[-1]["content"] == "parent final: " + label, messages
+                    answered(session, label)
                     assert not mock.errors, "\n".join(mock.errors)
 
                 run_case(parent, "named case")
@@ -316,13 +331,14 @@ bone.config.subagents = {{ reviewer = {{ system = "LEGACY", provider = "parent",
                 bone.wait_event("tool/started", lambda p: p["call"]["id"] == "busy")
                 time.sleep(1)
                 assert not any(s.get("owner", {}).get("session_id") == busy_parent for s in bone.call("session/list"))
-                bone.call("turn/cancel", {"session_id": held_parent})
-                bone.finish(held_parent, held_turn, "cancelled")
+                # The held parent's turn is done; stopping its agent frees the slot.
+                bone.finish(held_parent, held_turn)
+                bone.call("turn/cancel", {"session_id": held_child["session_id"]})
                 bone.finish(held_child["session_id"], child_start["turn_id"], "cancelled")
+                answered(held_parent, "hold case")
                 mock.release.set()
                 bone.finish(busy_parent, busy_turn)
-                messages = bone.call("session/messages", {"session_id": busy_parent})["messages"]
-                assert messages[-1]["content"] == "parent final: busy case", messages
+                answered(busy_parent, "busy case")
                 assert bone.call("session/active") == []
                 # Child turn_end cleanup must free the slot for subsequent delegation.
                 run_case(bone.call("session/create")["session_id"], "default case")
@@ -332,7 +348,7 @@ bone.config.subagents = {{ reviewer = {{ system = "LEGACY", provider = "parent",
                 bone.close()
     finally:
         mock.close()
-    print("subagent: saved agents, provider/model isolation, tool restrictions, global cap and cancellation passed")
+    print("subagent: saved agents, provider/model isolation, tool restrictions, global cap, background answers and cancellation passed")
 
 
 if __name__ == "__main__":

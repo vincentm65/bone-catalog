@@ -83,7 +83,8 @@ Return only structured output: response is your assistant text; tool_calls is an
 Bone executes these tools under its own approvals and returns their results. Never claim execution before receiving a result.
 Use the tool descriptions and argument schemas in the structured-output schema.
 Ending rules: returning "tool_calls": [] ENDS your turn and hands control back to the user.
-End only when the task is fully done (verified where you can) or you are truly blocked on the user.
+End only when the task is fully done (verified where you can), you are truly blocked on the user, or
+you are waiting for a message to arrive (such as the answers of agents you started).
 If your response announces or plans further work ("now I'll...", "next..."), you MUST include the
 matching tool_calls in the same reply. Never end on an unexecuted plan, a progress note, or a
 question you could answer yourself with a tool.
@@ -410,7 +411,8 @@ local function complete(req, emit)
     sessions[sid] = s
     local again = invoke(notice("Bone notice: that reply had no tool_calls, which ends your turn, but it reads as"
       .. " unfinished work. If the task is incomplete, continue now and include the needed tool_calls."
-      .. " If it is complete, or you are truly blocked on the user, reply with an empty response and an empty"
+      .. " If it is complete, you are truly blocked on the user, or you are waiting for a message to arrive"
+      .. " (such as the answers of agents you started), reply with an empty response and an empty"
       .. " tool_calls array: the user already sees your previous reply."), inv.doc.session_id)
     if not again then discard(sid); save(); return nil end
     account(again.doc)

@@ -1,6 +1,6 @@
 -- Run from the catalog root: luajit tests/subagent_test.lua
 local hooks, tool, limit, created = {}, nil, nil, 0
-local settings, rpc, replies = {}, {}, {}
+local settings, rpc, replies, results = {}, {}, {}, {}
 local run_impl = function() return { text = "done", outcome = { status = "completed" } } end
 bone = {
   config = {},
@@ -25,7 +25,9 @@ bone = {
   },
   -- The main chat starts its agents' turns through the queue and takes the
   -- answer from turn_end; a turn that ends without one was cancelled.
-  queue = { add = function(id, text)
+  queue = { add = function(id, text, mode, images, source)
+    -- A chat's agents answer it in one message; record it.
+    if source == "result" then results[#results + 1] = { to = id, text = text } return end
     local r, err = bone.session.run(id, text)
     if err then error(err, 0) end
     if r then
@@ -46,7 +48,10 @@ local function visible(id)
   local t = result.tools[1]
   return t.name == "subagent" and not t.description:find("cannot start new", 1, true)
 end
-local function done(result) return type(result) == "string" and result:match("^done\n\n%[agent ") ~= nil end
+-- A chat's call returns at once; an agent's waits for the answer.
+local function done(result)
+  return type(result) == "string" and (result:match("^Started ") or result:match(" finished:\n\ndone$")) ~= nil
+end
 local function spawn(id, allowed)
   local before = created
   local result, err = tool.run({ task = "test", prompt = "test" }, { session_id = id })
@@ -118,7 +123,7 @@ settings.agents = { reviewer = {
   description = "Review bugs", system = "Review carefully", provider = "precise",
   model = "large-model", tools = { "read_file" },
 } }
-assert(done(tool.run({ name = "reviewer", prompt = "test" }, { session_id = "root" })))
+assert(done(tool.run({ agent = "reviewer", prompt = "test" }, { session_id = "root" })))
 local reviewer = "child" .. created
 local review_request = hooks.request({ session_id = reviewer, tools = { { name = "read_file" }, { name = "shell" } } })
 assert(review_request.provider == "precise" and review_request.model == "large-model")
@@ -126,12 +131,12 @@ assert(#review_request.tools == 1)
 assert(hooks.system({ session_id = reviewer, prompt = "base" }).prompt == "Review carefully\n\nbase")
 assert(rpc["subagent/list"]()[1].model == "large-model")
 local named_tool = { name = "subagent", description = "delegate", parameters = { properties = {} } }
-assert(hooks.request({ session_id = "root", tools = { named_tool } }).tools[1].parameters.properties.name)
+assert(hooks.request({ session_id = "root", tools = { named_tool } }).tools[1].parameters.properties.agent)
 assert(named_tool.description:find("reviewer: Review bugs", 1, true))
 settings.agents, bone.config.subagents = {}, {}
-assert(hooks.request({ session_id = "root", tools = { named_tool } }).tools[1].parameters.properties.name == nil)
+assert(hooks.request({ session_id = "root", tools = { named_tool } }).tools[1].parameters.properties.agent == nil)
 settings.agents = { researcher = {} }
-assert(hooks.request({ session_id = "root", tools = { named_tool } }).tools[1].parameters.properties.name)
+assert(hooks.request({ session_id = "root", tools = { named_tool } }).tools[1].parameters.properties.agent)
 settings.agents = { bad = { tools = "wrong" } }
 assert(hooks.request({ session_id = "root", tools = {} }).deny)
 result, err = tool.run({ prompt = "test" }, { session_id = "root" })
@@ -177,15 +182,15 @@ spawn("root", true)
 
 -- Named specs are snapshots; explicit wildcard and deny-all override defaults.
 bone.config.subagents.legacy = { tools = { "read_file" } }
-assert(done(tool.run({ name = "legacy", prompt = "test" }, { session_id = "root" })))
+assert(done(tool.run({ agent = "legacy", prompt = "test" }, { session_id = "root" })))
 local legacy = "child" .. created
 bone.config.subagents.legacy.tools[1] = "*"
 assert(hooks.tool_call({ session_id = legacy, name = "shell" }).deny)
 settings.tools = "read_file"
 settings.agents = { all = { tools = { "*" } }, none = { tools = {} } }
-assert(done(tool.run({ name = "all", prompt = "test" }, { session_id = "root" })))
+assert(done(tool.run({ agent = "all", prompt = "test" }, { session_id = "root" })))
 assert(hooks.tool_call({ session_id = "child" .. created, name = "shell" }) == nil)
-assert(done(tool.run({ name = "none", prompt = "test" }, { session_id = "root" })))
+assert(done(tool.run({ agent = "none", prompt = "test" }, { session_id = "root" })))
 assert(hooks.tool_call({ session_id = "child" .. created, name = "read_file" }).deny)
 settings.tools, settings.agents = nil, nil
 

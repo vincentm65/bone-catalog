@@ -128,7 +128,7 @@
     "name": "claude-code",
     "title": "Claude Code",
     "kind": "plugin",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "description": "Claude subscription model provider through your installed Claude Code CLI; Bone retains tools and approvals",
     "min_bone_version": "3.0.0",
     "capabilities": [
@@ -142,11 +142,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "2acc5ceb2777c57984131941dcd22de59ef36a7e9beae8ccffeb9d60f43ed072"
+        "sha256": "6dcec3b621f29877aa5bfd7fd0e17b220d014e747138208af0cff2ecbbb87745"
       },
       {
         "path": "manifest.json",
-        "sha256": "d47379e52c9f164b84c397bb8a572441f817e03f8679a26eaa9b885c42d7ec91"
+        "sha256": "94f736eaef998ae04e77b3f298c417e1f634a0720930f23009cb74d719515d32"
       },
       {
         "path": "ui.lua",
@@ -885,7 +885,7 @@
     "name": "subagent",
     "title": "Subagents",
     "kind": "plugin",
-    "version": "2.9.4",
+    "version": "3.0.0",
     "description": "Delegate tasks to sub-agents that run in sessions of their own",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -895,23 +895,15 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "367d4f7b8b36fcca440c187976df5b624cc3a5ab8d879d9175e5aee91bf3ebed"
+        "sha256": "7d9ece05d6db5a89e9e9808964d29f9e31a1bed2f8b54c21a5fd47a4d3ca4dd3"
       },
       {
         "path": "core.lua",
-        "sha256": "b5b986834ffa5c9787c84daa36ca87d23c8d1f20946a6c109aa04230b7d9f0f5"
-      },
-      {
-        "path": "gui.lua",
-        "sha256": "bccadf8f507852fd8928e844b63561abf76b654f9715338ca584caab0078d35f"
+        "sha256": "e5e2e32e91641d8b1fafcb787d7f0e8614cf6fb8946e95d326fc00c25e0860ad"
       },
       {
         "path": "manifest.json",
-        "sha256": "483bbd320de804a973bce7e5f740a7dbb5cbfc0f32b82e5807bdbaa98596890e"
-      },
-      {
-        "path": "tui.lua",
-        "sha256": "2ea7c8308b62a3527586a267bbef8bda7f43bd141ac4f6caecf59036d61b9cda"
+        "sha256": "ad59daf330aacd06ffae96e06e1d1056a06e2e7d776a2bd78466f70911e60335"
       },
       {
         "path": "ui.lua",
