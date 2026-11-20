@@ -132,6 +132,24 @@ local function default_shell()
   return { os.getenv("ComSpec") or "cmd.exe" }
 end
 
+--- What happens when pane `p`'s program ends.
+local function on_exit_of(p)
+  return function(r)
+    if not active or panes[p.id] ~= p then return end
+    if p.command then
+      -- A command's last screen stays, marked, until the pane is closed.
+      p.exited = r.code or r.signal or 0
+      p.screen = p.job:screen() or p.screen
+      if r.error or (r.code and r.code ~= 0) then
+        bone.notify(r.error or ((r.cmd or "command") .. " exited with " .. tostring(r.code or ("signal " .. tostring(r.signal)))), "error")
+      end
+      redraw()
+    else
+      close_pane(p)
+    end
+  end
+end
+
 local function new_pane(opts)
   opts = opts or {}
   next_id = next_id + 1
@@ -142,20 +160,7 @@ local function new_pane(opts)
     name = "term:" .. p.id,
     pty = { width = 80, height = 24 },
     cwd = p.cwd,
-    on_exit = function(r)
-      if not active or panes[p.id] ~= p then return end
-      if p.command then
-        -- A command's last screen stays, marked, until the pane is closed.
-        p.exited = r.code or r.signal or 0
-        p.screen = p.job:screen() or p.screen
-        if r.error or (r.code and r.code ~= 0) then
-          bone.notify(r.error or ((r.cmd or "command") .. " exited with " .. tostring(r.code or ("signal " .. tostring(r.signal)))), "error")
-        end
-        redraw()
-      else
-        close_pane(p)
-      end
-    end,
+    on_exit = on_exit_of(p),
   })
   panes[p.id] = p
   return p
@@ -845,6 +850,69 @@ function M.close_all()
   close_panel()
 end
 
+-- ---- across a Lua reload --------------------------------------------------
+
+--- Tabs, splits and each pane's program, for the next configuration
+--- (bone.plugin.carry): kept in memory, never on disk. A command that ended
+--- is not handed over.
+function M.snapshot()
+  if not active or #tabs == 0 then return nil end
+  local list = {}
+  for _, p in pairs(panes) do
+    if p.job and not p.exited then
+      list[#list + 1] = { id = p.id, job = p.job.id, cwd = p.cwd, label = p.label, command = p.command or nil }
+    end
+  end
+  local function enc(node)
+    if node.pane then return { pane = node.pane.id } end
+    return { dir = node.dir, ratio = node.ratio, a = enc(node.a), b = enc(node.b) }
+  end
+  local out = { at = at, next_id = next_id, panes = list, tabs = {},
+    open = bone.ui.panel.get(ID) ~= nil, focused = bone.ui.panel.focused() == ID }
+  for _, t in ipairs(tabs) do
+    out.tabs[#out.tabs + 1] = { name = t.name, root = enc(t.root),
+      focus = t.focus and t.focus.id, zoom = t.zoom and t.zoom.id }
+  end
+  return out
+end
+
+--- Take the programs the configuration before a reload handed over, and
+--- show them as they were. A pane whose program is gone leaves its split.
+local function restore(c)
+  local by_id = {}
+  for _, s in ipairs(type(c.panes) == "table" and c.panes or {}) do
+    local p = { id = s.id, scroll = 0, cwd = s.cwd, label = s.label, command = s.command == true }
+    p.job = bone.job.adopt(s.job, { on_exit = on_exit_of(p) })
+    if p.job then
+      panes[p.id] = p
+      by_id[p.id] = p
+    end
+  end
+  local function dec(n)
+    if type(n) ~= "table" then return nil end
+    if n.pane then return by_id[n.pane] and leaf(by_id[n.pane]) end
+    local a, b = dec(n.a), dec(n.b)
+    if a and b then return { dir = n.dir, ratio = tonumber(n.ratio) or 0.5, a = a, b = b } end
+    return a or b
+  end
+  for _, s in ipairs(type(c.tabs) == "table" and c.tabs or {}) do
+    local root = dec(s.root)
+    if root then
+      local inside = {}
+      for _, p in ipairs(leaves(root)) do inside[p] = true end
+      local focus = by_id[s.focus]
+      local zoom = by_id[s.zoom]
+      tabs[#tabs + 1] = { name = s.name, root = root,
+        focus = inside[focus] and focus or leaves(root)[1], zoom = inside[zoom] and zoom or nil }
+    end
+  end
+  next_id = math.max(next_id, tonumber(c.next_id) or 0)
+  for id in pairs(panes) do next_id = math.max(next_id, id) end
+  if #tabs == 0 then return end
+  at = math.max(1, math.min(#tabs, tonumber(c.at) or 1))
+  if c.open then ensure_panel(c.focused == true) end
+end
+
 local handlers = {}
 local generation -- the token of the load that set it up
 
@@ -864,6 +932,13 @@ function M.setup(terminal_module)
   end)
   if not GUI then
     handlers[#handlers + 1] = bone.on("mouse", function(ev) return M.mouse(ev) end)
+  end
+  -- A Lua reload keeps the terminals: their programs go on, with their
+  -- screens and scrollback, unless this plugin's own files changed.
+  if bone.plugin.carry and bone.job.adopt then
+    bone.plugin.carry(M.snapshot)
+    local carried = bone.plugin.carried()
+    if type(carried) == "table" then restore(carried) end
   end
   return generation
 end

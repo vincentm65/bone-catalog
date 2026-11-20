@@ -891,7 +891,7 @@
     "name": "term",
     "title": "Terminal",
     "kind": "plugin",
-    "version": "1.4.1",
+    "version": "1.5.0",
     "description": "Terminal tabs and split panes in one panel, in the terminal and the desktop app, with mouse, scrollback and paste",
     "min_bone_version": "3.0.10",
     "capabilities": [
@@ -914,7 +914,7 @@
       },
       {
         "path": "lua/term/mux.lua",
-        "sha256": "2eaf17c273a12b8605174d7b26774fd0d9d81b1a2288ce69c5be03a19535040b"
+        "sha256": "b7028d5f571f0e48190effb081988a43801dac35f5ec01779d9732ec200e5841"
       },
       {
         "path": "lua/term/vt.lua",
@@ -922,7 +922,7 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "83ed0ea6b7900b9d4fae32e913ba774be28e47e468938faa91daf69c462ebdd6"
+        "sha256": "b3fb844a57a3c8c8601325394503de108ad9cba290e86d752e3bfcf4103b2e01"
       },
       {
         "path": "tui.lua",
@@ -1133,7 +1133,7 @@
     "name": "windows",
     "title": "Windows",
     "kind": "plugin",
-    "version": "1.9.0",
+    "version": "1.10.0",
     "description": "Tiled chat windows and tabs of layouts, in the terminal and the desktop app: several sessions on screen at once, split, resized, moved and focused with keys or the mouse",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -1155,11 +1155,11 @@
       },
       {
         "path": "lua/windows/tree.lua",
-        "sha256": "e8449e35ced139ca7cf94655fa24d04c75d3901a5a5a015368536519a338cf54"
+        "sha256": "e97fe6be97790b0a1fc949f1cdf4e34ffde437b5fd2f78738cd43533527b0341"
       },
       {
         "path": "manifest.json",
-        "sha256": "243fcf2a1129be93f037d7ed3a004fa470ee1ca435a35be8dad3a7715bd0dcb4"
+        "sha256": "0eb796d9b3e918c856b1b564c5311548b21d792955c89fd443fc90dc6e68ecaf"
       },
       {
         "path": "tui.lua",

@@ -26,6 +26,9 @@ function M.new(fe)
   local tabs, cur = { {} }, 1
   W.tabs = tabs
   local st = fe.state
+  -- The layout the configuration before a Lua reload handed over (terminal
+  -- windows too), else nil: kept in memory, never on disk.
+  local carried = bone.plugin.carried and bone.plugin.carried() or nil
   local wins, unread = W.wins, W.unread
   local seq, switching, started = 0, false, false
   local broadcast, resizing = false, nil
@@ -100,17 +103,23 @@ function M.new(fe)
     return n and n.win
   end
 
-  -- Terminals are not saved: their programs end with bone.
-  local function encode(node)
+  -- Terminals are not saved: their programs end with bone. A Lua reload
+  -- hands them over in memory instead (with_panels), as the term plugin
+  -- hands over its programs, and marks the window with the keyboard.
+  local function encode(node, with_panels)
     if node.win then
       local win = wins[node.win]
-      if win.panel then return nil end
+      local active = with_panels and node.win == W.active or nil
+      if win.panel then
+        if not with_panels then return nil end
+        return { panel = win.panel, w = node.w, active = active, zoom = node.win == W.zoomed or nil }
+      end
       local chat = bone.chat.session({ session = tostring(win.chat) })
       return { sid = chat and chat.session_id or win.sid, chat = win.chat, w = node.w,
-        focus = node.win == W.chatwin or nil, zoom = node.win == W.zoomed or nil }
+        focus = node.win == W.chatwin or nil, zoom = node.win == W.zoomed or nil, active = active }
     end
     local kids = {}
-    for _, k in ipairs(node.kids) do kids[#kids + 1] = encode(k) end
+    for _, k in ipairs(node.kids) do kids[#kids + 1] = encode(k, with_panels) end
     if #kids <= 1 then
       if kids[1] then kids[1].w = node.w end
       return kids[1]
@@ -137,6 +146,22 @@ function M.new(fe)
       if i ~= here then stash(tabs[i]) load(tabs[here]) end
     end
     st.tree, st.tabs, st.tab = nil, out, at or 1
+  end
+
+  -- Every tab, for a Lua reload (bone.plugin.carry): terminal windows too.
+  -- Before it started, what it was handed itself.
+  function W.snapshot()
+    if not W.root then return carried end
+    sync()
+    local out, at = {}, nil
+    local here = cur
+    for i = 1, #tabs do
+      if i ~= here then stash(tabs[here]) load(tabs[i]) end
+      local e = encode(W.root, true)
+      if e then out[#out + 1] = e if i == here then at = #out end end
+      if i ~= here then stash(tabs[i]) load(tabs[here]) end
+    end
+    return { tabs = out, tab = at or 1 }
   end
 
   local function apply()
@@ -592,11 +617,25 @@ function M.new(fe)
 
   local function restore(t, reloading, shown)
     if shown == nil then shown = true end
+    local active
     local function walk(n)
       if n.kids then
         local kids = {}
         for _, k in ipairs(n.kids) do kids[#kids + 1] = walk(k) end
+        -- A split left with one window (its terminal did not come back)
+        -- gives way to it.
+        if #kids == 0 then return nil end
+        if #kids == 1 then kids[1].w = n.w or 1 return kids[1] end
         return { dir = n.dir, w = n.w or 1, kids = kids }
+      end
+      if n.panel then
+        -- A terminal the reloaded configuration opened again; one that did
+        -- not come back takes its window with it.
+        if not bone.ui.panel.get(n.panel) then return nil end
+        local id = new_win(nil, n.panel)
+        if n.active then active = id end
+        if n.zoom then W.zoomed = id end
+        return { win = id, w = n.w or 1 }
       end
       -- Buffer numbers survive a Lua reload, including chats with no session
       -- yet. They are process-local, so never trust them on a fresh start.
@@ -605,14 +644,18 @@ function M.new(fe)
       local id = new_win(n.sid, nil, chat)
       if n.focus then W.chatwin = id end
       if n.zoom then W.zoomed = id end
+      if n.active then active = id end
       return { win = id, w = n.w or 1 }
     end
-    W.root = walk(t)
-    W.chatwin = W.chatwin or first_win(W.root)
-    W.active = W.chatwin
+    W.root = walk(t) or { win = new_win(current_sid(), nil, shown and bone.chat.session().chat or nil), w = 1 }
+    if not W.chatwin then
+      local n = locate(W.root, function(x) return x.win and not wins[x.win].panel end)
+      W.chatwin = n and n.win
+    end
+    W.active = active or W.chatwin or first_win(W.root)
     if not shown then return end
     -- Show the focused window's session unless a chat was already chosen.
-    local want, s = wins[W.chatwin].sid, bone.chat.session()
+    local want, s = W.chatwin and wins[W.chatwin].sid, bone.chat.session()
     if not reloading and want and s and s.new and s.items == 0 then
       changing(function() bone.api.open_session(want) end)
     end
@@ -626,25 +669,39 @@ function M.new(fe)
     -- Defer activation so a rejected candidate cannot create/switch chats.
     bone.defer(0, function()
       if fe.start then fe.start() end
-      if type(st.tabs) == "table" and #st.tabs > 1 then
+      -- After a Lua reload, the layout handed over in memory (terminals
+      -- included); else the one saved on disk.
+      local saved, reloading = st, ev and ev.reload
+      if type(carried) == "table" then saved, reloading = carried, true end
+      carried = nil
+      if type(saved.tabs) == "table" and #saved.tabs > 1 then
         -- Each saved tab: built in W, then put away; the saved shown one last.
-        local want = math.max(1, math.min(#st.tabs, tonumber(st.tab) or 1))
+        local want = math.max(1, math.min(#saved.tabs, tonumber(saved.tab) or 1))
         tabs[1] = {}
-        for i = 1, #st.tabs do
+        for i = 1, #saved.tabs do
           if i > 1 then tabs[i] = {} end
         end
-        for i, t in ipairs(st.tabs) do
+        for i, t in ipairs(saved.tabs) do
           if i ~= want then
             W.chatwin, W.zoomed = nil, false
-            restore(t, ev and ev.reload, false)
+            restore(t, reloading, false)
+            -- A terminal in a tab not shown is out of sight.
+            for _, w in pairs(wins) do
+              if w.panel and not w.hidden then
+                w.hidden = true
+                pcall(bone.ui.panel.update, w.panel, { hidden = true })
+              end
+            end
             stash(tabs[i])
           end
         end
         cur = want
         W.chatwin, W.zoomed = nil, false
-        restore(st.tabs[want], ev and ev.reload, true)
-      elseif type(st.tree) == "table" then
-        restore(st.tree, ev and ev.reload)
+        restore(saved.tabs[want], reloading, true)
+      elseif type(saved.tabs) == "table" and type(saved.tabs[1]) == "table" then
+        restore(saved.tabs[1], reloading)
+      elseif type(saved.tree) == "table" then
+        restore(saved.tree, reloading)
       else
         W.root = { win = new_win(current_sid(), nil, bone.chat.session().chat), w = 1 }
         W.chatwin, W.active = W.root.win, W.root.win
@@ -796,6 +853,8 @@ function M.new(fe)
 
   bone.on("ready", start)
   bone.defer(0, start) -- loaded after startup (/plugins load windows)
+
+  if bone.plugin.carry then bone.plugin.carry(function() return W.snapshot() end) end
 
   bone.plugin.on_shutdown(function()
     W.save()
