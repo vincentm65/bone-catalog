@@ -152,8 +152,13 @@ local function skill_view(item, ctx)
   local a = type(item.arguments) == "table" and item.arguments or {}
   local name = type(a.name) == "string" and a.name ~= "" and a.name or "?"
   if ctx.summary then
-    -- Its words in a summary line ("Loaded the money skill, read 2 files").
-    return { summary = item.is_error and ("looked for a " .. name .. " skill") or ("loaded the " .. name .. " skill") }
+    -- Its words in a summary line ("Loaded the money skill, read 2 files");
+    -- several skills are one phrase ("Loaded 3 skills") on a bone that
+    -- reads `many`, and a phrase each on one that does not.
+    if item.is_error then
+      return { summary = "looked for a " .. name .. " skill", many = "looked for %d skills" }
+    end
+    return { summary = "loaded the " .. name .. " skill", many = "loaded %d skills" }
   end
   local title = { { GUI and "Skill" or "skill", "ToolName" }, { "  " .. name, GUI and "ToolPath" or "ToolArgs" } }
   local open = item.done and ctx.tool_expanded and not item.is_error

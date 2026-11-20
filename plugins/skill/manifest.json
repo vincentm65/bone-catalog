@@ -1,6 +1,6 @@
 {
   "title": "Skills",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Inject and load skills from configured directories",
   "capabilities": [
     "skill",

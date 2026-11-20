@@ -39,5 +39,6 @@ you to finish. `/skill name task` skips the picker (names complete; an unknown
 name opens the picker and keeps the task). Either frontend gets the list
 through `bone.rpc.call("skills.list")` (`{ skills, dirs }`). In the chat a
 call reads `skill  name`, and a summary line "Loaded the name skill" (on a bone
-whose tool views can name summary lines); the skill's text shows when the call
-is opened.
+whose tool views can name summary lines), or "Loaded 3 skills" for several (on
+a bone whose summary lines read a view's `many` phrase; an older one names each);
+the skill's text shows when the call is opened.
