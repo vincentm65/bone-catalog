@@ -38,21 +38,30 @@ local function utf8(n)
   return n < 128 and string.char(n) or string.char(192 + math.floor(n / 64), 128 + n % 64)
 end
 
---- xterm's report of a mouse action at `col`, `row` of screen `s` (nil when
---- the program does not ask for the mouse).
+--- xterm's report of a mouse action ("down", "up", "drag" or "wheel") at
+--- `col`, `row` of screen `s` (nil when the program does not ask for the
+--- mouse, or for that action).
 function M.mouse(s, action, button, col, row)
   local mode = s and s.mouse
   if mode == nil or mode == "none" then return nil end
   if action == "up" and mode == "press" then return nil end
   if action == "drag" and mode ~= "button_motion" and mode ~= "any_motion" then return nil end
+  local sgr = s.mouse_encoding == "sgr"
   local code
   if action == "wheel" then code = button == "up" and 64 or 65
-  else
+  elseif action == "down" or action == "up" or action == "drag" then
     code = ({ left = 0, middle = 1, right = 2 })[button or "left"]
     if not code then return nil end
-    if action == "up" then code = 3 elseif action == "drag" then code = code + 32 end
+    -- A release names its button in SGR, where the final "m" says it is one
+    -- (tmux picks MouseUp1Pane, MouseDragEnd1Pane, … by that number, and
+    -- passes it on to the program in the pane). The older encodings have
+    -- no such letter: there 3 is the release, of whichever button.
+    if action == "up" then code = sgr and code or 3
+    elseif action == "drag" then code = code + 32 end
+  else
+    return nil
   end
-  if s.mouse_encoding == "sgr" then
+  if sgr then
     return string.format("\27[<%d;%d;%d%s", code, col, row, action == "up" and "m" or "M")
   end
   if s.mouse_encoding == "utf8" then return "\27[M" .. utf8(32 + code) .. utf8(32 + col) .. utf8(32 + row) end

@@ -130,7 +130,19 @@ assert(j.size.scroll == 0)
 assert(mouse({ panel = p.id, panel_row = 2, panel_col = 3, action = "down", button = "left" }))
 assert(j.writes[#j.writes] == "\27[<0;3;2M")
 assert(mouse({ panel = p.id, panel_row = 2, panel_col = 3, action = "up", button = "left" }))
-assert(j.writes[#j.writes] == "\27[<3;3;2m")
+assert(j.writes[#j.writes] == "\27[<0;3;2m", "an SGR release names its button: tmux binds MouseUp and MouseDragEnd by it")
+assert(mouse({ panel = p.id, panel_row = 2, panel_col = 3, action = "down", button = "right" }))
+assert(j.writes[#j.writes] == "\27[<2;3;2M")
+assert(mouse({ panel = p.id, panel_row = 2, panel_col = 3, action = "up", button = "right" }))
+assert(j.writes[#j.writes] == "\27[<2;3;2m")
+-- Pointer motion with no button is not a press of the left one.
+writes = #j.writes
+assert(not mouse({ panel = p.id, panel_row = 2, panel_col = 3, action = "move" }) and #j.writes == writes)
+-- The encodings before SGR have one release code, 3, for every button.
+j.encoding = "default"; p.spec.render({ width = 30, height = 8 })
+assert(mouse({ panel = p.id, panel_row = 2, panel_col = 3, action = "up", button = "right" }))
+assert(j.writes[#j.writes] == "\27[M##\"")
+j.encoding = nil; p.spec.render({ width = 30, height = 8 })
 -- xterm's UTF-8 mouse encoding (LuaJIT has no utf8 library): column 200 is two bytes.
 j.encoding = "utf8"; p.spec.render({ width = 30, height = 8 })
 assert(mouse({ panel = p.id, panel_row = 2, panel_col = 200, action = "down", button = "left" }))

@@ -35,8 +35,13 @@ local function groups()
   set("TermBar", { link = "Normal", default = true })
 end
 
+--- Draw the panel again. In a terminal that is a frame, not bone.ui.refresh:
+--- refresh also throws away every drawn chat item, and a key, a click or a
+--- wheel notch in a pane changes none of them.
 local function redraw()
-  if GUI then pcall(bone.gui.invalidate, 0) else pcall(bone.ui.refresh) end
+  if GUI then pcall(bone.gui.invalidate, 0)
+  elseif bone.ui.refresh_in then pcall(bone.ui.refresh_in, 0)
+  else pcall(bone.ui.refresh) end
 end
 
 -- ---- the tree --------------------------------------------------------------
@@ -634,6 +639,71 @@ end
 local BAR_H = 30
 
 local gui_drag -- { sep, x0, y0, ratio0, px } while a divider is dragged
+local gui_cell -- the cell size the panes were last drawn with
+local gui_wheel -- { px, py }: the pointer at this frame's wheel (its mouse event comes before on_scroll)
+local gui_held -- { pane, button, c, rw }: a right or middle press the program took, until its release
+
+-- The wheel's travel comes in points, a frame's worth at a time. A step (one
+-- report to the program, or three rows of scrollback) is 50 of them, as
+-- bone's own wheelup and wheeldown keys are: a notch counted in lines is 50
+-- a line, and a trackpad's travel adds up. What is short of a step waits
+-- for the next frame.
+local WHEEL_STEP, WHEEL_MAX = 50, 10
+
+--- The pane drawn under window pixel `px`, `py`: its rectangle in the
+--- layout, and the column and row of the cell there.
+local function gui_hit(px, py)
+  local t = tab()
+  local L = t and t.last_layout
+  if not (L and gui_cell and px and py) then return nil end
+  for _, r in ipairs(L.panes) do
+    local rect = bone.gui.rect("term:pane:" .. r.pane.id)
+    if rect and px >= rect.x and px < rect.x + rect.w and py >= rect.y and py < rect.y + rect.h then
+      return r, math.max(1, math.min(r.w, math.floor((px - rect.x) / gui_cell.w) + 1)),
+        math.max(1, math.min(r.h, math.floor((py - rect.y) / gui_cell.h) + 1))
+    end
+  end
+end
+
+--- A mouse event in the desktop app. The nodes hear the left button (a
+--- pane's on_press, on_drag and on_release) and the wheel's travel
+--- (on_scroll); this is the rest: where the pointer is at a wheel, and the
+--- right and middle buttons of a program that takes the mouse (tmux's
+--- menus, a middle-click paste). True when it was the program's.
+function M.gui_mouse(ev)
+  if not active or type(ev) ~= "table" then return false end
+  if ev.action == "wheel" then
+    gui_wheel = ev.px and { ev.px, ev.py } or nil
+    return false
+  end
+  local h = gui_held
+  if h and ev.button == h.button and (ev.action == "drag" or ev.action == "up") then
+    local p = h.pane
+    local r, c, rw = gui_hit(ev.px, ev.py)
+    if r and r.pane == p then h.c, h.rw = c, rw end -- outside it: where it last was
+    if panes[p.id] == p and not p.exited then
+      local bytes = vt.mouse(p.screen, ev.action, h.button, h.c, h.rw)
+      if bytes then write(p, bytes) end
+    end
+    if ev.action == "up" then gui_held = nil end
+    redraw()
+    return true
+  end
+  if ev.action ~= "down" or ev.popup or (ev.button ~= "right" and ev.button ~= "middle") then return false end
+  gui_held = nil
+  local r, c, rw = gui_hit(ev.px, ev.py)
+  if not r or r.pane.exited then return false end
+  local p = r.pane
+  local bytes = vt.mouse(p.screen, "down", ev.button, c, rw)
+  if not bytes then return false end -- not the program's: bone's own click
+  local t = tab()
+  if t then t.focus = p end
+  pcall(bone.ui.panel.focus, ID)
+  gui_held = { pane = p, button = ev.button, c = c, rw = rw }
+  write(p, bytes)
+  redraw()
+  return true
+end
 
 -- A pane on a grid of character cells: every run of text exactly as wide as
 -- its cells, so a wide or fallback glyph cannot shift what follows, and
@@ -708,11 +778,31 @@ local function gui_pane(r, cell, focused, size)
     p.reporting, p.drag_at = false, nil
     redraw()
   end
+  -- The frame's wheel travel, as steps: each a report at the cell under the
+  -- pointer when the program takes the mouse, else rows of scrollback.
   box.on_scroll = function(dy)
-    local up = (dy or 0) > 0
-    local c, rw = math.floor(r.w / 2), math.floor(r.h / 2)
+    dy = tonumber(dy) or 0
+    local rest = p.wheel_rest or 0
+    if rest * dy < 0 then rest = 0 end -- turned around: what was left counts no more
+    rest = rest + dy
+    local steps = math.floor(math.abs(rest) / WHEEL_STEP)
+    if steps > WHEEL_MAX then steps, rest = WHEEL_MAX, 0
+    else rest = rest - (rest < 0 and -steps or steps) * WHEEL_STEP end
+    p.wheel_rest = rest
+    if steps == 0 then return true end
+    local up = dy > 0
+    local c, rw = math.max(1, math.floor(r.w / 2)), math.max(1, math.floor(r.h / 2))
+    local at, rect = gui_wheel, gui_wheel and bone.gui.rect(box.id)
+    gui_wheel = nil -- this frame's only
+    if rect then
+      c, rw = clamp(math.floor((at[1] - rect.x) / cell.w) + 1, math.floor((at[2] - rect.y) / cell.h) + 1)
+    end
     local bytes = vt.mouse(p.screen, "wheel", up and "up" or "down", c, rw)
-    if bytes then write(p, bytes) else vt.scroll(p, up and "wheelup" or "wheeldown") end
+    if bytes then
+      write(p, bytes:rep(steps))
+    else
+      for _ = 1, steps do vt.scroll(p, up and "wheelup" or "wheeldown") end
+    end
     redraw()
     return true
   end
@@ -768,6 +858,7 @@ function M.node(ctx)
   if not active then return { grow = 1 } end
   groups()
   local cell = ctx.cell or (bone.gui.window_info() or {}).cell or { w = 8, h = 18 }
+  gui_cell = cell
   local size = bone.o.font_size or 14
   local W, H = tonumber(ctx.width) or 800, tonumber(ctx.height) or 400
   local root = { direction = "column", grow = 1 }
@@ -930,9 +1021,10 @@ function M.setup(terminal_module)
       return true
     end
   end)
-  if not GUI then
-    handlers[#handlers + 1] = bone.on("mouse", function(ev) return M.mouse(ev) end)
-  end
+  handlers[#handlers + 1] = bone.on("mouse", function(ev)
+    if GUI then return M.gui_mouse(ev) end
+    return M.mouse(ev)
+  end)
   -- A Lua reload keeps the terminals: their programs go on, with their
   -- screens and scrollback, unless this plugin's own files changed.
   if bone.plugin.carry and bone.job.adopt then

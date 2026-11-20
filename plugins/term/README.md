@@ -32,7 +32,11 @@ While the terminal has the keyboard, with no prefix:
 
 The mouse: a click focuses a pane, a divider drags, a tab is a click away
 (middle click closes it, **+** opens one; × on a tab in the desktop app). A
-program that asks for the mouse (vim, htop) gets clicks, drags and the wheel.
+program that asks for the mouse (vim, htop, tmux) gets the left, middle and
+right buttons, drags and the wheel, at the cell under the pointer; a release
+names its button, as tmux's `MouseUp` and `MouseDragEnd` bindings need. In
+the desktop app the wheel sends a step for each 50 points it travels (a
+notch is three on Linux), so a fast spin or a swipe is not cut to one.
 Paste goes to the focused pane, line breaks typed as enter, bracketed when the
 program asks.
 
@@ -97,6 +101,7 @@ From the catalog root:
 
 ```sh
 luajit tests/term_test.lua
+luajit tests/term_gui_test.lua
 BONE_BIN=/path/to/bone python3 tests/term_tmux_test.py
 ```
 

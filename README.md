@@ -88,6 +88,7 @@ model calls):
 ```sh
 luajit tests/md_test.lua
 luajit tests/term_test.lua
+luajit tests/term_gui_test.lua
 luajit tests/idle_compact_test.lua
 luajit tests/codex_app_test.lua
 luajit tests/context_test.lua
