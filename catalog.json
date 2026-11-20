@@ -93,6 +93,32 @@
     ]
   },
   {
+    "name": "chat-titler",
+    "title": "Chat Titler",
+    "kind": "plugin",
+    "version": "1.0.0",
+    "description": "Names each chat automatically after its first completed turn, with the model",
+    "min_bone_version": "3.0.10",
+    "capabilities": [
+      "ui",
+      "model"
+    ],
+    "files": [
+      {
+        "path": "README.md",
+        "sha256": "1117a2f98fbe44b31f4a202b840f01400c61279f71f7896182c6d15a86c424ec"
+      },
+      {
+        "path": "manifest.json",
+        "sha256": "cfc53c0a13a21f3d960b00f9b1330b384f4e69316e640a468643b76f114a4aec"
+      },
+      {
+        "path": "ui.lua",
+        "sha256": "db823afcb39cf84de7a397399f1b9aa4d93250023b653f097479bdea0145becf"
+      }
+    ]
+  },
+  {
     "name": "claude-code",
     "title": "Claude Code",
     "kind": "plugin",

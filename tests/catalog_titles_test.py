@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TITLES = {
     "ask_user": "Ask User",
     "behavior": "Behavior",
+    "chat-titler": "Chat Titler",
     "claude-code": "Claude Code",
     "codex": "Codex",
     "context": "Context",
