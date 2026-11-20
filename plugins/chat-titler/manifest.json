@@ -1,8 +1,8 @@
 {
   "title": "Chat Titler",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Names each chat automatically after its first completed turn, with the model",
-  "min_bone_version": "3.0.10",
+  "min_bone_version": "3.0.12",
   "capabilities": ["ui", "model"],
   "settings": [
     { "key": "auto", "label": "Title chats automatically", "type": "boolean",

@@ -229,7 +229,7 @@ end)
     try:
         rpc('initialize', {'protocol_version': 0, 'client_name': 'claude-code-test'})
         sid = rpc('session/create', {'cwd': str(tmp)})['session_id']
-        rpc('session/rename', {'session_id': sid, 'title': 'Claude Code cache integration test'})
+        rpc('session/set', {'session_id': sid, 'title': 'Claude Code cache integration test'})
         if a.scenario == 'growth':
             for batch in range(1, 4):
                 msgs, usage = turn(sid, f'Call growth_probe exactly once with batch {batch}. '

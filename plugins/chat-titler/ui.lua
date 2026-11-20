@@ -123,7 +123,7 @@ local function generate(sid)
         if model_err then return fail("model error: %s", tostring(model_err)) end
         local title = clean(result and result.content or "")
         if title == "" then return dbg("model returned nothing") end
-        bone.request("session/rename", { session_id = sid, title = title }, function(_, rerr)
+        bone.request("session/set", { session_id = sid, title = title }, function(_, rerr)
           if rerr then return fail("rename failed: %s", tostring(rerr)) end
           mine[sid] = title
           dbg("titled: %s", title)

@@ -96,9 +96,9 @@
     "name": "chat-titler",
     "title": "Chat Titler",
     "kind": "plugin",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Names each chat automatically after its first completed turn, with the model",
-    "min_bone_version": "3.0.10",
+    "min_bone_version": "3.0.12",
     "capabilities": [
       "ui",
       "model"
@@ -110,11 +110,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "cfc53c0a13a21f3d960b00f9b1330b384f4e69316e640a468643b76f114a4aec"
+        "sha256": "669cc11a75c70eda322c136473afb13667e8898c7ea3e05abaae08dbbc94cd9f"
       },
       {
         "path": "ui.lua",
-        "sha256": "db823afcb39cf84de7a397399f1b9aa4d93250023b653f097479bdea0145becf"
+        "sha256": "305441fccd19ba11dbcbb7f10aa31346856877e5bed5deb0f736c7d07eb53099"
       }
     ]
   },
