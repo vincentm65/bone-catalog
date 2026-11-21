@@ -67,6 +67,13 @@ no model requests):
 luajit tests/prompt_suggestions_test.lua
 ```
 
+Check automatic chat titles: one title call per turn across windows, hand
+renames left alone, UTF-8-safe cuts (mocked; no model requests):
+
+```sh
+luajit tests/chat_titler_test.lua
+```
+
 Build Bone 3 in its own checkout with `cargo build -p bone`, then load every
 catalog core half through that headless binary:
 

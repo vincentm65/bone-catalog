@@ -1,22 +1,24 @@
 {
   "title": "Chat Titler",
-  "version": "1.0.1",
-  "description": "Names each chat automatically after its first completed turn, with the model",
+  "version": "1.1.0",
+  "description": "Names each chat with the model after a completed turn, once however many windows are open",
   "min_bone_version": "3.0.12",
-  "capabilities": ["ui", "model"],
+  "capabilities": ["ui", "rpc", "model", "store"],
   "settings": [
     { "key": "auto", "label": "Title chats automatically", "type": "boolean",
-      "default": true, "desc": "after the first completed turn" },
+      "default": true, "desc": "after a completed turn, while the chat still has its first-message title" },
     { "key": "retitle", "label": "Re-title as the chat grows", "type": "boolean",
-      "default": false, "desc": "regenerate after later turns too (a manual /rename still wins)" },
+      "default": false, "desc": "look again after later turns too (a title you set by hand is never touched)" },
     { "key": "max_chars", "label": "Title length", "type": "integer",
       "default": 48, "min": 10, "max": 80,
-      "desc": "long titles are cut at a word" },
+      "desc": "longer titles are cut at a word" },
     { "key": "provider", "label": "Provider", "type": "string",
       "default": "", "desc": "provider entry for the title call; empty = the chat's own" },
     { "key": "model", "label": "Model", "type": "string",
       "default": "", "desc": "model id for the title call; empty = the chat's own" },
+    { "key": "effort", "label": "Reasoning effort", "type": "string",
+      "default": "low", "desc": "for the title call, on providers that send one; empty = the provider's own" },
     { "key": "debug", "label": "Debug notices", "type": "boolean",
-      "default": false, "desc": "notify each step, including why a chat was skipped" }
+      "default": false, "desc": "notify each title, and why a chat was skipped" }
   ]
 }
