@@ -431,6 +431,14 @@ local function reserve(nested, parent)
   return token
 end
 
+-- Between checks: a bone with bone.queue.wait wakes the moment the chat's
+-- queue changes, so a message the user writes joins the turn at once
+-- instead of showing as queued until the next poll.
+local function nap(parent)
+  if bone.queue.wait then return bone.queue.wait(parent, 200) end
+  return bone.sleep(200)
+end
+
 -- The main chat waits for agent `id`'s turn like bone.session.run, but
 -- stops waiting when the user writes (detached): the answer is then sent
 -- as a message. A cancelled wait leaves the agent to be stopped.
@@ -449,7 +457,7 @@ local function wait(id, parent, body, token)
       c.waiter, c.detached, c.notify = nil, nil, parent
       return { detached = true }
     end
-    if not bone.sleep(200) then
+    if not nap(parent) then
       if c.waiter == parent then c.waiter, c.stop = nil, true end
       return nil
     end
