@@ -318,7 +318,16 @@ local function complete(req, emit)
   -- The reply so far: every invocation's response, in order.
   local text = ""
   local function invoke(stdin_body, resume_id)
-    local command = auth_env .. quote(executable(o))
+    -- Every resume forks: a cancelled or failed call writes only to its own
+    -- fork, so the session stays reusable (and its cache warm). Each fork is a
+    -- full copy of the transcript, so all but the saved and resumed ones are
+    -- deleted first.
+    local keep = ""
+    for _, id in pairs({ s.cli_id or false, resume_id or false }) do
+      if id then keep = keep .. " ! -name " .. quote(id .. ".jsonl") end
+    end
+    local command = "find " .. quote(project_dir(s.cwd)) .. " -maxdepth 1 -name '*.jsonl'" .. keep
+      .. " -delete 2>/dev/null; " .. auth_env .. quote(executable(o))
       .. " -p --input-format stream-json --output-format stream-json --verbose"
       .. " --tools '' --strict-mcp-config --mcp-config '{\"mcpServers\":{}}'"
       .. " --setting-sources '' --settings '{\"disableAllHooks\":true}' --disable-slash-commands --no-chrome"
@@ -328,7 +337,7 @@ local function complete(req, emit)
       -- The CLI limit is cumulative across resumes of one CLI session.
       .. (budget and (" --max-budget-usd " .. quote((s.total_cost or 0) + budget)) or "")
       .. " --system-prompt " .. quote(prompt) .. " --json-schema " .. quote(schema_json)
-      .. (resume_id and (" --resume " .. quote(resume_id)) or "")
+      .. (resume_id and (" --resume " .. quote(resume_id) .. " --fork-session") or "")
     -- Result usage sums all internal calls. Context comes from the last real
     -- assistant message instead; repeated content blocks must not be summed.
     local doc, result_json, context_tokens, limit
@@ -352,7 +361,6 @@ local function complete(req, emit)
       end
     end
     local r = run_cli(command, { cwd = s.cwd, stdin = stdin_body, timeout = o.timeout_ms or 600000 }, on_line)
-    -- Never resume an interrupted/failed CLI transcript.
     if not r then return nil end
     if r.timed_out then error("claude-code: timed out; no automatic retry", 0) end
     if not doc then
@@ -397,9 +405,11 @@ local function complete(req, emit)
     agg.output = agg.output + (u.output_tokens or 0)
   end
 
+  -- A cancelled turn keeps the session as it was before this call: the CLI
+  -- only wrote to its fork, and the next call resends these messages.
   local inv = invoke(user_message(resumed and "New Bone messages as JSON" or "Bone conversation history as JSON", delta),
     resumed and s.cli_id or nil)
-  if not inv then discard(sid); save(); return nil end
+  if not inv then save(); return nil end
   account(inv.doc)
   local nudged = 0
   -- One-shot continuation: a no-tool-call reply that reads as unfinished work
@@ -407,14 +417,12 @@ local function complete(req, emit)
   -- The user has seen that reply already, so what comes back is added to it.
   while #inv.calls == 0 and nudged < 1 and o.continuation_nudge ~= false and looks_unfinished(inv.content) do
     nudged = nudged + 1
-    s.cli_id = inv.doc.session_id
-    sessions[sid] = s
     local again = invoke(notice("Bone notice: that reply had no tool_calls, which ends your turn, but it reads as"
       .. " unfinished work. If the task is incomplete, continue now and include the needed tool_calls."
       .. " If it is complete, you are truly blocked on the user, or you are waiting for a message to arrive"
       .. " (such as the answers of agents you started), reply with an empty response and an empty"
       .. " tool_calls array: the user already sees your previous reply."), inv.doc.session_id)
-    if not again then discard(sid); save(); return nil end
+    if not again then save(); return nil end
     account(again.doc)
     inv = again
   end
@@ -438,6 +446,7 @@ local function complete(req, emit)
   end
   s.cli_id = doc.session_id
   s.total_cost = doc.total_cost_usd or 0
+  s.failures = nil
   sessions[sid] = s
   s.history = keys
   s.history[#s.history + 1] = message_key({ role = "assistant", content = result.content, tool_calls = result.tool_calls })
@@ -449,7 +458,11 @@ end
 bone.provider.register("claude_code", { complete = function(req, emit)
   local ok, result = pcall(complete, req, emit)
   if not ok then
-    discard(req.session_id or "default")
+    -- A failed call left the session intact (it wrote to a fork), so the next
+    -- one resumes it. A second failure in a row starts over, in case the
+    -- session itself is what fails.
+    local s = req.session_id and sessions[req.session_id]
+    if s and not s.failures then s.failures = 1 else discard(req.session_id or "default") end
     save()
     error(result, 0)
   end
