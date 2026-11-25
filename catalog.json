@@ -128,7 +128,7 @@
     "name": "claude-code",
     "title": "Claude Code",
     "kind": "plugin",
-    "version": "1.3.2",
+    "version": "1.3.3",
     "description": "Claude subscription model provider through your installed Claude Code CLI; Bone retains tools and approvals",
     "min_bone_version": "3.0.0",
     "capabilities": [
@@ -138,19 +138,23 @@
     "files": [
       {
         "path": "README.md",
-        "sha256": "b1f191b381274c415ca5ac290d4faf929f7eaea9fdb8d4c439a88c319b8810fe"
+        "sha256": "91433e2fa929833021ea7bbd3c34c0cdf923a9101281dbf109355771b5aab752"
       },
       {
         "path": "core.lua",
-        "sha256": "fb73bbea00cbfa8e2cce6ce373cb5dda297665f730724641bd59d805825749c6"
+        "sha256": "00fabe9930188c0e365fd8ca18970a47f917db71c06cb1a8e5b4f824ab8b7d6d"
       },
       {
         "path": "manifest.json",
-        "sha256": "1ae065534dbdcd25a0dbc596b006feb4b99bdabe9c741c717ae66a82fc30f647"
+        "sha256": "fc28fff6a04e9381f4b35aa1757eec5634edda21ad437af7df80f0379af42283"
       },
       {
         "path": "ui.lua",
         "sha256": "f3d7ac9b0078460d8da77e16c74cf9fcc3673fcf211015b8fe489fa35d947274"
+      },
+      {
+        "path": "usage-report.py",
+        "sha256": "4de7195fa4541f77ab79e82966efb1492df4e73c53586e1d89c501495165ccde"
       }
     ]
   },

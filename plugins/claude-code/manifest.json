@@ -1,5 +1,5 @@
 {
-  "version": "1.3.2",
+  "version": "1.3.3",
   "title": "Claude Code",
   "description": "Claude subscription model provider through your installed Claude Code CLI; Bone retains tools and approvals",
   "capabilities": ["provider", "command"],

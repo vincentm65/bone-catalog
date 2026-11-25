@@ -170,7 +170,9 @@ end
 bone.hook("turn_start", function(ctx) turn_cost[ctx.session_id] = 0 end)
 local auth_env = "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL"
   .. " -u CLAUDE_CODE_USE_BEDROCK -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_FOUNDRY"
-  .. " -u CLAUDE_CODE_OAUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN_FILE -u CLAUDECODE "
+  .. " -u CLAUDE_CODE_OAUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN_FILE -u CLAUDECODE"
+  -- An update reinstalls the package in place; calls made meanwhile fail.
+  .. " DISABLE_AUTOUPDATER=1 "
 
 -- Bone is often started from a desktop/service whose PATH lacks the user's npm or
 -- local bin, and a stale system `claude` can shadow the current one (e.g. one
@@ -230,6 +232,33 @@ local function user_message(intro, messages)
 end
 local function notice(text)
   return canonical({ type = "user", message = { role = "user", content = text } }) .. "\n"
+end
+
+-- One line per CLI call: its tokens next to the plan's usage windows as that
+-- call reported them, to measure what a call costs against the plan's limits.
+local usage_log = (bone.config_dir or ((os.getenv("HOME") or "") .. "/.bone")) .. "/claude-code-usage.jsonl"
+local function record(sid, o, doc, limit)
+  local u = type(doc) == "table" and type(doc.usage) == "table" and doc.usage or {}
+  local written = type(u.cache_creation) == "table" and u.cache_creation or {}
+  local windows = {}
+  local spans = type(limit) == "table" and type(limit.unifiedWindows) == "table" and limit.unifiedWindows or {}
+  for name, w in pairs(spans) do
+    if type(w) == "table" then
+      windows[name] = { utilization = w.utilization, resets_at = w.resetsAt, status = w.status }
+    end
+  end
+  local entry = { at = os.time(), session = sid, cli_session = doc and doc.session_id,
+    model = o.model or "claude-haiku-5-5", effort = o.reasoning_effort or "low",
+    subtype = doc and doc.subtype, cli_turns = doc and doc.num_turns, duration_ms = doc and doc.duration_ms,
+    input_tokens = u.input_tokens or 0, cache_read = u.cache_read_input_tokens or 0,
+    cache_write = u.cache_creation_input_tokens or 0, cache_write_1h = written.ephemeral_1h_input_tokens,
+    cache_write_5m = written.ephemeral_5m_input_tokens, output_tokens = u.output_tokens or 0,
+    windows = windows, overage = type(limit) == "table" and limit.isUsingOverage or nil }
+  local f = io.open(usage_log, "a")
+  if f then
+    f:write(canonical(entry), "\n")
+    f:close()
+  end
 end
 
 -- Run the CLI and hand each line of its output to on_line once it exits.
@@ -360,7 +389,16 @@ local function complete(req, emit)
         doc, result_json = event, line
       end
     end
-    local r = run_cli(command, { cwd = s.cwd, stdin = stdin_body, timeout = o.timeout_ms or 600000 }, on_line)
+    local r
+    -- Exit 127 with no output: the binary is missing, most likely mid-update
+    -- (started by another claude process), so wait for it to come back.
+    for attempt = 1, 4 do
+      r = run_cli(command, { cwd = s.cwd, stdin = stdin_body, timeout = o.timeout_ms or 600000 }, on_line)
+      if not r then return nil end
+      if r.code ~= 127 or doc or attempt == 4 then break end
+      if not bone.system("sleep 5", { timeout = 10000 }) then return nil end
+    end
+    if r and (doc or limit) then pcall(record, sid, o, doc, limit) end
     if not r then return nil end
     if r.timed_out then error("claude-code: timed out; no automatic retry", 0) end
     if not doc then
