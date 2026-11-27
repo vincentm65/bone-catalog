@@ -269,7 +269,8 @@ local function name_chat(sid, args)
   local now = bone.session.info(sid)
   if not now or now.title ~= info.title then return { skip = "renamed meanwhile" } end
   if title == info.title then return { skip = "unchanged" } end
-  remember(sid, title)
+  -- An incognito chat's title is not kept on disk.
+  if not now.incognito then remember(sid, title) end
   return { title = title, provider = provider, model = options and options.model }
 end
 

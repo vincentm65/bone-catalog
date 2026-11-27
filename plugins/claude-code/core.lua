@@ -134,6 +134,17 @@ local function discard(sid)
     bone.system("rm -rf -- " .. quote(s.cwd) .. " " .. quote(project_dir(s.cwd)), { timeout = 5000 })
   end
 end
+-- Removes a private working directory (and any CLI project directory for it).
+local function forget_private(s)
+  if type(s) == "table" and type(s.cwd) == "string" and s.cwd:match("^/tmp/bone3%-claude%-code%.[%w]+$") then
+    bone.system("rm -rf -- " .. quote(s.cwd) .. " " .. quote(project_dir(s.cwd)), { timeout = 5000 })
+  end
+end
+-- Whether a Bone session is incognito (the core keeps it in memory only).
+local function is_incognito(session_id)
+  local ok, info = pcall(bone.session.info, session_id)
+  return ok and type(info) == "table" and info.incognito == true
+end
 -- Marks a private directory as in use (the sweep below spares it); false
 -- when it is gone.
 local function touch(dir)
@@ -321,7 +332,12 @@ local function complete(req, emit)
     effort = o.reasoning_effort or "low" }))
   local keys = {}
   for i, m in ipairs(history) do keys[i] = message_key(m) end
-  local s = req.session_id and sessions[sid]
+  -- An incognito session (kept off disk by the core) is not resumed: a
+  -- resume needs the CLI's transcript on disk. Each call runs with
+  -- --no-session-persistence and sends the whole history; nothing of it is
+  -- kept in this plugin's state either.
+  local incognito = req.session_id ~= nil and is_incognito(req.session_id)
+  local s = not incognito and req.session_id and sessions[sid]
   if s then
     local matches = s.fingerprint == fingerprint and #history > #s.history and touch(s.cwd)
     for i, key in ipairs(s.history) do
@@ -340,7 +356,7 @@ local function complete(req, emit)
   local delta = {}
   for i = #s.history + 1, #history do delta[#delta + 1] = history[i] end
   local resumed = s.cli_id ~= nil
-  sessions[sid] = s
+  if not incognito then sessions[sid] = s end
   s.invocation = (s.invocation or 0) + 1
   s.used_at = os.time()
 
@@ -367,6 +383,7 @@ local function complete(req, emit)
       .. (budget and (" --max-budget-usd " .. quote((s.total_cost or 0) + budget)) or "")
       .. " --system-prompt " .. quote(prompt) .. " --json-schema " .. quote(schema_json)
       .. (resume_id and (" --resume " .. quote(resume_id) .. " --fork-session") or "")
+      .. (incognito and " --no-session-persistence" or "")
     -- Result usage sums all internal calls. Context comes from the last real
     -- assistant message instead; repeated content blocks must not be summed.
     local doc, result_json, context_tokens, limit
@@ -398,7 +415,7 @@ local function complete(req, emit)
       if r.code ~= 127 or doc or attempt == 4 then break end
       if not bone.system("sleep 5", { timeout = 10000 }) then return nil end
     end
-    if r and (doc or limit) then pcall(record, sid, o, doc, limit) end
+    if r and (doc or limit) and not incognito then pcall(record, sid, o, doc, limit) end
     if not r then return nil end
     if r.timed_out then error("claude-code: timed out; no automatic retry", 0) end
     if not doc then
@@ -447,13 +464,18 @@ local function complete(req, emit)
   -- only wrote to its fork, and the next call resends these messages.
   local inv = invoke(user_message(resumed and "New Bone messages as JSON" or "Bone conversation history as JSON", delta),
     resumed and s.cli_id or nil)
-  if not inv then save(); return nil end
+  if not inv then
+    if incognito then forget_private(s) else save() end
+    return nil
+  end
   account(inv.doc)
   local nudged = 0
   -- One-shot continuation: a no-tool-call reply that reads as unfinished work
   -- gets a single resume telling the model to continue or finish explicitly.
   -- The user has seen that reply already, so what comes back is added to it.
-  while #inv.calls == 0 and nudged < 1 and o.continuation_nudge ~= false and looks_unfinished(inv.content) do
+  -- (A nudge resumes the CLI session, which an incognito one does not keep.)
+  while not incognito and #inv.calls == 0 and nudged < 1 and o.continuation_nudge ~= false
+      and looks_unfinished(inv.content) do
     nudged = nudged + 1
     local again = invoke(notice("Bone notice: that reply had no tool_calls, which ends your turn, but it reads as"
       .. " unfinished work. If the task is incomplete, continue now and include the needed tool_calls."
@@ -481,6 +503,10 @@ local function complete(req, emit)
   for i, c in ipairs(inv.calls) do
     result.tool_calls[i] = { id = "cc_" .. tostring(doc.session_id or "call") .. "_" .. s.invocation .. "_" .. i,
       name = c.name, arguments = c.arguments }
+  end
+  if incognito then
+    forget_private(s)
+    return result
   end
   s.cli_id = doc.session_id
   s.total_cost = doc.total_cost_usd or 0

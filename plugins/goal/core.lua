@@ -50,9 +50,14 @@ end)()
 -- Running goals by session. The file holds exactly these and is removed when
 -- none are left; goals that ended stay in memory for the TUI to report.
 local goals, ended = {}, {}
+-- Goals of incognito chats are kept in memory only.
 local function save()
-  if next(goals) then
-    bone.state.save(NAME, goals)
+  local kept = {}
+  for sid, g in pairs(goals) do
+    if not g.incognito then kept[sid] = g end
+  end
+  if next(kept) then
+    bone.state.save(NAME, kept)
   elseif FILE then
     os.remove(FILE)
   end
@@ -161,7 +166,7 @@ bone.rpc.register("goal.set", function(args, ctx)
   end
   local s = bone.session.snapshot(sid)
   goals[sid] = { text = args.text, check = args.check, cwd = s.info.cwd or cwd, pid = PID,
-    turns = 0, seen = #s.messages, started_at = os.time() }
+    turns = 0, seen = #s.messages, started_at = os.time(), incognito = s.info.incognito or nil }
   ended[sid] = nil
   save()
   bone.queue.add(sid, SHOWN_START .. args.text, "next")

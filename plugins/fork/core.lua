@@ -1,7 +1,17 @@
 -- Genealogy is plugin metadata; seeded sessions remain ordinary sessions.
 local state = bone.state.load("fork")
 state.edges = state.edges or {}
-local function save() bone.state.save("fork", state) end
+-- Branches of incognito chats are known in memory only: never saved.
+local function save()
+  local edges = {}
+  for id, e in pairs(state.edges) do
+    if not e.incognito then edges[id] = e end
+  end
+  local out = {}
+  for k, v in pairs(state) do out[k] = v end
+  out.edges = edges
+  bone.state.save("fork", out)
+end
 
 -- Stable encoding, independent of JSON object iteration order. Two small hashes
 -- are an optimistic stale-view check, not a cryptographic identity.
@@ -133,11 +143,13 @@ bone.rpc.register("fork.create", function(args, ctx)
   -- in the chat list and the header (a branch of a branch is marked once).
   local base = s.info.title or (points(s)[1] or {}).text
   local title = base and base ~= "" and ("↳ " .. (base:gsub("^↳ ", ""))) or nil
+  -- A branch of an incognito chat is incognito too.
+  local incognito = s.info.incognito == true
   local info = bone.session.create({ cwd = s.info.cwd, title = title, messages = messages,
-    summary = summary, model = s.model })
+    summary = summary, model = s.model, incognito = incognito })
   local child = assert(info and info.session_id, "fork: session creation failed")
   state.edges[child] = { parent = id, before_turn = args.before_turn,
-    prefix = fingerprint(messages) }
+    prefix = fingerprint(messages), incognito = incognito or nil }
   -- Never defer this to shutdown. If saving fails the child still exists.
   local ok, err = pcall(save)
   return { info = info, draft = draft, warning = not ok and ("genealogy save failed: " .. tostring(err)) or nil }

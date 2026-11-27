@@ -96,7 +96,7 @@
     "name": "chat-titler",
     "title": "Chat Titler",
     "kind": "plugin",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "Names each chat with the model after a completed turn, once however many windows are open",
     "min_bone_version": "3.0.12",
     "capabilities": [
@@ -112,11 +112,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "85ed9d3cc7ac82697ad4b54998d92d498e60e4dc798ef2ad449272a108a06523"
+        "sha256": "395a6ef4fdf0a70462dfe76cc1852a4154fc178e0577bff2f4dc8033740edc7a"
       },
       {
         "path": "manifest.json",
-        "sha256": "24ed3384998d49727966afeef72bdbef4137ed3a1a588395c8ee71d027928a1d"
+        "sha256": "f99948fa0b6efe9683b989a682a61b277ae48cc8d19b97e6b7d7f0d788e56b11"
       },
       {
         "path": "ui.lua",
@@ -128,7 +128,7 @@
     "name": "claude-code",
     "title": "Claude Code",
     "kind": "plugin",
-    "version": "1.3.3",
+    "version": "1.3.4",
     "description": "Claude subscription model provider through your installed Claude Code CLI; Bone retains tools and approvals",
     "min_bone_version": "3.0.0",
     "capabilities": [
@@ -142,11 +142,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "00fabe9930188c0e365fd8ca18970a47f917db71c06cb1a8e5b4f824ab8b7d6d"
+        "sha256": "bd9f11038308ecb6d0b6564ee2196404824a6760f843eef9c2f4865c5e90e36b"
       },
       {
         "path": "manifest.json",
-        "sha256": "fc28fff6a04e9381f4b35aa1757eec5634edda21ad437af7df80f0379af42283"
+        "sha256": "043e0b0106f427c57a7ed0866e9f9d192f7109aa1981e71533d7672b24d63327"
       },
       {
         "path": "ui.lua",
@@ -420,7 +420,7 @@
     "name": "fork",
     "title": "Fork",
     "kind": "plugin",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "description": "Fork from an earlier message into a new branch, or copy the chat: /fork [N|copy]",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -434,11 +434,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "b0a8f6252e5060b5f8d91a6cb5b1b09addd32a6fd7c5bc5a6d465defd693d44c"
+        "sha256": "b7d01348aee3ab6ffe5023ddba14dfa89b503dc4c6128200683787af865f5c8c"
       },
       {
         "path": "manifest.json",
-        "sha256": "41340c9d5f6767761ee5028ab51262c7fb6b88d48ea33df638244d99c7ca4bb0"
+        "sha256": "0f7d5f07a798f6184c94fcd1d56a01ef5c2c2ff3134d7bd24054494822c62f33"
       },
       {
         "path": "ui.lua",
@@ -485,7 +485,7 @@
     "name": "goal",
     "title": "Goal",
     "kind": "plugin",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "description": "Keep a chat working on an objective, turn after turn, until it is done: /goal <objective>. A status band shows it in the terminal and the desktop app.",
     "min_bone_version": "3.0.4",
     "capabilities": [
@@ -499,11 +499,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "52682e5ae598f6fc7930d04f5d5a2fbc50dfd876293878c5f50e3cd49e671259"
+        "sha256": "47c0600864d42add288331ee45c945b85dc1dc574e8eb261fee9867bd71a7b0b"
       },
       {
         "path": "manifest.json",
-        "sha256": "ada48721bf4f39bf508b8aa0da9a22f565c697d807f44a424b23dbf92223a225"
+        "sha256": "eadb4edd4ec8ad9eb308465c40cd247d9e0d3b8fbe247c4e509b614521931399"
       },
       {
         "path": "ui.lua",

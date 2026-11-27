@@ -1,1 +1,1 @@
-{"title":"Fork","version":"1.2.0","description":"Fork from an earlier message into a new branch, or copy the chat: /fork [N|copy]","min_bone_version":"3.0.4","capabilities":["command","ui"]}
+{"title":"Fork","version":"1.2.1","description":"Fork from an earlier message into a new branch, or copy the chat: /fork [N|copy]","min_bone_version":"3.0.4","capabilities":["command","ui"]}

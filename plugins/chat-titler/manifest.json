@@ -1,6 +1,6 @@
 {
   "title": "Chat Titler",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Names each chat with the model after a completed turn, once however many windows are open",
   "min_bone_version": "3.0.12",
   "capabilities": ["ui", "rpc", "model", "store"],
