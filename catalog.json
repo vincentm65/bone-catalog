@@ -128,7 +128,7 @@
     "name": "claude-code",
     "title": "Claude Code",
     "kind": "plugin",
-    "version": "1.3.4",
+    "version": "1.3.5",
     "description": "Claude subscription model provider through your installed Claude Code CLI; Bone retains tools and approvals",
     "min_bone_version": "3.0.0",
     "capabilities": [
@@ -142,11 +142,11 @@
       },
       {
         "path": "core.lua",
-        "sha256": "bd9f11038308ecb6d0b6564ee2196404824a6760f843eef9c2f4865c5e90e36b"
+        "sha256": "3a5a81a8082f20cce2798160825720c5c488c50ee686a5fbbb789c839bda4c69"
       },
       {
         "path": "manifest.json",
-        "sha256": "043e0b0106f427c57a7ed0866e9f9d192f7109aa1981e71533d7672b24d63327"
+        "sha256": "d52b51935a5ca5ea7dccd8177205d8884e55c690025e3c566b75fedd1973bc58"
       },
       {
         "path": "ui.lua",
@@ -541,7 +541,7 @@
     "name": "idle_compact",
     "title": "Idle Compact",
     "kind": "plugin",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "Compact the chat you were last using after it sits idle with a large context",
     "min_bone_version": "3.0.3",
     "capabilities": [
@@ -554,11 +554,11 @@
       },
       {
         "path": "manifest.json",
-        "sha256": "3f5b7a1b87c63f091ca88596aaabca106a0546c9a1b624158a88071928953184"
+        "sha256": "6b12c919af76be48a94c72cb79a3309d6664a39502ea5f36691b257769786fd7"
       },
       {
         "path": "ui.lua",
-        "sha256": "df3c65d218252167ee77b9cb7b276b2bfaea5f6f515c60913a9788ee690a2594"
+        "sha256": "ff7232e06c643335f6889f34e71c71565364b48ef38338b427cef3205e010cde"
       }
     ]
   },

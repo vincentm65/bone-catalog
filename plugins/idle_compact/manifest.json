@@ -1,6 +1,6 @@
 {
   "title": "Idle Compact",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Compact the chat you were last using after it sits idle with a large context",
   "min_bone_version": "3.0.3",
   "capabilities": [

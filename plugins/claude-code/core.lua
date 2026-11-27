@@ -294,6 +294,8 @@ end
 
 local function complete(req, emit)
   local o = req.options
+  -- A one-off call (a chat's title, say) comes with no session id or "".
+  if req.session_id == "" then req.session_id = nil end
   local sid = req.session_id or "default"
   -- Budgets are opt-in. The CLI shows --max-budget-usd to the model ("USD budget:
   -- $0/$0.5; $0.5 remaining"), and models then ration work or stop early, so it
@@ -337,6 +339,9 @@ local function complete(req, emit)
   -- --no-session-persistence and sends the whole history; nothing of it is
   -- kept in this plugin's state either.
   local incognito = req.session_id ~= nil and is_incognito(req.session_id)
+  -- No CLI transcript either for a one-off call: it is never resumed, and
+  -- it may carry an incognito chat (chat-titler sends one to be named).
+  local unsaved = incognito or req.session_id == nil
   local s = not incognito and req.session_id and sessions[sid]
   if s then
     local matches = s.fingerprint == fingerprint and #history > #s.history and touch(s.cwd)
@@ -383,7 +388,7 @@ local function complete(req, emit)
       .. (budget and (" --max-budget-usd " .. quote((s.total_cost or 0) + budget)) or "")
       .. " --system-prompt " .. quote(prompt) .. " --json-schema " .. quote(schema_json)
       .. (resume_id and (" --resume " .. quote(resume_id) .. " --fork-session") or "")
-      .. (incognito and " --no-session-persistence" or "")
+      .. (unsaved and " --no-session-persistence" or "")
     -- Result usage sums all internal calls. Context comes from the last real
     -- assistant message instead; repeated content blocks must not be summed.
     local doc, result_json, context_tokens, limit
@@ -474,7 +479,7 @@ local function complete(req, emit)
   -- gets a single resume telling the model to continue or finish explicitly.
   -- The user has seen that reply already, so what comes back is added to it.
   -- (A nudge resumes the CLI session, which an incognito one does not keep.)
-  while not incognito and #inv.calls == 0 and nudged < 1 and o.continuation_nudge ~= false
+  while not unsaved and #inv.calls == 0 and nudged < 1 and o.continuation_nudge ~= false
       and looks_unfinished(inv.content) do
     nudged = nudged + 1
     local again = invoke(notice("Bone notice: that reply had no tool_calls, which ends your turn, but it reads as"

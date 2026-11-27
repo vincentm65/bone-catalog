@@ -20,6 +20,9 @@ end
 
 local function touch()
   local s = bone.chat.session() or {}
+  -- An incognito chat is not a candidate: it has no usage to measure, and
+  -- this state is saved to disk.
+  if s.incognito then state.last = nil; return end
   state.last = { session_id = s.session_id, chat = s.chat, at = os.time() }
 end
 
